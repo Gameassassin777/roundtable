@@ -13,7 +13,7 @@ interface DMResponse {
 // rate-limited or overloaded never kills a turn.
 export const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash'];
 
-const SYSTEM_PROMPT = `You are the Grimdark Dungeon Master. Output ONLY valid JSON. No markdown.`;
+const SYSTEM_PROMPT = `You are the Dungeon Master for a fantasy adventure. Output ONLY valid JSON. No markdown.`;
 
 /**
  * Calls the Gemini API, walking the model fallback chain on transient errors

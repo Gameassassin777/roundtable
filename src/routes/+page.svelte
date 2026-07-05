@@ -57,7 +57,7 @@
     // (no fetch, no CORS, no storage). The seed makes it reproducible + re-rollable, and the
     // URL is saved on the character so it syncs to peers and persists.
     function portraitUrl(desc: string, seed: number): string {
-        const prompt = `grimdark dark-fantasy character portrait, ${desc}, head and shoulders, moody cinematic lighting, painterly oil painting, highly detailed`;
+        const prompt = `fantasy character portrait, ${desc}, head and shoulders, cinematic lighting, painterly, detailed`;
         return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&seed=${seed}&nologo=true&model=flux`;
     }
     function withPortrait(c: ForgedCharacter): ForgedCharacter {
@@ -464,11 +464,11 @@
                         </svg>
                     </div>
                     <h1 class="game-title">Round Table</h1>
-                    <p class="tagline">A grimdark tabletop, narrated by AI.</p>
+                    <p class="tagline">A tabletop adventure, narrated by AI.</p>
                     <p class="welcome-desc">
-                        Forge a hero, gather your party, and speak your actions aloud. An AI Dungeon
-                        Master weaves every roll of the dice into a living story — where loss is permanent
-                        and choices leave scars.
+                        Create a hero, gather your party, and decide what to do. An AI Dungeon Master
+                        turns every roll of the dice into a living story that responds to every choice
+                        you make.
                     </p>
                     <button class="btn-primary wide" onclick={beginQuest}>Begin Your Quest</button>
                     <p class="fineprint">Play solo or invite friends with a shared table code.</p>
