@@ -53,6 +53,21 @@
         return ICONS.rune;
     }
 
+    // Free, keyless AI portrait via Pollinations — generated straight from an <img> URL
+    // (no fetch, no CORS, no storage). The seed makes it reproducible + re-rollable, and the
+    // URL is saved on the character so it syncs to peers and persists.
+    function portraitUrl(desc: string, seed: number): string {
+        const prompt = `grimdark dark-fantasy character portrait, ${desc}, head and shoulders, moody cinematic lighting, painterly oil painting, highly detailed`;
+        return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&seed=${seed}&nologo=true&model=flux`;
+    }
+    function withPortrait(c: ForgedCharacter): ForgedCharacter {
+        const seed = Math.floor(Math.random() * 1e6);
+        return { ...c, seed, portrait_url: portraitUrl(c.portrait, seed) };
+    }
+    function regeneratePortrait() {
+        if (forged) forged = withPortrait(forged);
+    }
+
     let characterSelected = $state(false);
     let characterName = $state('');
     let selectedArc = $state('warrior');
@@ -222,8 +237,9 @@
         if (forging || !apiKey || forgeMsgs.length === 0) return;
         forging = true; forgeError = '';
         try {
-            forged = await forgeCharacter(concept, apiKey, { conversation: forgeMsgs, nameHint: characterName.trim() || undefined, ...opts });
-            if (forged && !characterName.trim()) characterName = forged.name;
+            const c = await forgeCharacter(concept, apiKey, { conversation: forgeMsgs, nameHint: characterName.trim() || undefined, ...opts });
+            forged = withPortrait(c);
+            if (!characterName.trim()) characterName = c.name;
         } catch (e: any) {
             forgeError = e?.message || 'The forge went cold. Check your key and try again.';
         }
@@ -243,7 +259,7 @@
             trait_details: forged.traits,
             permanent_conditions: [], echo_tags: [],
             class_title: forged.class_title, archetype: forged.archetype,
-            backstory: forged.backstory
+            backstory: forged.backstory, portrait_url: forged.portrait_url || ''
         };
         ydoc.transact(() => {
             const yCodex = ydoc.getMap('memoryCodex');
@@ -283,7 +299,7 @@
             trait_details: forged.traits,
             permanent_conditions: [], echo_tags: [],
             class_title: forged.class_title, archetype: forged.archetype,
-            backstory: forged.backstory
+            backstory: forged.backstory, portrait_url: forged.portrait_url || ''
         };
         ydoc.transact(() => {
             const yCodex = ydoc.getMap('memoryCodex');
@@ -530,7 +546,16 @@
                     {:else}
                         <div class="forged-card">
                             <div class="forged-head">
-                                <span class="forged-icon">{@html iconFor(forged.archetype)}</span>
+                                <div class="forged-portrait">
+                                    {#if forged.portrait_url}
+                                        <img src={forged.portrait_url} alt={forged.name} />
+                                    {:else}
+                                        <span class="forged-icon">{@html iconFor(forged.archetype)}</span>
+                                    {/if}
+                                    <button class="portrait-reroll" onclick={regeneratePortrait} title="New portrait" aria-label="Regenerate portrait">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.2 5.6"/><path d="M20 5v6h-6"/></svg>
+                                    </button>
+                                </div>
                                 <div class="forged-id">
                                     <input class="forged-name-input" type="text" bind:value={characterName} placeholder={forged.name} />
                                     <span class="forged-class">{forged.class_title}</span>
@@ -605,7 +630,9 @@
                 <aside class="codex-sidebar panel {showCodexMobile ? 'mobile-visible' : ''}">
                     <div class="sidebar-header">
                         <div class="hero-id">
-                            <span class="hero-avatar">{@html iconFor(selectedArc)}</span>
+                            <span class="hero-avatar">
+                                {#if forged?.portrait_url}<img src={forged.portrait_url} alt={characterName} />{:else}{@html iconFor(selectedArc)}{/if}
+                            </span>
                             <div>
                                 <h2>{characterName}</h2>
                                 <span class="archetype">{myArchetypeLabel}</span>
@@ -939,6 +966,28 @@
         display: flex; align-items: center; justify-content: center;
     }
     .forged-icon :global(svg) { width: 26px; height: 26px; }
+
+    .forged-portrait { position: relative; width: 72px; height: 72px; flex-shrink: 0; }
+    .forged-portrait img {
+        width: 72px; height: 72px; object-fit: cover;
+        border-radius: 14px;
+        border: 1px solid var(--line-strong);
+        background: var(--surface-3);
+        display: block;
+    }
+    .forged-portrait .forged-icon { width: 72px; height: 72px; border-radius: 14px; }
+    .portrait-reroll {
+        position: absolute; bottom: -7px; right: -7px;
+        width: 27px; height: 27px; padding: 0;
+        border-radius: 50%;
+        background: var(--surface); border: 1px solid var(--line-strong);
+        color: var(--ink-soft);
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: var(--shadow-sm);
+    }
+    .portrait-reroll svg { width: 14px; height: 14px; }
+    .portrait-reroll:hover { color: var(--accent); border-color: var(--accent); transform: none; }
+
     .forged-id { display: flex; flex-direction: column; gap: 0.15rem; flex: 1; min-width: 0; }
     .forged-name-input {
         font-family: var(--font-serif);
@@ -1186,6 +1235,7 @@
         display: flex; align-items: center; justify-content: center;
     }
     .hero-avatar :global(svg) { width: 26px; height: 26px; }
+    .hero-avatar img { width: 44px; height: 44px; object-fit: cover; border-radius: 50%; display: block; }
     .sidebar-header h2 {
         font-family: var(--font-serif);
         font-size: 1.2rem;

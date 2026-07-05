@@ -14,7 +14,9 @@ export interface ForgedCharacter {
     traits: ForgedTrait[];
     starting_item: { name: string; note?: string };
     backstory: string;
-    portrait: string;    // short visual description (for a future portrait generator)
+    portrait: string;     // short visual description (prompt for the image generator)
+    portrait_url?: string; // generated Pollinations image URL
+    seed?: number;         // seed used for the portrait (so it's reproducible / re-rollable)
 }
 
 const FORGE_SYSTEM = `You are the Soul Forge — a character architect for a lethal, grimdark tabletop RPG.
