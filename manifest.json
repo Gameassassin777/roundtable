@@ -1,13 +1,13 @@
 {
   "name": "Round Table: Grimdark AI D&D",
   "short_name": "Round Table",
-  "start_url": "/",
-  "display": "fullscreen",
-  "background_color": "#050505",
-  "theme_color": "#1a1a1a",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#08080a",
+  "theme_color": "#9e1b1b",
   "icons": [
     {
-      "src": "/icon-512.png",
+      "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"

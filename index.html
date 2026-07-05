@@ -6,22 +6,30 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Round Table" />
+    <link rel="apple-touch-icon" href="/roundtable/icon-512.png" />
     <link rel="manifest" href="/roundtable/manifest.json" />
-    <link href="/roundtable/_app/immutable/entry/start.Jr-qlTrG.js" rel="modulepreload">
-		<link href="/roundtable/_app/immutable/chunks/Bkd8lJnQ.js" rel="modulepreload">
+    <link href="/roundtable/_app/immutable/entry/start.TpMtwjBU.js" rel="modulepreload">
+		<link href="/roundtable/_app/immutable/chunks/GHkVecUr.js" rel="modulepreload">
 		<link href="/roundtable/_app/immutable/chunks/BWZ5bAoR.js" rel="modulepreload">
 		<link href="/roundtable/_app/immutable/chunks/DC76BJEF.js" rel="modulepreload">
-		<link href="/roundtable/_app/immutable/entry/app.DKl8htMb.js" rel="modulepreload">
+		<link href="/roundtable/_app/immutable/entry/app.BbmJnSt_.js" rel="modulepreload">
 		<link href="/roundtable/_app/immutable/chunks/DYl5dUZ5.js" rel="modulepreload">
 		<link href="/roundtable/_app/immutable/chunks/xihTtKlq.js" rel="modulepreload">
 		<link href="/roundtable/_app/immutable/nodes/0.DsX-_qui.js" rel="modulepreload">
 		
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/roundtable/service-worker.js');
+            });
+        }
+    </script>
 </head>
 <body data-sveltekit-preload-data="hover">
     <div style="display: contents">
 			<script>
 				{
-					__sveltekit_7c4fxs = {
+					__sveltekit_l5y7hu = {
 						base: "/roundtable",
 						assets: "/roundtable"
 					};
@@ -29,11 +37,23 @@
 					const element = document.currentScript.parentElement;
 
 					Promise.all([
-						import("/roundtable/_app/immutable/entry/start.Jr-qlTrG.js"),
-						import("/roundtable/_app/immutable/entry/app.DKl8htMb.js")
+						import("/roundtable/_app/immutable/entry/start.TpMtwjBU.js"),
+						import("/roundtable/_app/immutable/entry/app.BbmJnSt_.js")
 					]).then(([kit, app]) => {
 						kit.start(app, element);
 					});
+
+					if ('serviceWorker' in navigator) {
+						const script_url = '/roundtable/service-worker.js';
+						const policy = globalThis?.window?.trustedTypes?.createPolicy(
+							'sveltekit-trusted-url',
+							{ createScriptURL(url) { return url; } }
+						);
+						const sanitised = policy?.createScriptURL(script_url) ?? script_url;
+						addEventListener('load', function () {
+							navigator.serviceWorker.register(sanitised);
+						});
+					}
 				}
 			</script>
 		</div>
