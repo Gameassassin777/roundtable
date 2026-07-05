@@ -148,6 +148,14 @@
         classTitle || (selectedArc ? selectedArc.charAt(0).toUpperCase() + selectedArc.slice(1) : 'Wanderer')
     );
 
+    // The current "moment" = the DM's latest narration, shown full-screen. Falls back to an opening line.
+    let currentBeat = $derived.by(() => {
+        for (let i = chatLog.length - 1; i >= 0; i--) {
+            if (chatLog[i]?.author === 'Dungeon Master') return chatLog[i].text as string;
+        }
+        return `You arrive at ${codexData.location}. ${codexData.plot_summary || ''}`.trim();
+    });
+
     // --- Live-sync wiring (extracted so switchRoom can rebind cleanly) ---
     function scrollChatToBottom() {
         setTimeout(() => {
@@ -437,6 +445,7 @@
         if (!chatInput.trim() || isLoading) return;
         const userAction = chatInput.trim();
         const author = characterName || 'You';
+        lastAction = userAction;
         chatInput = '';
         isLoading = true;
 
@@ -801,59 +810,43 @@
                     </div>
                 </aside>
 
-                <!-- Chat console -->
-                <section class="console-panel panel">
-                    <div class="chat-log-scroll">
-                        <div class="chat-log-container">
-                            {#if chatLog.length === 0}
-                                <div class="intro-card">
-                                    <h3>The adventure begins</h3>
-                                    <p>Type an action below to shape the story. Every action rolls a d20 against fate.</p>
+                <!-- Immersive moment stage — one beat at a time, no scrolling log -->
+                <section class="moment-stage panel">
+                    <div class="stage-body">
+                        {#if isLoading}
+                            <div class="beat resolving">
+                                {#if lastAction}<p class="your-move">“{lastAction}”</p>{/if}
+                                <div class="resolving-ind">
+                                    <span class="orb-pulse"></span>
+                                    <span>The world responds…</span>
                                 </div>
-                            {/if}
-
-                            {#each chatLog as entry}
-                                <div class="log-message {entry.type}">
-                                    <div class="message-header"><span class="sender">{entry.author}</span></div>
-                                    <div class="message-body">
-                                        {#if entry.type === 'dm'}
-                                            <p class="dm-narrative">{@html entry.text}</p>
-                                        {:else}
-                                            <p class="player-text">{entry.text}</p>
-                                        {/if}
-                                    </div>
-                                </div>
-                            {/each}
-
-                            {#if isLoading}
-                                <div class="log-message dm loading">
-                                    <div class="message-header"><span class="sender">Dungeon Master</span></div>
-                                    <div class="message-body">
-                                        <div class="weaving-spinner">
-                                            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-                                            <span class="text">Weaving fate…</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            {/if}
-                        </div>
+                            </div>
+                        {:else}
+                            {#key currentBeat}
+                                <p class="beat-text">{@html currentBeat}</p>
+                            {/key}
+                        {/if}
                     </div>
 
-                    <div class="action-crucible">
-                        <input
-                            type="text"
-                            bind:value={chatInput}
-                            onkeydown={(e) => e.key === 'Enter' && submitAction()}
-                            placeholder={isLoading ? 'The wheel of fate turns…' : 'Describe your action…'}
-                            disabled={isLoading || !isReady}
-                        />
-                        <button class="act-btn" onclick={submitAction} disabled={isLoading || !isReady} aria-label="Act">
-                            {#if isLoading}
-                                <span class="mini-spinner"></span>
-                            {:else}
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h14"/><path d="M12 6l6 6-6 6"/></svg>
-                            {/if}
-                        </button>
+                    <div class="stage-action">
+                        <span class="turn-cue">{characterName || 'You'} — what do you do?</span>
+                        <div class="action-row">
+                            <input
+                                class="action-field"
+                                type="text"
+                                bind:value={chatInput}
+                                onkeydown={(e) => e.key === 'Enter' && submitAction()}
+                                placeholder={isLoading ? 'The world responds…' : 'Speak your action…'}
+                                disabled={isLoading || !isReady}
+                            />
+                            <button class="btn-primary act-go" onclick={submitAction} disabled={isLoading || !isReady || !chatInput.trim()} aria-label="Act">
+                                {#if isLoading}
+                                    <span class="mini-spinner"></span>
+                                {:else}
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h14"/><path d="M12 6l6 6-6 6"/></svg>
+                                {/if}
+                            </button>
+                        </div>
                     </div>
                 </section>
             </div>
@@ -1483,92 +1476,86 @@
     .dur-bar-fill { display: block; height: 100%; background: var(--gold); }
     .count { font-size: 0.6rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-    /* Console */
-    .console-panel {
+    /* Immersive moment stage — one beat at a time, no scrolling log */
+    .moment-stage {
         flex-grow: 1;
         display: flex;
         flex-direction: column;
         pointer-events: auto;
         overflow: hidden;
-        background: rgba(251, 248, 241, 0.92);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
+        background: rgba(251, 248, 241, 0.86);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
         min-width: 0;
     }
-
-    .chat-log-scroll { flex-grow: 1; overflow-y: auto; padding: 1.4rem; }
-    .chat-log-container { display: flex; flex-direction: column; gap: 1.1rem; justify-content: flex-end; min-height: 100%; }
-
-    .intro-card {
+    .stage-body {
+        flex-grow: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2.5rem 2rem;
+        overflow-y: auto;
         text-align: center;
-        padding: 2.4rem 1.5rem;
-        max-width: 420px;
-        margin: auto;
-        border: 1px dashed var(--line-strong);
-        border-radius: var(--radius);
-        background: var(--surface-2);
     }
-    .intro-card h3 { font-family: var(--font-serif); color: var(--ink); margin-bottom: 0.6rem; }
-    .intro-card p { font-size: 0.86rem; line-height: 1.5; color: var(--muted); }
+    .beat-text {
+        font-family: var(--font-serif);
+        font-size: 1.4rem;
+        line-height: 1.75;
+        color: var(--ink);
+        max-width: 62ch;
+        text-wrap: balance;
+        animation: beat-in 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes beat-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
 
-    .log-message {
+    .beat.resolving { display: flex; flex-direction: column; align-items: center; gap: 1.2rem; }
+    .your-move {
+        font-family: var(--font-serif);
+        font-size: 1.15rem;
+        line-height: 1.6;
+        color: var(--ink-soft);
+        font-style: italic;
+        max-width: 50ch;
+    }
+    .resolving-ind {
+        display: flex; align-items: center; gap: 0.6rem;
+        font-family: var(--font-serif);
+        font-size: 1rem;
+        color: var(--accent);
+        letter-spacing: 0.3px;
+    }
+    .orb-pulse {
+        width: 9px; height: 9px; border-radius: 50%;
+        background: var(--accent);
+        animation: orb 1.4s ease-in-out infinite;
+    }
+    @keyframes orb { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.2); } }
+
+    .stage-action {
+        border-top: 1px solid var(--line);
+        padding: 0.9rem 1.1rem 1.05rem;
+        background: var(--surface);
         display: flex;
         flex-direction: column;
-        max-width: 88%;
-        animation: msg-appear 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+        gap: 0.5rem;
     }
-    @keyframes msg-appear { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-
-    .log-message.player { align-self: flex-end; align-items: flex-end; }
-    .log-message.dm { align-self: flex-start; align-items: flex-start; }
-
-    .message-header { margin-bottom: 0.25rem; padding: 0 0.3rem; }
-    .message-header .sender {
-        font-size: 0.66rem;
-        text-transform: uppercase;
-        letter-spacing: 0.6px;
+    .turn-cue {
+        font-size: 0.7rem;
         font-weight: 700;
-        color: var(--muted);
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        color: var(--accent);
     }
-    .log-message.dm .message-header .sender { color: var(--accent); }
-
-    .message-body { padding: 0.75rem 1rem; border-radius: var(--radius); line-height: 1.55; }
-    .log-message.player .message-body {
-        background: var(--accent);
-        border-bottom-right-radius: 4px;
-    }
-    .player-text { font-size: 0.9rem; color: #fdf6ec; }
-
-    .log-message.dm .message-body {
-        background: var(--surface-2);
-        border: 1px solid var(--line);
-        border-left: 3px solid var(--accent);
-        border-top-left-radius: 4px;
-    }
-    .dm-narrative { font-family: var(--font-serif); font-size: 0.92rem; color: var(--ink); }
-
-    .weaving-spinner { display: flex; align-items: center; gap: 0.4rem; font-family: var(--font-serif); font-size: 0.85rem; color: var(--accent); }
-    .weaving-spinner .dot { width: 5px; height: 5px; background: var(--accent); border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite ease-in-out both; }
-    .weaving-spinner .dot:nth-child(1) { animation-delay: -0.32s; }
-    .weaving-spinner .dot:nth-child(2) { animation-delay: -0.16s; }
-    @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
-    .weaving-spinner .text { margin-left: 0.3rem; }
-
-    .action-crucible {
-        display: flex;
-        gap: 0.6rem;
-        padding: 0.7rem;
-        border-top: 1px solid var(--line);
-        background: var(--surface);
-    }
-    .action-crucible input { flex-grow: 1; }
-    .act-btn {
-        width: 48px;
-        flex-shrink: 0;
+    .action-row { display: flex; gap: 0.6rem; }
+    .action-field { flex: 1; font-size: 1rem; }
+    .act-go {
+        width: 52px; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;
         padding: 0;
     }
-    .act-btn svg { width: 20px; height: 20px; }
+    .act-go svg { width: 20px; height: 20px; }
+
+    @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
 
     .mini-spinner {
         width: 16px; height: 16px;
@@ -1631,7 +1618,9 @@
             box-shadow: var(--shadow-lg);
         }
         .codex-sidebar.mobile-visible { left: 0; }
-        .log-message { max-width: 92%; }
+        .stage-body { padding: 1.6rem 1.2rem; }
+        .beat-text { font-size: 1.2rem; line-height: 1.7; }
+        .your-move { font-size: 1.05rem; }
         .wizard-card { padding: 1.6rem; }
         .game-title { font-size: 2.1rem; }
     }
