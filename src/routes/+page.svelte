@@ -680,7 +680,7 @@
                     </button>
                     <div class="brand">
                         <h1>Round Table</h1>
-                        <span class="version">v1.3</span>
+                        <span class="version">v2.0</span>
                     </div>
                 </div>
 
