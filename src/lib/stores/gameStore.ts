@@ -1,5 +1,4 @@
 import * as Y from 'yjs';
-import { WebrtcProvider } from 'y-webrtc';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { writable } from 'svelte/store';
 
@@ -11,11 +10,118 @@ export function createGameState(roomId: string) {
     // even the last peer leaving (it lives in every device's IndexedDB).
     const persistence = new IndexeddbPersistence(room, ydoc);
 
-    // Peer-to-peer real-time sync over WebRTC. The signaling worker only introduces peers;
-    // no game data ever touches a server.
-    const provider = new WebrtcProvider(room, ydoc, {
-        signaling: ['wss://roundtable-signaling.gameassassin777.workers.dev']
+    // Custom WebSocket provider to sync document state and presence with the server
+    const wsUrl = `wss://roundtable-signaling.gameassassin777.workers.dev?room=${roomId}`;
+    let ws: WebSocket | null = null;
+    const providerStore = writable({ status: 'connecting', peersCount: 0 });
+
+    const awareness = {
+        _states: new Map(),
+        _listeners: [] as any[],
+        setLocalStateField(key: string, val: any) {
+            if (key === 'user' && val?.name) {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'presence-update', name: val.name }));
+                }
+            }
+        },
+        on(event: string, callback: any) {
+            this._listeners.push(callback);
+        },
+        getStates() {
+            return this._states;
+        },
+        trigger() {
+            this._listeners.forEach(cb => {
+                try { cb(); } catch { /* noop */ }
+            });
+        }
+    };
+
+    function uint8ArrayToBase64(uint8: Uint8Array) {
+        let binary = '';
+        const len = uint8.byteLength;
+        for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(uint8[i]);
+        }
+        return btoa(binary);
+    }
+
+    function base64ToUint8Array(base64: string) {
+        const binaryString = atob(base64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes;
+    }
+
+    function connectWs() {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            console.log('Connected to server-hosted world:', roomId);
+            providerStore.set({ status: 'connected', peersCount: 0 });
+            // Send local presence update immediately upon connection
+            const myName = localStorage.getItem(`rt_char_${roomId}`) || 'Wanderer';
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'presence-update', name: myName }));
+            }
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'sync-init' || data.type === 'update') {
+                    const updateBytes = base64ToUint8Array(data.update);
+                    // Apply update with origin 'server' so we don't echo it back
+                    ydoc.transact(() => {
+                        Y.applyUpdate(ydoc, updateBytes, 'server');
+                    }, 'server');
+                } else if (data.type === 'presence-list') {
+                    awareness._states.clear();
+                    data.players.forEach((p: string, idx: number) => {
+                        awareness._states.set(idx, { user: { name: p } });
+                    });
+                    providerStore.set({ status: 'connected', peersCount: Math.max(0, data.players.length - 1) });
+                    awareness.trigger();
+                }
+            } catch (e) {
+                console.error('Error handling WebSocket message:', e);
+            }
+        };
+
+        ws.onclose = () => {
+            console.log('World connection closed. Reconnecting...');
+            providerStore.set({ status: 'disconnected', peersCount: 0 });
+            setTimeout(connectWs, 3000);
+        };
+
+        ws.onerror = () => {
+            if (ws) ws.close();
+        };
+    }
+
+    // Listen to local Yjs updates and send them to the server
+    ydoc.on('update', (update, origin) => {
+        if (origin !== 'server' && ws && ws.readyState === WebSocket.OPEN) {
+            const base64Update = uint8ArrayToBase64(update);
+            ws.send(JSON.stringify({ type: 'update', update: base64Update }));
+        }
     });
+
+    connectWs();
+
+    const provider = {
+        awareness,
+        destroy() {
+            if (ws) {
+                ws.onclose = null;
+                ws.close();
+            }
+        }
+    };
 
     const yChatLog = ydoc.getArray('chatLog');
     const chatStore = writable<any[]>([]);
@@ -52,7 +158,7 @@ export function createGameState(roomId: string) {
 
     return {
         chatStore, addChatEntry, ydoc, provider, persistence,
-        awareness: provider.awareness,
+        awareness,
         yPendingActions, actionLock,
         reportKeyExhausted, reportKeyHealthy, destroy
     };

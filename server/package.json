@@ -1,0 +1,8 @@
+{
+  "name": "roundtable-signaling",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "yjs": "^13.6.31"
+  }
+}
