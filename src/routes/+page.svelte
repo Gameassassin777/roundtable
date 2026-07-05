@@ -5,6 +5,7 @@
     import { createGameState } from '$lib/stores/gameStore';
     import { callAI } from '$lib/ai/dmEngine';
     import { buildBatchPrompt } from '$lib/ai/promptBuilder';
+    import { forgeCharacter, type ForgedCharacter } from '$lib/ai/soulForge';
 
     let roomId = $state("crypt-99");
     let gameState = createGameState(roomId);
@@ -26,40 +27,50 @@
     let showSettings = $state(false);
     let connectionStatus = $state("Connecting");
 
-    // Onboarding wizard step: 'welcome' | 'character' | 'table'
+    // Onboarding wizard step: 'welcome' | 'attune' | 'forge'
     let wizardStep = $state('welcome');
 
-    // Character archetypes — cohesive inline SVG icons, no emoji.
-    const archetypes = [
-        {
-            id: 'fighter', name: 'Fighter',
-            blurb: 'Frontline bulwark — soaks blows and holds the line.',
-            hp: 18, resolve: 15, corruption: 0, traits: ['Hardened', 'Iron Will'], item: 'Rusty Sword',
-            icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z"/></svg>`
-        },
-        {
-            id: 'rogue', name: 'Rogue',
-            blurb: 'Precise and elusive — strikes from the shadows.',
-            hp: 12, resolve: 30, corruption: 0, traits: ['Nimble', 'Shadowmeld'], item: 'Dull Dagger',
-            icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.3 7h-4.6z"/><path d="M12 9.5v6.5"/><path d="M9 16h6"/><path d="M12 16v5.5"/></svg>`
-        },
-        {
-            id: 'cleric', name: 'Cleric',
-            blurb: 'Keeper of faith — mends wounds and wards corruption.',
-            hp: 14, resolve: 25, corruption: 0, traits: ['Sacred Mark', 'Blessed'], item: 'Wooden Mace',
-            icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4.5h10"/><path d="M8 4.5c0 4 1.6 6.5 4 6.5s4-2.5 4-6.5"/><path d="M12 11v5.5"/><path d="M8 20h8"/></svg>`
-        },
-        {
-            id: 'mage', name: 'Mage',
-            blurb: 'Wields raw aether — immense power, creeping corruption.',
-            hp: 10, resolve: 20, corruption: 20, traits: ['Aether Resonance', 'Spellbound'], item: 'Cursed Staff',
-            icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3c.6 4.2 1.6 5.2 5.5 5.8C12.6 9.4 11.6 10.4 11 14.6c-.6-4.2-1.6-5.2-5.5-5.8C9.4 8.2 10.4 7.2 11 3z"/><path d="M18 14.5l.4 1.6 1.6.4-1.6.4-.4 1.6-.4-1.6-1.6-.4 1.6-.4z"/></svg>`
-        }
-    ];
+    // Cohesive inline SVG icons, mapped from the AI-generated archetype keyword.
+    const S = 'fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
+    const ICONS: Record<string, string> = {
+        shield:  `<svg viewBox="0 0 24 24" ${S}><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z"/></svg>`,
+        dagger:  `<svg viewBox="0 0 24 24" ${S}><path d="M12 2.5l2.3 7h-4.6z"/><path d="M12 9.5v6.5"/><path d="M9 16h6"/><path d="M12 16v5.5"/></svg>`,
+        chalice: `<svg viewBox="0 0 24 24" ${S}><path d="M7 4.5h10"/><path d="M8 4.5c0 4 1.6 6.5 4 6.5s4-2.5 4-6.5"/><path d="M12 11v5.5"/><path d="M8 20h8"/></svg>`,
+        sparkle: `<svg viewBox="0 0 24 24" ${S}><path d="M11 3c.6 4.2 1.6 5.2 5.5 5.8C12.6 9.4 11.6 10.4 11 14.6c-.6-4.2-1.6-5.2-5.5-5.8C9.4 8.2 10.4 7.2 11 3z"/><path d="M18 14.5l.4 1.6 1.6.4-1.6.4-.4 1.6-.4-1.6-1.6-.4 1.6-.4z"/></svg>`,
+        bow:     `<svg viewBox="0 0 24 24" ${S}><path d="M6 18A12 12 0 0 1 18 6"/><path d="M4 20L20 4"/><path d="M15 4h5v5"/></svg>`,
+        note:    `<svg viewBox="0 0 24 24" ${S}><path d="M9 17V5l10-2v12"/><circle cx="6.5" cy="17" r="2.5"/><circle cx="16.5" cy="15" r="2.5"/></svg>`,
+        rune:    `<svg viewBox="0 0 24 24" ${S}><path d="M12 2l8 10-8 10-8-10z"/><path d="M12 7v10"/><path d="M8 12h8"/></svg>`
+    };
+
+    function iconFor(arc: string): string {
+        const a = (arc || '').toLowerCase();
+        if (/(rogue|thief|assassin|shadow|blade|knife)/.test(a)) return ICONS.dagger;
+        if (/(mage|wizard|warlock|sorc|witch|arcan|ember|pyro|necro)/.test(a)) return ICONS.sparkle;
+        if (/(cleric|priest|paladin|holy|monk|saint|acolyte)/.test(a)) return ICONS.chalice;
+        if (/(ranger|hunter|archer|druid|beast|scout)/.test(a)) return ICONS.bow;
+        if (/(bard|skald|minstrel|song)/.test(a)) return ICONS.note;
+        if (/(warrior|fighter|knight|barbarian|guard|soldier|brute)/.test(a)) return ICONS.shield;
+        return ICONS.rune;
+    }
 
     let characterSelected = $state(false);
     let characterName = $state('');
-    let selectedArc = $state('fighter');
+    let selectedArc = $state('warrior');
+    let classTitle = $state('');
+
+    // --- Soul Forge (AI character genesis) ---
+    let concept = $state('');
+    let forging = $state(false);
+    let forged = $state<ForgedCharacter | null>(null);
+    let forgeError = $state('');
+    let refineText = $state('');
+
+    const CONCEPT_EXAMPLES = [
+        'A rogue terrified of the dark who hides in shadows',
+        'A defrocked priest who bargained his faith for necromancy',
+        'A hulking blacksmith with a cursed hammer that whispers',
+        'A silver-tongued swindler running from a debt to a fey lord'
+    ];
 
     // Reconstruct Codex state reactively
     let codexData = $state({
@@ -78,10 +89,8 @@
     );
 
     let myArchetypeLabel = $derived(
-        archetypes.find(a => a.id === selectedArc)?.name || 'Fighter'
+        classTitle || (selectedArc ? selectedArc.charAt(0).toUpperCase() + selectedArc.slice(1) : 'Wanderer')
     );
-
-    let selectedArcData = $derived(archetypes.find(a => a.id === selectedArc) || archetypes[0]);
 
     // --- Live-sync wiring (extracted so switchRoom can rebind cleanly) ---
     function scrollChatToBottom() {
@@ -131,11 +140,16 @@
         const savedSelected = localStorage.getItem('rt_character_selected');
         if (savedName && savedSelected === 'true') {
             characterName = savedName;
-            selectedArc = localStorage.getItem('rt_char_arc') || 'fighter';
+            selectedArc = localStorage.getItem('rt_char_arc') || 'warrior';
             characterSelected = true;
+            try {
+                const saved = localStorage.getItem('rt_character');
+                if (saved) { forged = JSON.parse(saved); classTitle = forged?.class_title || ''; }
+            } catch { /* ignore corrupt cache */ }
         }
-        // Returning player who has a hero but no key: send them straight to the last step.
-        if (characterSelected && !isReady) wizardStep = 'table';
+        // Route returning players to the right onboarding step.
+        if (characterSelected && !isReady) wizardStep = 'attune';
+        else if (isReady && !characterSelected) wizardStep = 'forge';
 
         bindPeers();
         bindCodex();
@@ -144,53 +158,75 @@
         setTimeout(() => { if (connectionStatus === "Connecting") connectionStatus = "Solo"; }, 2500);
     });
 
-    function beginQuest() { wizardStep = 'character'; }
+    function beginQuest() { wizardStep = 'attune'; }
 
+    // Commit the key from the wizard, then advance to the Soul Forge.
+    function attune() {
+        if (!apiKey.trim()) return;
+        localStorage.setItem('rt_api_key', apiKey);
+        isReady = true;
+        wizardStep = 'forge';
+    }
+
+    // In-game settings-drawer save (does not move the wizard).
     function saveSettings() {
         if (apiKey) {
             localStorage.setItem('rt_api_key', apiKey);
-            isReady = true;   // commit the key — this is what advances past the entry screen
+            isReady = true;
             showSettings = false;
         }
     }
 
-    function confirmCharacter() {
-        if (!characterName.trim() || !selectedArc) return;
-        const chosen = archetypes.find(a => a.id === selectedArc);
-        if (!chosen) return;
+    // --- Soul Forge actions ---
+    async function runForge(opts: { previous?: ForgedCharacter; refine?: string; nameHint?: string }) {
+        if (!concept.trim() || forging || !apiKey) return;
+        forging = true; forgeError = '';
+        try {
+            forged = await forgeCharacter(concept.trim(), apiKey, opts);
+            if (forged && !characterName.trim()) characterName = forged.name;
+        } catch (e: any) {
+            forgeError = e?.message || 'The forge went cold. Check your key and try again.';
+        }
+        forging = false;
+    }
+    function forge()   { runForge({ nameHint: characterName.trim() || undefined }); }
+    function reforge() { if (forged) runForge({ previous: forged }); }
+    function refine()  {
+        if (!refineText.trim() || !forged) return;
+        const r = refineText.trim(); refineText = '';
+        runForge({ previous: forged, refine: r });
+    }
 
+    function acceptCharacter() {
+        if (!forged) return;
+        const name = (characterName || forged.name || 'Nameless').trim();
         const charData = {
-            hp: chosen.hp,
-            max_hp: chosen.hp,
-            resolve: chosen.resolve,
-            corruption: chosen.corruption,
-            active_traits: chosen.traits,
-            permanent_conditions: [],
-            echo_tags: []
+            hp: forged.hp, max_hp: forged.hp,
+            resolve: forged.resolve, corruption: forged.corruption,
+            active_traits: forged.traits.map(t => t.name),
+            trait_details: forged.traits,
+            permanent_conditions: [], echo_tags: [],
+            class_title: forged.class_title, archetype: forged.archetype,
+            backstory: forged.backstory
         };
-
         ydoc.transact(() => {
             const yCodex = ydoc.getMap('memoryCodex');
             const party = yCodex.get('party') || {};
-            party[characterName] = charData;
+            party[name] = charData;
             yCodex.set('party', party);
-
             const inventory = yCodex.get('inventory') || {};
-            inventory[chosen.item] = { durability: 3 };
+            inventory[forged.starting_item.name] = { durability: 3, note: forged.starting_item.note || '' };
             yCodex.set('inventory', inventory);
         });
-
-        localStorage.setItem('rt_char_name', characterName);
-        localStorage.setItem('rt_char_arc', selectedArc);
+        localStorage.setItem('rt_char_name', name);
+        localStorage.setItem('rt_char_arc', forged.archetype);
         localStorage.setItem('rt_character_selected', 'true');
+        localStorage.setItem('rt_character', JSON.stringify(forged));
+        characterName = name;
+        selectedArc = forged.archetype;
+        classTitle = forged.class_title;
         characterSelected = true;
-        wizardStep = 'table';   // advance to final setup step
-
-        addChatEntry({
-            author: 'System',
-            text: `${characterName} the ${chosen.name} has joined the table.`,
-            type: 'dm'
-        });
+        addChatEntry({ author: 'System', text: `${name} — ${forged.class_title} — has joined the table.`, type: 'dm' });
     }
 
     function switchRoom() {
@@ -308,55 +344,22 @@
                     <p class="fineprint">Play solo or invite friends with a shared table code.</p>
                 </div>
 
-            {:else if wizardStep === 'character'}
+            {:else if wizardStep === 'attune'}
                 <div class="wizard-card panel">
                     <div class="wizard-head">
                         <span class="step-tag">Step 1 of 2</span>
-                        <h2>Forge Your Hero</h2>
-                        <p class="wizard-sub">Choose a class and name your character.</p>
-                    </div>
-
-                    <div class="class-grid">
-                        {#each archetypes as arc}
-                            <button
-                                class="class-card {selectedArc === arc.id ? 'selected' : ''}"
-                                onclick={() => selectedArc = arc.id}
-                                type="button"
-                            >
-                                <span class="class-icon">{@html arc.icon}</span>
-                                <span class="class-name">{arc.name}</span>
-                                <span class="class-blurb">{arc.blurb}</span>
-                                <span class="class-stats">
-                                    <span><b>{arc.hp}</b> HP</span>
-                                    <span><b>{arc.resolve}%</b> Resolve</span>
-                                    {#if arc.corruption > 0}<span class="corrupt"><b>{arc.corruption}%</b> Corr.</span>{/if}
-                                </span>
-                            </button>
-                        {/each}
+                        <h2>Attune the Aether</h2>
+                        <p class="wizard-sub">Round Table's AI forges your hero and narrates the world. Connect your free Google AI Studio key to power it.</p>
                     </div>
 
                     <label class="field">
-                        <span class="field-label">Character name</span>
-                        <input type="text" bind:value={characterName} placeholder="e.g. Aldric of the Vale" />
+                        <span class="field-label">Google AI Studio key</span>
+                        <input type="password" bind:value={apiKey} placeholder="AIza…" />
+                        <span class="field-help">
+                            Stored only in this browser — it never leaves your device.
+                            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free key →</a>
+                        </span>
                     </label>
-
-                    <div class="wizard-actions">
-                        <button class="btn-ghost" onclick={() => wizardStep = 'welcome'}>Back</button>
-                        <button class="btn-primary" disabled={!characterName.trim()} onclick={confirmCharacter}>
-                            Continue
-                        </button>
-                    </div>
-                </div>
-
-            {:else}
-                <div class="wizard-card panel">
-                    <div class="wizard-head">
-                        <span class="step-tag">Step 2 of 2</span>
-                        <h2>Prepare the Table</h2>
-                        <p class="wizard-sub">
-                            Playing as <b>{characterName || 'your hero'}</b> the {myArchetypeLabel}.
-                        </p>
-                    </div>
 
                     <label class="field">
                         <span class="field-label">Table code</span>
@@ -364,20 +367,81 @@
                         <span class="field-help">Share this code so friends join your table. Leave it as-is to play solo.</span>
                     </label>
 
+                    <div class="wizard-actions">
+                        <button class="btn-ghost" onclick={() => wizardStep = 'welcome'}>Back</button>
+                        <button class="btn-primary" disabled={!apiKey.trim()} onclick={attune}>Continue</button>
+                    </div>
+                </div>
+
+            {:else}
+                <!-- Soul Forge — AI-generated custom character -->
+                <div class="wizard-card forge-card panel">
+                    <div class="wizard-head">
+                        <span class="step-tag">Step 2 of 2</span>
+                        <h2>The Soul Forge</h2>
+                        <p class="wizard-sub">Describe the hero you imagine. The AI forges them — stats, class, traits, and all.</p>
+                    </div>
+
                     <label class="field">
-                        <span class="field-label">Google AI Studio key</span>
-                        <input type="password" bind:value={apiKey} placeholder="AIza…" />
-                        <span class="field-help">
-                            Powers the AI Dungeon Master. Stored only in this browser — it never leaves your device.
-                            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free key →</a>
-                        </span>
+                        <span class="field-label">Your concept</span>
+                        <textarea rows="3" bind:value={concept} placeholder="e.g. A rogue terrified of the dark who hides in shadows…"></textarea>
                     </label>
 
-                    <div class="wizard-actions">
-                        <button class="btn-ghost" onclick={() => wizardStep = 'character'}>Back</button>
-                        <button class="btn-primary" disabled={!apiKey.trim()} onclick={saveSettings}>
-                            Enter the Realm
-                        </button>
+                    {#if !forged}
+                        <div class="concept-chips">
+                            {#each CONCEPT_EXAMPLES as ex}
+                                <button type="button" class="chip-btn" onclick={() => concept = ex}>{ex}</button>
+                            {/each}
+                        </div>
+                    {/if}
+
+                    {#if forgeError}<p class="forge-error">{forgeError}</p>{/if}
+
+                    {#if forged}
+                        <div class="forged-card">
+                            <div class="forged-head">
+                                <span class="forged-icon">{@html iconFor(forged.archetype)}</span>
+                                <div class="forged-id">
+                                    <input class="forged-name-input" type="text" bind:value={characterName} placeholder={forged.name} />
+                                    <span class="forged-class">{forged.class_title}</span>
+                                </div>
+                            </div>
+
+                            <div class="stat-chips">
+                                <span class="chip"><b>{forged.hp}</b> HP</span>
+                                <span class="chip"><b>{forged.resolve}%</b> Resolve</span>
+                                {#if forged.corruption > 0}<span class="chip corrupt"><b>{forged.corruption}%</b> Corruption</span>{/if}
+                            </div>
+
+                            <div class="forged-traits">
+                                {#each forged.traits as t}
+                                    <div class="trait-row"><b>{t.name}</b>{#if t.desc} — {t.desc}{/if}</div>
+                                {/each}
+                            </div>
+
+                            <div class="forged-item">
+                                <span class="item-key">Carries</span> {forged.starting_item.name}{#if forged.starting_item.note} — <i>{forged.starting_item.note}</i>{/if}
+                            </div>
+
+                            <p class="forged-backstory">{forged.backstory}</p>
+
+                            <div class="refine-row">
+                                <input type="text" bind:value={refineText} onkeydown={(e) => e.key === 'Enter' && refine()} placeholder="Tweak it… e.g. make them older, add a scar" disabled={forging} />
+                                <button class="btn-ghost" onclick={refine} disabled={forging || !refineText.trim()}>Refine</button>
+                            </div>
+                        </div>
+                    {/if}
+
+                    <div class="wizard-actions forge-actions">
+                        <button class="btn-ghost" onclick={() => wizardStep = 'attune'}>Back</button>
+                        {#if !forged}
+                            <button class="btn-primary" disabled={!concept.trim() || forging} onclick={forge}>
+                                {forging ? 'Forging…' : 'Forge Character'}
+                            </button>
+                        {:else}
+                            <button class="btn-ghost" onclick={reforge} disabled={forging}>{forging ? 'Forging…' : 'Reforge'}</button>
+                            <button class="btn-primary" disabled={forging} onclick={acceptCharacter}>Enter the Realm</button>
+                        {/if}
                     </div>
                 </div>
             {/if}
@@ -420,7 +484,7 @@
                 <aside class="codex-sidebar panel {showCodexMobile ? 'mobile-visible' : ''}">
                     <div class="sidebar-header">
                         <div class="hero-id">
-                            <span class="hero-avatar">{@html selectedArcData.icon}</span>
+                            <span class="hero-avatar">{@html iconFor(selectedArc)}</span>
                             <div>
                                 <h2>{characterName}</h2>
                                 <span class="archetype">{myArchetypeLabel}</span>
@@ -440,6 +504,19 @@
                         <div class="stat-group">
                             <div class="stat-label-row"><span>Corruption</span><span class="val corruption-val">{myCharacter.corruption}%</span></div>
                             <div class="progress-bar"><div class="fill corruption" style="width: {myCharacter.corruption}%"></div></div>
+                        </div>
+
+                        <div class="codex-section">
+                            <h3>Traits</h3>
+                            {#if !myCharacter.active_traits || myCharacter.active_traits.length === 0}
+                                <p class="empty-state">No traits yet.</p>
+                            {:else}
+                                <ul class="trait-list">
+                                    {#each myCharacter.active_traits as trait}
+                                        <li class="trait-tag">{trait}</li>
+                                    {/each}
+                                </ul>
+                            {/if}
                         </div>
 
                         <div class="codex-section">
@@ -677,58 +754,6 @@
         color: var(--ink);
     }
     .wizard-sub { color: var(--ink-soft); font-size: 0.92rem; }
-    .wizard-sub b { color: var(--ink); font-weight: 600; }
-
-    .class-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 0.75rem;
-    }
-
-    .class-card {
-        background: var(--surface-2);
-        border: 1.5px solid var(--line);
-        border-radius: var(--radius);
-        padding: 1rem;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.35rem;
-        text-align: left;
-        cursor: pointer;
-        transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
-    }
-    .class-card:hover { border-color: var(--line-strong); transform: translateY(-2px); box-shadow: var(--shadow-sm); }
-    .class-card.selected {
-        border-color: var(--accent);
-        background: #fff;
-        box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-sm);
-    }
-
-    .class-icon {
-        width: 34px; height: 34px;
-        color: var(--accent);
-        display: flex;
-    }
-    .class-icon :global(svg) { width: 100%; height: 100%; }
-
-    .class-name {
-        font-family: var(--font-serif);
-        font-weight: 600;
-        font-size: 1.05rem;
-        color: var(--ink);
-    }
-    .class-blurb { font-size: 0.76rem; color: var(--muted); line-height: 1.35; }
-    .class-stats {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.6rem;
-        font-size: 0.72rem;
-        color: var(--ink-soft);
-        margin-top: 0.2rem;
-    }
-    .class-stats b { color: var(--ink); font-weight: 700; }
-    .class-stats .corrupt b { color: var(--corruption); }
 
     /* Fields */
     .field { display: flex; flex-direction: column; gap: 0.4rem; }
@@ -748,6 +773,113 @@
     }
     .wizard-actions .btn-ghost { flex: 0 0 auto; }
     .wizard-actions .btn-primary { flex: 1; }
+
+    /* ---- Soul Forge ---- */
+    .forge-card { max-width: 600px; }
+    textarea { resize: vertical; min-height: 74px; line-height: 1.5; }
+
+    .concept-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .chip-btn {
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        color: var(--ink-soft);
+        border-radius: var(--radius-pill);
+        padding: 0.35rem 0.7rem;
+        font-size: 0.74rem;
+        font-weight: 500;
+        text-align: left;
+    }
+    .chip-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+    .forge-error { color: var(--hp); font-size: 0.82rem; }
+
+    .forged-card {
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 1.1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+        animation: rise 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .forged-head { display: flex; align-items: center; gap: 0.7rem; }
+    .forged-icon {
+        width: 46px; height: 46px; flex-shrink: 0;
+        color: var(--accent); background: var(--accent-soft);
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+    }
+    .forged-icon :global(svg) { width: 26px; height: 26px; }
+    .forged-id { display: flex; flex-direction: column; gap: 0.15rem; flex: 1; min-width: 0; }
+    .forged-name-input {
+        font-family: var(--font-serif);
+        font-size: 1.15rem;
+        font-weight: 600;
+        color: var(--ink);
+        border: none;
+        background: transparent;
+        padding: 0.1rem 0;
+        border-bottom: 1px dashed var(--line-strong);
+        border-radius: 0;
+    }
+    .forged-name-input:focus { box-shadow: none; border-bottom-color: var(--accent); background: transparent; }
+    .forged-class { font-size: 0.78rem; color: var(--accent); font-weight: 600; letter-spacing: 0.3px; }
+
+    .stat-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .chip {
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-pill);
+        padding: 0.25rem 0.7rem;
+        font-size: 0.76rem;
+        color: var(--ink-soft);
+    }
+    .chip b { color: var(--ink); }
+    .chip.corrupt b { color: var(--corruption); }
+
+    .forged-traits { display: flex; flex-direction: column; gap: 0.4rem; }
+    .trait-row {
+        font-size: 0.82rem;
+        color: var(--ink-soft);
+        line-height: 1.4;
+        padding-left: 0.7rem;
+        border-left: 2px solid var(--gold);
+    }
+    .trait-row b { color: var(--ink); }
+
+    .forged-item { font-size: 0.82rem; color: var(--ink-soft); }
+    .item-key { font-weight: 700; color: var(--gold); text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.5px; margin-right: 0.3rem; }
+    .forged-item i { color: var(--muted); }
+
+    .forged-backstory {
+        font-family: var(--font-serif);
+        font-size: 0.86rem;
+        line-height: 1.55;
+        color: var(--ink);
+        font-style: italic;
+        border-top: 1px solid var(--line);
+        padding-top: 0.8rem;
+    }
+
+    .refine-row { display: flex; gap: 0.5rem; }
+    .refine-row input { flex: 1; }
+    .refine-row .btn-ghost { flex-shrink: 0; }
+
+    .forge-actions { flex-wrap: wrap; }
+    .forge-actions .btn-primary { flex: 1; min-width: 150px; }
+    .forge-actions .btn-ghost { flex: 0 0 auto; }
+
+    /* Sidebar trait tags */
+    .trait-list { list-style: none; display: flex; flex-direction: column; gap: 0.35rem; }
+    .trait-tag {
+        font-size: 0.76rem;
+        color: var(--ink);
+        background: var(--gold-soft);
+        border: 1px solid rgba(169, 126, 60, 0.3);
+        padding: 0.35rem 0.6rem;
+        border-radius: var(--radius-sm);
+    }
 
     /* ============ GAME LAYOUT ============ */
     .layout-grid {
@@ -1111,7 +1243,6 @@
         }
         .codex-sidebar.mobile-visible { left: 0; }
         .log-message { max-width: 92%; }
-        .class-grid { grid-template-columns: 1fr; }
         .wizard-card { padding: 1.6rem; }
         .game-title { font-size: 2.1rem; }
     }
