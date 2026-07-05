@@ -63,7 +63,14 @@ export function createGameState(roomId: string) {
         ws.onopen = () => {
             console.log('Connected to server-hosted world:', roomId);
             providerStore.set({ status: 'connected', peersCount: 0 });
-            // Send local presence update immediately upon connection
+            
+            // Handshake step 1: Upload current local state to merge with server
+            const localState = Y.encodeStateAsUpdate(ydoc);
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'sync-client', update: uint8ArrayToBase64(localState) }));
+            }
+
+            // Handshake step 2: Send local presence update immediately upon connection
             const myName = localStorage.getItem(`rt_char_${roomId}`) || 'Wanderer';
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'presence-update', name: myName }));
@@ -131,17 +138,9 @@ export function createGameState(roomId: string) {
     const actionLock = ydoc.getMap('actionLock');
     const yKeyHealth = ydoc.getMap('keyHealth');
 
-    // Seed the Memory Codex only AFTER local + peer state has loaded, and only per missing
-    // key — so we never overwrite a resumed or freshly-synced world with defaults.
+    // Seeding defaults is handled server-side to prevent client-side default racing.
     persistence.whenSynced.then(() => {
-        const yCodex = ydoc.getMap('memoryCodex');
-        ydoc.transact(() => {
-            if (!yCodex.has('location')) yCodex.set('location', 'The Black Crypt');
-            if (!yCodex.has('plot_summary')) yCodex.set('plot_summary', 'The party seeks the Ashen Crown.');
-            if (!yCodex.has('scene_tags')) yCodex.set('scene_tags', { biome: 'crypt', weather: 'none', mood: 'oppressive' });
-            if (!yCodex.has('party')) yCodex.set('party', {});
-            if (!yCodex.has('inventory')) yCodex.set('inventory', {});
-        });
+        console.log('Local IndexedDB sync completed for room:', roomId);
     });
 
     function addChatEntry(entry: { author: string, text: string, type: 'player' | 'dm' }) {

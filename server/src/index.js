@@ -6,7 +6,6 @@ export default {
     
     // WebSockets upgrade request
     if (request.headers.get("Upgrade") === "websocket") {
-      // Route connection based on "room" search parameter
       const room = url.searchParams.get("room") || "default";
       const id = env.SIGNALING_ROOM.idFromName(room);
       const roomObject = env.SIGNALING_ROOM.get(id);
@@ -28,11 +27,24 @@ export class SignalingRoom {
     // Initialize Y.Doc for this room
     this.yDoc = new Y.Doc();
     
-    // Load persisted Yjs state asynchronously before routing websocket messages
+    // Load persisted Yjs state asynchronously and seed default world structure if empty
     this.state.blockConcurrencyWhile(async () => {
       const stored = await this.state.storage.get("yDocState");
       if (stored) {
         Y.applyUpdate(this.yDoc, stored);
+      } else {
+        // Seed default structure for a new world on the server
+        const yCodex = this.yDoc.getMap('memoryCodex');
+        this.yDoc.transact(() => {
+          yCodex.set('location', 'The Black Crypt');
+          yCodex.set('plot_summary', 'The party seeks the Ashen Crown.');
+          yCodex.set('scene_tags', { biome: 'crypt', weather: 'none', mood: 'oppressive' });
+          yCodex.set('party', {});
+          yCodex.set('inventory', {});
+        });
+        // Save initial seeded state
+        const seeded = Y.encodeStateAsUpdate(this.yDoc);
+        await this.state.storage.put("yDocState", seeded);
       }
     });
   }
@@ -84,19 +96,37 @@ export class SignalingRoom {
       broadcast({ type: "presence-list", players });
     };
 
-    // Immediately send the current master document state to the connecting client
-    const currentDocState = Y.encodeStateAsUpdate(this.yDoc);
-    ws.send(JSON.stringify({
-      type: "sync-init",
-      update: uint8ArrayToBase64(currentDocState)
-    }));
-    
     sendPresence();
 
     ws.addEventListener("message", async (msg) => {
       try {
         const data = JSON.parse(msg.data);
-        if (data.type === "update") {
+        if (data.type === "sync-client") {
+          const updateBytes = base64ToUint8Array(data.update);
+          // Apply client update to master document
+          Y.applyUpdate(this.yDoc, updateBytes);
+          
+          // Persist the merged document state to DO persistent store
+          const newStoredBytes = Y.encodeStateAsUpdate(this.yDoc);
+          await this.state.storage.put("yDocState", newStoredBytes);
+          
+          // Respond to the connecting client with the master synced state
+          ws.send(JSON.stringify({
+            type: "sync-init",
+            update: uint8ArrayToBase64(newStoredBytes)
+          }));
+          
+          // Broadcast client's new changes to all other connected sessions
+          for (const s of this.sessions) {
+            if (s.ws !== ws) {
+              try {
+                s.ws.send(JSON.stringify({ type: "update", update: data.update }));
+              } catch {
+                // ignore
+              }
+            }
+          }
+        } else if (data.type === "update") {
           const updateBytes = base64ToUint8Array(data.update);
           // Apply update to the server document
           Y.applyUpdate(this.yDoc, updateBytes);

@@ -123,6 +123,8 @@
     // --- Multiplayer sync tuning ---
     const LOCK_STALE_MS = 14000;   // a processor that hasn't heartbeat in this long is presumed dropped
     let lockBeatTimer: any = null;
+    let lastLockBeat = 0;
+    let lastLockBeatChange = $state(Date.now());
     let lastQteId = '';
     let recentWorlds = $state<string[]>([]);
 
@@ -196,6 +198,19 @@
                 }
             }
         });
+        bindLock();
+    }
+
+    function bindLock() {
+        actionLock.observe((event) => {
+            const currentBeat = actionLock.get('beat') as number || 0;
+            if (currentBeat !== lastLockBeat) {
+                lastLockBeat = currentBeat;
+                lastLockBeatChange = Date.now();
+            }
+        });
+        lastLockBeat = actionLock.get('beat') as number || 0;
+        lastLockBeatChange = Date.now();
     }
 
     let unsubscribe = subscribeChat();
@@ -398,7 +413,8 @@
     function awaitResolution() {
         const start = Date.now();
         const iv = setInterval(() => {
-            if (!actionLock.get('locked') || Date.now() - start > 12000) {
+            const isStale = actionLock.get('locked') && (Date.now() - lastLockBeatChange > LOCK_STALE_MS);
+            if (!actionLock.get('locked') || isStale || Date.now() - start > 12000) {
                 clearInterval(iv);
                 isLoading = false;
             }
@@ -420,11 +436,11 @@
         // can never freeze the table for everyone else.
         let isProcessor = false;
         ydoc.transact(() => {
-            const beat = (actionLock.get('beat') as number) || 0;
-            if (!actionLock.get('locked') || Date.now() - beat > LOCK_STALE_MS) {
+            const isStale = actionLock.get('locked') && (Date.now() - lastLockBeatChange > LOCK_STALE_MS);
+            if (!actionLock.get('locked') || isStale) {
                 actionLock.set('locked', true);
                 actionLock.set('processor', ydoc.clientID);
-                actionLock.set('beat', Date.now());
+                actionLock.set('beat', (actionLock.get('beat') as number || 0) + 1);
                 isProcessor = true;
             }
         });
@@ -432,14 +448,21 @@
         if (!isProcessor) { awaitResolution(); return; }
 
         // Heartbeat so peers can detect a mid-resolve crash and take over.
-        lockBeatTimer = setInterval(() => actionLock.set('beat', Date.now()), 3000);
+        lockBeatTimer = setInterval(() => {
+            actionLock.set('beat', (actionLock.get('beat') as number || 0) + 1);
+        }, 3000);
+
         try {
             if (activePeers > 0) addChatEntry({ author: 'System', text: 'Gathering party actions…', type: 'dm' });
             const windowMs = activePeers > 0 ? 5000 : 700;   // batch for multiplayer, snappy for solo
             await new Promise(r => setTimeout(r, windowMs));
 
-            const actionsToProcess = yPendingActions.toArray();
-            yPendingActions.delete(0, yPendingActions.length);
+            // Retrieve and delete in a single synchronous transaction to prevent dropping concurrent items
+            let actionsToProcess: any[] = [];
+            ydoc.transact(() => {
+                actionsToProcess = yPendingActions.toArray();
+                yPendingActions.delete(0, actionsToProcess.length);
+            });
             if (actionsToProcess.length === 0) return;
 
             const prompt = buildBatchPrompt(actionsToProcess, ydoc);
