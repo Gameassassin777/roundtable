@@ -1,11 +1,11 @@
 <script lang="ts">
-    import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+    import { onMount, onDestroy } from 'svelte';
     import { gsap } from 'gsap';
 
     export let timeLimit: number;
     export let startTime: number; // Synced future timestamp
+    export let onresult: (success: boolean) => void;
     
-    const dispatch = createEventDispatcher();
     let circle: SVGCircleElement;
     let active = false;
     let tl: gsap.core.Timeline;
@@ -25,12 +25,12 @@
     function successQTE() {
         if (!active) return;
         active = false; tl.kill();
-        gsap.to('.qte-overlay', { duration: 0.3, opacity: 0, scale: 1.5, onComplete: () => dispatch('result', { success: true }) });
+        gsap.to('.qte-overlay', { duration: 0.3, opacity: 0, scale: 1.5, onComplete: () => onresult(true) });
     }
-    function failQTE() { if (active) { active = false; dispatch('result', { success: false }); } }
+    function failQTE() { if (active) { active = false; onresult(false); } }
 </script>
 
-<div class="qte-overlay" on:click={successQTE} on:touchstart={successQTE}>
+<div class="qte-overlay" onclick={successQTE} ontouchstart={successQTE}>
     <svg viewBox="0 0 100 100">
         <circle cx="50" cy="50" r="40" fill="none" stroke="#333" stroke-width="4" />
         <circle bind:this={circle} cx="50" cy="50" r="40" fill="none" stroke="#fff" stroke-width="6" transform="rotate(-90 50 50)" />

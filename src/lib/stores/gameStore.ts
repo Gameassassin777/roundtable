@@ -5,7 +5,7 @@ import { writable } from 'svelte/store';
 export function createGameState(roomId: string) {
     const ydoc = new Y.Doc();
     const provider = new WebrtcProvider(`round-table-${roomId}`, ydoc, {
-        signaling: ['wss://signaling.yjs.dev']
+        signaling: ['wss://roundtable-signaling.gameassassin777.workers.dev']
     });
 
     const yChatLog = ydoc.getArray('chatLog');
