@@ -151,8 +151,12 @@
     // --- Live-sync wiring (extracted so switchRoom can rebind cleanly) ---
     function scrollChatToBottom() {
         setTimeout(() => {
-            const el = document.querySelector('.chat-log-scroll');
-            if (el) el.scrollTop = el.scrollHeight;
+            const el = document.querySelector('.chat-log-scroll') as HTMLElement | null;
+            if (!el) return;
+            // Only auto-scroll when you're already near the bottom, so scrolling UP to read
+            // the session history doesn't get yanked back down by new entries.
+            const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+            if (nearBottom) el.scrollTop = el.scrollHeight;
         }, 50);
     }
 
@@ -187,6 +191,14 @@
                     inventory: raw.inventory || {}
                 };
                 if (codexData.scene_tags) currentSceneTags = codexData.scene_tags;
+
+                // Self-heal: if a sync merge ever drops our hero from this world's party,
+                // put them straight back. Guarantees a character is never lost and always
+                // re-enters whatever world it's in. registerCurrentCharacter only ADDS —
+                // it never touches anyone else's character.
+                if (characterSelected && forged && characterName && !(codexData.party as any)[characterName]) {
+                    registerCurrentCharacter();
+                }
 
                 // Synced QTE — fires on EVERY peer, aligned to a shared future start_time,
                 // so reflex events are fair across the table (not just the processor).

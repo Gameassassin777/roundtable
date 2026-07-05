@@ -71,7 +71,7 @@ export function createGameState(roomId: string) {
             }
 
             // Handshake step 2: Send local presence update immediately upon connection
-            const myName = localStorage.getItem(`rt_char_${roomId}`) || 'Wanderer';
+            const myName = localStorage.getItem('rt_char_name') || 'Wanderer';
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'presence-update', name: myName }));
             }
