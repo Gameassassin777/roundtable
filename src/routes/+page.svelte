@@ -5,7 +5,7 @@
     import { createGameState } from '$lib/stores/gameStore';
     import { callAI } from '$lib/ai/dmEngine';
     import { buildBatchPrompt } from '$lib/ai/promptBuilder';
-    import { forgeCharacter, type ForgedCharacter } from '$lib/ai/soulForge';
+    import { forgeCharacter, forgeConverse, type ForgedCharacter, type ForgeMessage } from '$lib/ai/soulForge';
 
     let roomId = $state("crypt-99");
     let gameState = createGameState(roomId);
@@ -58,19 +58,27 @@
     let selectedArc = $state('warrior');
     let classTitle = $state('');
 
-    // --- Soul Forge (AI character genesis) ---
+    // --- Soul Forge (conversational AI character genesis) ---
     let concept = $state('');
     let forging = $state(false);
     let forged = $state<ForgedCharacter | null>(null);
     let forgeError = $state('');
-    let refineText = $state('');
+    let forgeMsgs = $state<ForgeMessage[]>([]);
+    let forgeInput = $state('');
+    let conversing = $state(false);
 
     const CONCEPT_EXAMPLES = [
         'A rogue terrified of the dark who hides in shadows',
         'A defrocked priest who bargained his faith for necromancy',
         'A hulking blacksmith with a cursed hammer that whispers',
-        'A silver-tongued swindler running from a debt to a fey lord'
+        'A silver-tongued swindler fleeing a debt to a fey lord'
     ];
+
+    // --- Multiplayer sync tuning ---
+    const LOCK_STALE_MS = 14000;   // a processor that hasn't heartbeat in this long is presumed dropped
+    let lockBeatTimer: any = null;
+    let lastQteId = '';
+    let recentWorlds = $state<string[]>([]);
 
     // Reconstruct Codex state reactively
     let codexData = $state({
@@ -108,10 +116,14 @@
     }
 
     function bindPeers() {
-        provider.on('peers', (event: any) => {
-            activePeers = event.webrtcConns.size;
+        const aw = provider.awareness;
+        aw.setLocalStateField('user', { name: characterName || 'Wanderer' });
+        const update = () => {
+            activePeers = Math.max(0, aw.getStates().size - 1);
             connectionStatus = activePeers > 0 ? "Live" : "Solo";
-        });
+        };
+        aw.on('change', update);
+        update();
     }
 
     function bindCodex() {
@@ -127,6 +139,15 @@
                     inventory: raw.inventory || {}
                 };
                 if (codexData.scene_tags) currentSceneTags = codexData.scene_tags;
+
+                // Synced QTE — fires on EVERY peer, aligned to a shared future start_time,
+                // so reflex events are fair across the table (not just the processor).
+                const q = raw.active_qte;
+                if (q && q.id && q.id !== lastQteId && (q.start_time || 0) > Date.now() - 500) {
+                    lastQteId = q.id;
+                    qteConfig = { time_limit_ms: q.time_limit_ms || 1000, start_time: q.start_time };
+                    showQTE = true;
+                }
             }
         });
     }
@@ -135,6 +156,8 @@
     let activePeers = $state(0);
 
     onMount(() => {
+        try { recentWorlds = JSON.parse(localStorage.getItem('rt_worlds') || '[]'); } catch { recentWorlds = []; }
+
         // Load saved character config
         const savedName = localStorage.getItem('rt_char_name');
         const savedSelected = localStorage.getItem('rt_character_selected');
@@ -177,25 +200,38 @@
         }
     }
 
-    // --- Soul Forge actions ---
-    async function runForge(opts: { previous?: ForgedCharacter; refine?: string; nameHint?: string }) {
-        if (!concept.trim() || forging || !apiKey) return;
+    // --- Soul Forge (conversational: talk it out, then compile) ---
+    async function sendForgeMessage(text?: string) {
+        const msg = (text ?? forgeInput).trim();
+        if (!msg || conversing || !apiKey) return;
+        forgeMsgs = [...forgeMsgs, { role: 'user', text: msg }];
+        if (!concept) concept = msg;
+        forgeInput = '';
+        conversing = true; forgeError = '';
+        try {
+            const reply = await forgeConverse(forgeMsgs, apiKey);
+            forgeMsgs = [...forgeMsgs, { role: 'model', text: reply }];
+        } catch (e: any) {
+            forgeError = e?.message || 'The forge fell silent. Check your key and try again.';
+        }
+        conversing = false;
+    }
+
+    // Compile the final character from the whole conversation.
+    async function runForge(opts: { previous?: ForgedCharacter } = {}) {
+        if (forging || !apiKey || forgeMsgs.length === 0) return;
         forging = true; forgeError = '';
         try {
-            forged = await forgeCharacter(concept.trim(), apiKey, opts);
+            forged = await forgeCharacter(concept, apiKey, { conversation: forgeMsgs, nameHint: characterName.trim() || undefined, ...opts });
             if (forged && !characterName.trim()) characterName = forged.name;
         } catch (e: any) {
             forgeError = e?.message || 'The forge went cold. Check your key and try again.';
         }
         forging = false;
     }
-    function forge()   { runForge({ nameHint: characterName.trim() || undefined }); }
-    function reforge() { if (forged) runForge({ previous: forged }); }
-    function refine()  {
-        if (!refineText.trim() || !forged) return;
-        const r = refineText.trim(); refineText = '';
-        runForge({ previous: forged, refine: r });
-    }
+    function compileForge()       { runForge(); }
+    function reforge()            { if (forged) runForge({ previous: forged }); }
+    function backToConversation() { forged = null; }
 
     function acceptCharacter() {
         if (!forged) return;
@@ -226,76 +262,153 @@
         selectedArc = forged.archetype;
         classTitle = forged.class_title;
         characterSelected = true;
+        provider.awareness.setLocalStateField('user', { name });
+        rememberWorld(roomId);
         addChatEntry({ author: 'System', text: `${name} — ${forged.class_title} — has joined the table.`, type: 'dm' });
     }
 
+    // --- World management ---
+    function rememberWorld(code: string) {
+        recentWorlds = [code, ...recentWorlds.filter((c) => c !== code)].slice(0, 6);
+        localStorage.setItem('rt_worlds', JSON.stringify(recentWorlds));
+    }
+
+    // Ensure the current hero exists in the current room's party (used when creating/joining a world).
+    function registerCurrentCharacter() {
+        if (!forged || !characterName) return;
+        const charData = {
+            hp: forged.hp, max_hp: forged.hp,
+            resolve: forged.resolve, corruption: forged.corruption,
+            active_traits: forged.traits.map((t) => t.name),
+            trait_details: forged.traits,
+            permanent_conditions: [], echo_tags: [],
+            class_title: forged.class_title, archetype: forged.archetype,
+            backstory: forged.backstory
+        };
+        ydoc.transact(() => {
+            const yCodex = ydoc.getMap('memoryCodex');
+            const party = yCodex.get('party') || {};
+            if (!party[characterName]) { party[characterName] = charData; yCodex.set('party', party); }
+            const inventory = yCodex.get('inventory') || {};
+            if (forged.starting_item?.name && !inventory[forged.starting_item.name]) {
+                inventory[forged.starting_item.name] = { durability: 3, note: forged.starting_item.note || '' };
+                yCodex.set('inventory', inventory);
+            }
+        });
+    }
+
+    function newWorld() {
+        roomId = 'realm-' + Math.random().toString(36).slice(2, 7);
+        switchRoom();
+    }
+
+    function joinWorld(code: string) {
+        roomId = code;
+        switchRoom();
+    }
+
     function switchRoom() {
-        if (roomId.trim()) {
-            // Tear down the old room completely before rebuilding.
-            unsubscribe();
-            provider.destroy();
+        if (!roomId.trim()) return;
+        showSettings = false;
+        lastQteId = '';
 
-            gameState = createGameState(roomId.trim());
-            chatStore = gameState.chatStore;
-            addChatEntry = gameState.addChatEntry;
-            ydoc = gameState.ydoc;
-            provider = gameState.provider;
-            yPendingActions = gameState.yPendingActions;
-            actionLock = gameState.actionLock;
-            reportKeyExhausted = gameState.reportKeyExhausted;
+        // Tear down the old room completely (WebRTC + IndexedDB) before rebuilding.
+        unsubscribe();
+        gameState.destroy();
 
-            // Rebind live sync to the new room, keeping the handle so onDestroy
-            // (and the next switch) can clean it up.
-            unsubscribe = subscribeChat();
-            bindPeers();
-            bindCodex();
+        gameState = createGameState(roomId.trim());
+        chatStore = gameState.chatStore;
+        addChatEntry = gameState.addChatEntry;
+        ydoc = gameState.ydoc;
+        provider = gameState.provider;
+        yPendingActions = gameState.yPendingActions;
+        actionLock = gameState.actionLock;
+        reportKeyExhausted = gameState.reportKeyExhausted;
 
-            addChatEntry({ author: 'System', text: `Moved to table: ${roomId}`, type: 'dm' });
-        }
+        // Rebind live sync to the new room, keeping the handle so onDestroy
+        // (and the next switch) can clean it up.
+        unsubscribe = subscribeChat();
+        bindPeers();
+        bindCodex();
+
+        // Carry the hero into the new/joined world once local state has loaded.
+        gameState.persistence.whenSynced.then(() => registerCurrentCharacter());
+        rememberWorld(roomId.trim());
+
+        addChatEntry({ author: 'System', text: `Entered world: ${roomId}`, type: 'dm' });
+    }
+
+    // Broadcast a QTE to the whole table via the synced codex (all peers show it together).
+    function broadcastQTE(qte: any) {
+        ydoc.getMap('memoryCodex').set('active_qte', {
+            id: Math.random().toString(36).slice(2),
+            time_limit_ms: qte?.time_limit_ms || 1000,
+            start_time: Date.now() + 1500   // buffer so every device starts the timer in sync
+        });
+    }
+
+    // Non-processor: drop our spinner as soon as the processor frees the lock — capped so we never hang.
+    function awaitResolution() {
+        const start = Date.now();
+        const iv = setInterval(() => {
+            if (!actionLock.get('locked') || Date.now() - start > 12000) {
+                clearInterval(iv);
+                isLoading = false;
+            }
+        }, 400);
     }
 
     async function submitAction() {
         if (!chatInput.trim() || isLoading) return;
         const userAction = chatInput.trim();
-        yPendingActions.push([{ text: userAction }]);
+        const author = characterName || 'You';
         chatInput = '';
         isLoading = true;
 
+        // Echo + enqueue — both sync to every peer via Yjs.
+        addChatEntry({ author, text: userAction, type: 'player' });
+        yPendingActions.push([{ text: userAction, author }]);
+
+        // Claim the processing lock, with stale-lock takeover so a dropped processor
+        // can never freeze the table for everyone else.
         let isProcessor = false;
         ydoc.transact(() => {
-            if (!actionLock.get('locked')) {
+            const beat = (actionLock.get('beat') as number) || 0;
+            if (!actionLock.get('locked') || Date.now() - beat > LOCK_STALE_MS) {
                 actionLock.set('locked', true);
                 actionLock.set('processor', ydoc.clientID);
+                actionLock.set('beat', Date.now());
                 isProcessor = true;
             }
         });
 
-        addChatEntry({ author: characterName || 'You', text: userAction, type: 'player' });
+        if (!isProcessor) { awaitResolution(); return; }
 
-        if (isProcessor) {
-            addChatEntry({ author: 'System', text: 'Gathering party actions (5s window)…', type: 'dm' });
-            await new Promise(r => setTimeout(r, 5000));
+        // Heartbeat so peers can detect a mid-resolve crash and take over.
+        lockBeatTimer = setInterval(() => actionLock.set('beat', Date.now()), 3000);
+        try {
+            if (activePeers > 0) addChatEntry({ author: 'System', text: 'Gathering party actions…', type: 'dm' });
+            const windowMs = activePeers > 0 ? 5000 : 700;   // batch for multiplayer, snappy for solo
+            await new Promise(r => setTimeout(r, windowMs));
+
             const actionsToProcess = yPendingActions.toArray();
             yPendingActions.delete(0, yPendingActions.length);
+            if (actionsToProcess.length === 0) return;
 
             const prompt = buildBatchPrompt(actionsToProcess, ydoc);
-            try {
-                const response = await callAI(prompt, apiKey, ydoc, ydoc.clientID);
-                addChatEntry({ author: 'Dungeon Master', text: response.narration, type: 'dm' });
-
-                if (response.ui_update?.qte) {
-                    qteConfig = { ...response.ui_update.qte, start_time: Date.now() + 1500 };
-                    showQTE = true;
-                }
-            } catch (e) {
-                addChatEntry({ author: 'System', text: 'The vision faltered. Check your API key or usage limits.', type: 'dm' });
-            }
-
-            actionLock.set('locked', false);
-            actionLock.set('processor', null);
+            const response = await callAI(prompt, apiKey, ydoc, ydoc.clientID);
+            addChatEntry({ author: 'Dungeon Master', text: response.narration, type: 'dm' });
+            if (response.scene_tags) ydoc.getMap('memoryCodex').set('scene_tags', response.scene_tags);
+            if (response.ui_update?.qte) broadcastQTE(response.ui_update.qte);
+        } catch (e) {
+            addChatEntry({ author: 'System', text: 'The vision faltered — check your key or usage limits.', type: 'dm' });
+        } finally {
+            clearInterval(lockBeatTimer); lockBeatTimer = null;
+            ydoc.transact(() => {
+                actionLock.set('locked', false);
+                actionLock.set('processor', null);
+            });
             isLoading = false;
-        } else {
-            setTimeout(() => { isLoading = false; }, 7000);
         }
     }
 
@@ -310,7 +423,8 @@
     }
 
     onDestroy(() => {
-        provider.destroy();
+        if (lockBeatTimer) clearInterval(lockBeatTimer);
+        gameState.destroy();
         unsubscribe();
     });
 </script>
@@ -374,30 +488,46 @@
                 </div>
 
             {:else}
-                <!-- Soul Forge — AI-generated custom character -->
+                <!-- Soul Forge — a back-and-forth with the AI, then compile from the conversation -->
                 <div class="wizard-card forge-card panel">
                     <div class="wizard-head">
                         <span class="step-tag">Step 2 of 2</span>
                         <h2>The Soul Forge</h2>
-                        <p class="wizard-sub">Describe the hero you imagine. The AI forges them — stats, class, traits, and all.</p>
+                        <p class="wizard-sub">Talk with the Forge about the hero you want. When they feel right, forge them from your conversation.</p>
                     </div>
 
-                    <label class="field">
-                        <span class="field-label">Your concept</span>
-                        <textarea rows="3" bind:value={concept} placeholder="e.g. A rogue terrified of the dark who hides in shadows…"></textarea>
-                    </label>
-
                     {#if !forged}
-                        <div class="concept-chips">
-                            {#each CONCEPT_EXAMPLES as ex}
-                                <button type="button" class="chip-btn" onclick={() => concept = ex}>{ex}</button>
+                        <div class="forge-chat">
+                            {#if forgeMsgs.length === 0}
+                                <p class="forge-hint">Tell the Forge who you want to become. It will ask questions until your hero is clear — then compile them from everything you agreed on.</p>
+                                <div class="concept-chips">
+                                    {#each CONCEPT_EXAMPLES as ex}
+                                        <button type="button" class="chip-btn" onclick={() => sendForgeMessage(ex)}>{ex}</button>
+                                    {/each}
+                                </div>
+                            {/if}
+                            {#each forgeMsgs as m}
+                                <div class="forge-msg {m.role}">{m.text}</div>
                             {/each}
+                            {#if conversing}
+                                <div class="forge-msg model typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+                            {/if}
                         </div>
-                    {/if}
 
-                    {#if forgeError}<p class="forge-error">{forgeError}</p>{/if}
+                        {#if forgeError}<p class="forge-error">{forgeError}</p>{/if}
 
-                    {#if forged}
+                        <div class="refine-row">
+                            <input type="text" bind:value={forgeInput} onkeydown={(e) => e.key === 'Enter' && sendForgeMessage()} placeholder="Answer the Forge…" disabled={conversing} />
+                            <button class="btn-ghost" onclick={() => sendForgeMessage()} disabled={conversing || !forgeInput.trim()}>Send</button>
+                        </div>
+
+                        <div class="wizard-actions forge-actions">
+                            <button class="btn-ghost" onclick={() => wizardStep = 'attune'}>Back</button>
+                            <button class="btn-primary" disabled={forging || forgeMsgs.length === 0} onclick={compileForge}>
+                                {forging ? 'Forging…' : 'Forge Character'}
+                            </button>
+                        </div>
+                    {:else}
                         <div class="forged-card">
                             <div class="forged-head">
                                 <span class="forged-icon">{@html iconFor(forged.archetype)}</span>
@@ -424,25 +554,16 @@
                             </div>
 
                             <p class="forged-backstory">{forged.backstory}</p>
-
-                            <div class="refine-row">
-                                <input type="text" bind:value={refineText} onkeydown={(e) => e.key === 'Enter' && refine()} placeholder="Tweak it… e.g. make them older, add a scar" disabled={forging} />
-                                <button class="btn-ghost" onclick={refine} disabled={forging || !refineText.trim()}>Refine</button>
-                            </div>
                         </div>
-                    {/if}
 
-                    <div class="wizard-actions forge-actions">
-                        <button class="btn-ghost" onclick={() => wizardStep = 'attune'}>Back</button>
-                        {#if !forged}
-                            <button class="btn-primary" disabled={!concept.trim() || forging} onclick={forge}>
-                                {forging ? 'Forging…' : 'Forge Character'}
-                            </button>
-                        {:else}
+                        {#if forgeError}<p class="forge-error">{forgeError}</p>{/if}
+
+                        <div class="wizard-actions forge-actions">
+                            <button class="btn-ghost" onclick={backToConversation} disabled={forging}>Keep Talking</button>
                             <button class="btn-ghost" onclick={reforge} disabled={forging}>{forging ? 'Forging…' : 'Reforge'}</button>
                             <button class="btn-primary" disabled={forging} onclick={acceptCharacter}>Enter the Realm</button>
-                        {/if}
-                    </div>
+                        </div>
+                    {/if}
                 </div>
             {/if}
         </div>
@@ -625,14 +746,22 @@
                     </button>
                 </div>
 
-                <label class="field">
-                    <span class="field-label">Table code</span>
+                <div class="field">
+                    <span class="field-label">World</span>
                     <div class="room-input-group">
-                        <input id="room-id" type="text" bind:value={roomId} placeholder="crypt-99" />
+                        <input id="room-id" type="text" bind:value={roomId} placeholder="realm code" />
                         <button class="btn-ghost" onclick={switchRoom}>Join</button>
                     </div>
-                    <span class="field-help">Switching tables starts a fresh session.</span>
-                </label>
+                    <span class="field-help">Share this code so friends join your world in real time. Progress saves on your device and resumes when you return.</span>
+                    <button class="btn-ghost wide new-world-btn" onclick={newWorld}>+ New World</button>
+                    {#if recentWorlds.length > 0}
+                        <div class="recent-worlds">
+                            {#each recentWorlds as w}
+                                <button class="world-chip {w === roomId ? 'current' : ''}" onclick={() => joinWorld(w)}>{w}</button>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
 
                 <label class="field">
                     <span class="field-label">Google AI Studio key</span>
@@ -776,7 +905,6 @@
 
     /* ---- Soul Forge ---- */
     .forge-card { max-width: 600px; }
-    textarea { resize: vertical; min-height: 74px; line-height: 1.5; }
 
     .concept-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
     .chip-btn {
@@ -869,6 +997,63 @@
     .forge-actions { flex-wrap: wrap; }
     .forge-actions .btn-primary { flex: 1; min-width: 150px; }
     .forge-actions .btn-ghost { flex: 0 0 auto; }
+
+    /* Conversational forge */
+    .forge-chat {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+        max-height: 320px;
+        overflow-y: auto;
+        padding-right: 4px;
+    }
+    .forge-hint { font-size: 0.84rem; color: var(--muted); line-height: 1.5; }
+    .forge-msg {
+        max-width: 88%;
+        padding: 0.6rem 0.85rem;
+        border-radius: var(--radius);
+        font-size: 0.86rem;
+        line-height: 1.5;
+        animation: rise 0.25s ease;
+    }
+    .forge-msg.user {
+        align-self: flex-end;
+        background: var(--accent);
+        color: #fdf6ec;
+        border-bottom-right-radius: 4px;
+    }
+    .forge-msg.model {
+        align-self: flex-start;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--gold);
+        color: var(--ink);
+        font-family: var(--font-serif);
+        border-top-left-radius: 4px;
+    }
+    .forge-msg.typing { display: flex; gap: 4px; align-items: center; }
+    .forge-msg.typing .dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--muted);
+        animation: bounce 1.4s infinite ease-in-out both;
+    }
+    .forge-msg.typing .dot:nth-child(1) { animation-delay: -0.32s; }
+    .forge-msg.typing .dot:nth-child(2) { animation-delay: -0.16s; }
+
+    /* World management */
+    .new-world-btn { margin-top: 0.5rem; }
+    .recent-worlds { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.6rem; }
+    .world-chip {
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        color: var(--ink-soft);
+        border-radius: var(--radius-pill);
+        padding: 0.3rem 0.7rem;
+        font-size: 0.74rem;
+        font-family: monospace;
+    }
+    .world-chip:hover { border-color: var(--accent); color: var(--accent); }
+    .world-chip.current { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 
     /* Sidebar trait tags */
     .trait-list { list-style: none; display: flex; flex-direction: column; gap: 0.35rem; }

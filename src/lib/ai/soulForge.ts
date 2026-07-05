@@ -1,5 +1,7 @@
 import { callGemini, extractText, parseJsonLoose } from './dmEngine';
 
+export interface ForgeMessage { role: 'user' | 'model'; text: string; }
+
 export interface ForgedTrait { name: string; desc: string; }
 
 export interface ForgedCharacter {
@@ -35,6 +37,22 @@ const SCHEMA = `Return strictly this JSON shape:
   "backstory": "2-3 vivid, grim sentences in second person or third person",
   "portrait": "a short comma-separated visual description for an image generator"
 }`;
+
+const INTERVIEW_SYSTEM = `You are the Soul Forge — a patient, grim deity interviewing a soul about the hero it will become in a lethal, grimdark tabletop RPG.
+Draw the character out through conversation: their nature, a defining wound or fear, what drives them, how they fight, what they have already lost.
+Ask ONE evocative, probing question per turn, building on what they said. Keep every reply to 1-3 sentences, fully in-character — never break the fiction.
+Do NOT output stats, bullet lists, or JSON — only converse. Once the hero feels vivid and clear, tell the soul they are ready and may forge their character.`;
+
+/** One turn of the character-creation interview. Returns the Forge's next in-character reply. */
+export async function forgeConverse(messages: ForgeMessage[], apiKey: string): Promise<string> {
+    const contents = messages.map((m) => ({ role: m.role, parts: [{ text: m.text }] }));
+    const data = await callGemini({
+        system_instruction: { parts: [{ text: INTERVIEW_SYSTEM }] },
+        contents,
+        generationConfig: { temperature: 1.0 }
+    }, apiKey);
+    return extractText(data) || 'The forge falls silent for a moment… tell me more.';
+}
 
 function clampInt(v: any, lo: number, hi: number, fallback: number): number {
     const n = Math.round(Number(v));
@@ -76,14 +94,22 @@ function normalize(raw: any, concept: string): ForgedCharacter {
 export async function forgeCharacter(
     concept: string,
     apiKey: string,
-    opts: { refine?: string; previous?: ForgedCharacter; nameHint?: string } = {}
+    opts: { refine?: string; previous?: ForgedCharacter; nameHint?: string; conversation?: ForgeMessage[] } = {}
 ): Promise<ForgedCharacter> {
-    let userText = `Player concept: ${concept}\n\n`;
+    let userText: string;
+    if (opts.conversation && opts.conversation.length) {
+        const transcript = opts.conversation
+            .map((m) => `${m.role === 'model' ? 'FORGE' : 'SOUL'}: ${m.text}`)
+            .join('\n');
+        userText = `A soul has spoken with the Soul Forge to design their hero. Here is their full conversation:\n\n${transcript}\n\nCompile the FINAL character they arrived at together, honoring everything the soul expressed and everything the two agreed on.\n\n`;
+    } else {
+        userText = `Player concept: ${concept}\n\n`;
+    }
     if (opts.previous) {
-        userText += `Here is the current character as JSON:\n${JSON.stringify(opts.previous)}\n\n`;
+        userText += `Here is the current draft as JSON:\n${JSON.stringify(opts.previous)}\n\n`;
         userText += opts.refine
             ? `Revise it per this instruction, keeping everything else consistent: "${opts.refine}".\n\n`
-            : `Reforge it into a fresh, different take on the same concept.\n\n`;
+            : `Reforge it into a fresh take that still honors the conversation.\n\n`;
     }
     if (opts.nameHint) userText += `Prefer the name "${opts.nameHint}" if it fits.\n\n`;
     userText += SCHEMA;

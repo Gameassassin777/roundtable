@@ -11,7 +11,8 @@ export function buildBatchPrompt(actions: any[], ydoc: Y.Doc): string {
         const targetDC = 12;
         const outcome = total >= targetDC ? "SUCCESS" : "FAILURE";
         const degree = Math.abs(total - targetDC);
-        return `Action ${i+1}: <player_input>${action.text}</player_input> | Math: Rolled ${d20Roll}+${modifier}=${total} vs DC ${targetDC}. Outcome: ${outcome} (Degree: ${degree}).`;
+        const who = action.author ? ` (${action.author})` : '';
+        return `Action ${i+1}${who}: <player_input>${action.text}</player_input> | Math: Rolled ${d20Roll}+${modifier}=${total} vs DC ${targetDC}. Outcome: ${outcome} (Degree: ${degree}).`;
     }).join('\n');
 
     const prompt = `
