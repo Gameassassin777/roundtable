@@ -30,16 +30,35 @@
     function failQTE() { if (active) { active = false; onresult(false); } }
 </script>
 
-<div class="qte-overlay" onclick={successQTE} ontouchstart={successQTE}>
+<div
+    class="qte-overlay"
+    role="button"
+    tabindex="0"
+    onclick={successQTE}
+    ontouchstart={successQTE}
+    onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && successQTE()}
+>
     <svg viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="40" fill="none" stroke="#333" stroke-width="4" />
-        <circle bind:this={circle} cx="50" cy="50" r="40" fill="none" stroke="#fff" stroke-width="6" transform="rotate(-90 50 50)" />
+        <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(140,47,47,0.18)" stroke-width="4" />
+        <circle bind:this={circle} cx="50" cy="50" r="40" fill="none" stroke="#8c2f2f" stroke-width="6" stroke-linecap="round" transform="rotate(-90 50 50)" />
     </svg>
-    <h2>DODGE!</h2>
+    <h2>Dodge!</h2>
+    <p>Tap to react</p>
 </div>
 
 <style>
-    .qte-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(15px); z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-    svg { width: 240px; height: 240px; filter: drop-shadow(0 0 20px #8b0000); }
-    h2 { color: #fff; font-size: 4rem; margin-top: 1rem; text-shadow: 0 0 30px #8b0000; }
+    .qte-overlay {
+        position: fixed; inset: 0;
+        background: rgba(233, 224, 207, 0.82);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        z-index: 100;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        cursor: pointer;
+    }
+    svg { width: 230px; height: 230px; filter: drop-shadow(0 6px 18px rgba(140, 47, 47, 0.28)); }
+    h2 {
+        color: #2c2621; font-size: 3.4rem; margin-top: 1.2rem;
+        font-family: "Cinzel", Georgia, serif; letter-spacing: 1px;
+    }
+    p { color: #8a7c68; font-size: 0.9rem; letter-spacing: 1px; margin-top: 0.3rem; }
 </style>

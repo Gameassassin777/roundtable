@@ -19,12 +19,16 @@
         renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+        renderer.setClearColor(0xe9e0cf, 1); // match --bg so the scene reads light, not black
 
         generateScene(scene, sceneTags);
-        
-        const torch = new THREE.PointLight(0xffaa55, 3, 15);
+
+        // Soft, airy lighting — a light misty tabletop rather than a pitch-black crypt.
+        const torch = new THREE.PointLight(0xffd9a0, 1.6, 22);
+        torch.position.set(0, 6, 4);
         scene.add(torch);
-        scene.add(new THREE.AmbientLight(0x333333));
+        scene.add(new THREE.HemisphereLight(0xf4ecdb, 0x9a8f78, 1.1));
+        scene.add(new THREE.AmbientLight(0xcfc3ad, 0.6));
 
         const animate = () => {
             animationId = requestAnimationFrame(animate);

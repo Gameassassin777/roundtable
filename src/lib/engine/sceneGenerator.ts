@@ -17,7 +17,7 @@ export function generateScene(scene: THREE.Scene, tags: any) {
 
     // 2. Terrain
     const floorGeo = new THREE.PlaneGeometry(50, 50, 50, 50);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0xb3a988, roughness: 0.95 });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.userData.procedural = true;
     floor.rotation.x = -Math.PI / 2;
@@ -50,7 +50,7 @@ export function generateScene(scene: THREE.Scene, tags: any) {
         scene.add(rain);
     }
 
-    // 4. Fog
-    const fogColor = tags.mood === 'eerie' ? 0x1a2b1a : 0x050505;
-    scene.fog = new THREE.FogExp2(fogColor, 0.08);
+    // 4. Fog — light, warm haze that blends into the parchment background.
+    const fogColor = tags.mood === 'eerie' ? 0xc7cbb2 : 0xd8cfb8;
+    scene.fog = new THREE.FogExp2(fogColor, 0.055);
 }
