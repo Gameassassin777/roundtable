@@ -13,6 +13,11 @@ export default {
     }),
     paths: {
       base: process.env.NODE_ENV === 'production' ? '/roundtable' : ''
+    },
+    // Poll for a newer deploy every 60s so installed iOS PWAs update themselves
+    // (the `updated` store flips true; +layout.svelte refreshes to fetch it).
+    version: {
+      pollInterval: 60000
     }
   }
 };
