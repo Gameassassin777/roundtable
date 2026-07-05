@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onDestroy, onMount } from 'svelte';
+    import { gsap } from 'gsap';
     import CinematicDiorama from '$lib/components/CinematicDiorama.svelte';
     import QTE_Overlay from '$lib/components/QTE_Overlay.svelte';
     import { createGameState } from '$lib/stores/gameStore';
@@ -25,7 +26,37 @@
     // UI states
     let showCodexMobile = $state(false);
     let showSettings = $state(false);
+    let showChronicle = $state(false);
     let connectionStatus = $state("Connecting");
+    let lastAction = $state('');
+
+    // Dynamically group raw chatLog entries into structured rounds for the Chronicle
+    let chronicleRounds = $derived.by(() => {
+        const rounds = [];
+        let currentRound = { id: 1, actions: [], narration: '' };
+
+        for (const entry of chatLog) {
+            if (entry.type === 'player') {
+                if (currentRound.narration) {
+                    rounds.push(currentRound);
+                    currentRound = { id: rounds.length + 1, actions: [], narration: '' };
+                }
+                currentRound.actions.push(entry);
+            } else if (entry.type === 'dm') {
+                if (entry.author === 'System' || entry.author === 'Warning') {
+                    continue;
+                }
+                currentRound.narration = entry.text;
+                rounds.push(currentRound);
+                currentRound = { id: rounds.length + 1, actions: [], narration: '' };
+            }
+        }
+        
+        if (currentRound.actions.length > 0) {
+            rounds.push(currentRound);
+        }
+        return rounds;
+    });
 
     // Onboarding wizard step: 'welcome' | 'attune' | 'forge'
     let wizardStep = $state('welcome');
@@ -438,6 +469,29 @@
         if (navigator.vibrate) navigator.vibrate(success ? [40, 40] : 400);
     }
 
+    // GSAP-powered Svelte custom transitions for the Chronicle book and overlay
+    function chronicleTransition(node: HTMLElement) {
+        return {
+            duration: 400,
+            tick: (t: number) => {
+                gsap.set(node, {
+                    scale: 0.9 + 0.1 * t,
+                    y: (1 - t) * 30,
+                    opacity: t
+                });
+            }
+        };
+    }
+
+    function overlayTransition(node: HTMLElement) {
+        return {
+            duration: 300,
+            tick: (t: number) => {
+                gsap.set(node, { opacity: t });
+            }
+        };
+    }
+
     onDestroy(() => {
         if (lockBeatTimer) clearInterval(lockBeatTimer);
         gameState.destroy();
@@ -619,6 +673,15 @@
                         <span class="ping-pulse"></span>
                         <span class="status-text">{connectionStatus}{activePeers > 0 ? ` · ${activePeers}` : ''}</span>
                     </div>
+                    <button class="icon-btn chronicle-btn" onclick={() => showChronicle = !showChronicle} class:active={showChronicle} aria-label="Chronicle">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                            <path d="M8 6h8"/>
+                            <path d="M8 10h8"/>
+                            <path d="M8 14h6"/>
+                        </svg>
+                    </button>
                     <button class="icon-btn settings-btn" onclick={() => showSettings = !showSettings} aria-label="Settings">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9"/><circle cx="16" cy="7" r="2.2"/><path d="M19 7h1"/><path d="M4 17h6"/><circle cx="13" cy="17" r="2.2"/><path d="M17 17h3"/></svg>
                     </button>
@@ -797,6 +860,62 @@
                 </label>
 
                 <button class="btn-primary wide" onclick={saveSettings}>Save</button>
+            </div>
+        </div>
+    {/if}
+
+    <!-- Chronicle (Session History) modal -->
+    {#if showChronicle && isReady && characterSelected}
+        <div transition:overlayTransition class="modal-overlay chronicle-overlay-container" role="button" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') showChronicle = false; }} onclick={(e) => { if (e.target === e.currentTarget) showChronicle = false; }}>
+            <div transition:chronicleTransition class="chronicle-book panel">
+                <div class="book-header">
+                    <div class="book-title-group">
+                        <span class="emblem-mini">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                            </svg>
+                        </span>
+                        <h2>Chronicle of {roomId}</h2>
+                    </div>
+                    <button class="icon-btn close-book-btn" onclick={() => showChronicle = false} aria-label="Close Chronicle">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                    </button>
+                </div>
+
+                <div class="book-body scrollable-parchment">
+                    {#if chronicleRounds.length === 0}
+                        <div class="chronicle-empty">
+                            <p class="empty-text">No deeds have been recorded in this realm yet. Begin your actions to write the chronicle.</p>
+                        </div>
+                    {:else}
+                        <div class="rounds-list">
+                            {#each chronicleRounds as round}
+                                <article class="round-entry">
+                                    <header class="round-header-row">
+                                        <h3 class="round-number">Round {round.id}</h3>
+                                        <div class="round-divider-line"></div>
+                                    </header>
+                                    
+                                    <div class="round-actions">
+                                        {#each round.actions as action}
+                                            <div class="action-bubble-row">
+                                                <span class="action-author">{action.author}:</span>
+                                                <span class="action-text">“{action.text}”</span>
+                                            </div>
+                                        {/each}
+                                    </div>
+
+                                    {#if round.narration}
+                                        <div class="round-narration">
+                                            <p class="narration-text">{@html round.narration}</p>
+                                        </div>
+                                    {/if}
+                                </article>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
             </div>
         </div>
     {/if}
@@ -1480,5 +1599,221 @@
         .log-message { max-width: 92%; }
         .wizard-card { padding: 1.6rem; }
         .game-title { font-size: 2.1rem; }
+    }
+
+    /* Chronicle Book Layout */
+    .chronicle-overlay-container {
+        background: rgba(28, 22, 17, 0.48);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        padding: 2rem;
+        z-index: 120;
+    }
+
+    .chronicle-book {
+        width: 100%;
+        max-width: 920px;
+        height: 85vh;
+        height: 85dvh;
+        background: #fdfaf2;
+        border: 4px double var(--line-strong);
+        border-radius: 12px;
+        box-shadow: var(--shadow-lg), 0 35px 80px rgba(32, 26, 21, 0.5);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        position: relative;
+        pointer-events: auto;
+    }
+
+    /* Custom shadow to simulate book binding line down the center on desktop */
+    @media (min-width: 769px) {
+        .chronicle-book::before {
+            content: '';
+            position: absolute;
+            top: 0; bottom: 0; left: 50%;
+            width: 30px;
+            transform: translateX(-50%);
+            background: linear-gradient(to right, rgba(0,0,0,0) 0%, rgba(20,15,10,0.04) 40%, rgba(20,15,10,0.08) 50%, rgba(20,15,10,0.04) 60%, rgba(0,0,0,0) 100%);
+            pointer-events: none;
+            z-index: 5;
+        }
+    }
+
+    .book-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1.4rem 2rem;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-2);
+    }
+
+    .book-title-group {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .book-title-group h2 {
+        font-family: var(--font-serif);
+        font-size: 1.25rem;
+        color: var(--accent);
+        letter-spacing: 0.5px;
+    }
+
+    .emblem-mini svg {
+        width: 20px;
+        height: 20px;
+        color: var(--accent);
+    }
+
+    .scrollable-parchment {
+        flex-grow: 1;
+        overflow-y: auto;
+        padding: 2.5rem 3rem;
+        background: #fdfaf2;
+    }
+
+    /* Custom parchment scrollbar */
+    .scrollable-parchment::-webkit-scrollbar {
+        width: 8px;
+    }
+    .scrollable-parchment::-webkit-scrollbar-track {
+        background: rgba(233, 224, 207, 0.3);
+    }
+    .scrollable-parchment::-webkit-scrollbar-thumb {
+        background: var(--line-strong);
+        border-radius: 4px;
+    }
+    .scrollable-parchment::-webkit-scrollbar-thumb:hover {
+        background: var(--accent);
+    }
+
+    .chronicle-empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        text-align: center;
+        padding: 4rem 2rem;
+    }
+
+    .chronicle-empty .empty-text {
+        font-family: var(--font-serif);
+        font-size: 1.1rem;
+        font-style: italic;
+        color: var(--muted);
+        max-width: 440px;
+        line-height: 1.6;
+    }
+
+    .rounds-list {
+        display: flex;
+        flex-direction: column;
+        gap: 3.5rem;
+        max-width: 840px;
+        margin: 0 auto;
+    }
+
+    /* Double page layout simulation on desktop */
+    @media (min-width: 769px) {
+        .rounds-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            column-gap: 5rem;
+            row-gap: 4rem;
+        }
+        .round-entry {
+            break-inside: avoid;
+        }
+    }
+
+    .round-entry {
+        display: flex;
+        flex-direction: column;
+        gap: 1.1rem;
+        animation: book-fade-in 0.4s ease-out;
+    }
+    @keyframes book-fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    .round-header-row {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .round-number {
+        font-family: var(--font-serif);
+        font-size: 1.2rem;
+        color: var(--accent);
+        font-weight: 700;
+        white-space: nowrap;
+        letter-spacing: 0.5px;
+    }
+
+    .round-divider-line {
+        flex-grow: 1;
+        height: 1px;
+        background: linear-gradient(to right, var(--line-strong), rgba(210, 195, 175, 0));
+    }
+
+    .round-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        padding-left: 0.5rem;
+    }
+
+    .action-bubble-row {
+        font-size: 0.88rem;
+        line-height: 1.45;
+        color: var(--ink);
+    }
+
+    .action-author {
+        font-weight: 700;
+        color: var(--accent);
+        margin-right: 0.3rem;
+        text-transform: uppercase;
+        font-size: 0.76rem;
+        letter-spacing: 0.4px;
+    }
+
+    .action-text {
+        font-style: italic;
+        opacity: 0.9;
+    }
+
+    .round-narration {
+        background: rgba(247, 241, 227, 0.45);
+        border-left: 2px solid var(--line-strong);
+        padding: 0.9rem 1.1rem;
+        border-radius: 4px;
+    }
+
+    .narration-text {
+        font-family: var(--font-serif);
+        font-size: 0.92rem;
+        line-height: 1.6;
+        color: var(--ink);
+        text-align: justify;
+    }
+
+    .narration-text::first-letter {
+        font-size: 2.2rem;
+        font-weight: 700;
+        float: left;
+        margin-top: 0.15rem;
+        margin-right: 0.45rem;
+        line-height: 0.85;
+        color: var(--accent);
+        font-family: var(--font-serif);
+    }
+
+    /* Active state for Chronicle button */
+    .chronicle-btn.active {
+        color: var(--accent);
+        background: var(--surface-3);
     }
 </style>
