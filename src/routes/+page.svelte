@@ -25,16 +25,42 @@
     let showSettings = $state(!apiKey);
     let connectionStatus = $state("Syncing");
 
+    // Character Selection data
+    const archetypes = [
+        { id: 'fighter', name: 'Fighter', icon: '⚔️', hp: 18, resolve: 15, corruption: 0, traits: ['Hardened', 'Iron Will'], item: 'Rusty Sword' },
+        { id: 'rogue', name: 'Rogue', icon: '🗡️', hp: 12, resolve: 30, corruption: 0, traits: ['Nimble', 'Shadowmeld'], item: 'Dull Dagger' },
+        { id: 'cleric', name: 'Cleric', icon: '☀️', hp: 14, resolve: 25, corruption: 0, traits: ['Sacred Mark', 'Blessed'], item: 'Wooden Mace' },
+        { id: 'mage', name: 'Mage', icon: '🔮', hp: 10, resolve: 20, corruption: 20, traits: ['Aether Resonance', 'Spellbound'], item: 'Cursed Staff' }
+    ];
+
+    let characterSelected = $state(false);
+    let characterName = $state('');
+    let selectedArc = $state('fighter');
+
     // Reconstruct Codex state reactively
     let codexData = $state({
         location: "The Black Crypt",
         plot_summary: "The party seeks the Ashen Crown.",
         scene_tags: { biome: "crypt", weather: "none", mood: "oppressive" },
-        party: {
-            "Fighter": { hp: 15, max_hp: 15, resolve: 0, corruption: 0, active_traits: [], permanent_conditions: [], echo_tags: [] }
-        },
+        party: {} as Record<string, { hp: number, max_hp: number, resolve: number, corruption: number, active_traits: string[], permanent_conditions: string[], echo_tags: string[] }>,
         inventory: {} as Record<string, { durability: number }>
     });
+
+    // Derive active character stats
+    let myCharacter = $derived(
+        codexData.party[characterName] || { 
+            hp: 15, 
+            max_hp: 15, 
+            resolve: 0, 
+            corruption: 0, 
+            active_traits: [] as string[], 
+            permanent_conditions: [] as string[] 
+        }
+    );
+
+    let myArchetypeLabel = $derived(
+        archetypes.find(a => a.id === selectedArc)?.name || 'Fighter'
+    );
 
     const unsubscribe = chatStore.subscribe(value => {
         chatLog = value;
@@ -49,6 +75,15 @@
     let activePeers = $state(0);
     
     onMount(() => {
+        // Load saved character config
+        const savedName = localStorage.getItem('rt_char_name');
+        const savedSelected = localStorage.getItem('rt_character_selected');
+        if (savedName && savedSelected === 'true') {
+            characterName = savedName;
+            selectedArc = localStorage.getItem('rt_char_arc') || 'fighter';
+            characterSelected = true;
+        }
+
         provider.on('peers', (event) => {
             activePeers = event.webrtcConns.size;
             connectionStatus = activePeers > 0 ? "Synced" : "Offline P2P";
@@ -62,9 +97,7 @@
                     location: raw.location || "The Black Crypt",
                     plot_summary: raw.plot_summary || "",
                     scene_tags: raw.scene_tags || { biome: "crypt", weather: "none", mood: "oppressive" },
-                    party: raw.party || {
-                        "Fighter": { hp: 15, max_hp: 15, resolve: 0, corruption: 0, active_traits: [], permanent_conditions: [], echo_tags: [] }
-                    },
+                    party: raw.party || {},
                     inventory: raw.inventory || {}
                 };
                 if (codexData.scene_tags) currentSceneTags = codexData.scene_tags;
@@ -75,9 +108,47 @@
     function saveSettings() {
         if (apiKey) { 
             localStorage.setItem('rt_api_key', apiKey); 
-            isReady = true; 
             showSettings = false; 
         }
+    }
+
+    function confirmCharacter() {
+        if (!characterName.trim() || !selectedArc) return;
+        const chosen = archetypes.find(a => a.id === selectedArc);
+        if (!chosen) return;
+
+        const charData = {
+            hp: chosen.hp,
+            max_hp: chosen.hp,
+            resolve: chosen.resolve,
+            corruption: chosen.corruption,
+            active_traits: chosen.traits,
+            permanent_conditions: [],
+            echo_tags: []
+        };
+
+        // Write character to Yjs document
+        ydoc.transact(() => {
+            const yCodex = ydoc.getMap('memoryCodex');
+            const party = yCodex.get('party') || {};
+            party[characterName] = charData;
+            yCodex.set('party', party);
+
+            const inventory = yCodex.get('inventory') || {};
+            inventory[chosen.item] = { durability: 3 };
+            yCodex.set('inventory', inventory);
+        });
+
+        localStorage.setItem('rt_char_name', characterName);
+        localStorage.setItem('rt_char_arc', selectedArc);
+        localStorage.setItem('rt_character_selected', 'true');
+        characterSelected = true;
+
+        addChatEntry({ 
+            author: 'System', 
+            text: `${characterName} the ${chosen.name} has bound their soul to the table.`, 
+            type: 'dm' 
+        });
     }
 
     function switchRoom() {
@@ -113,9 +184,7 @@
                         location: raw.location || "The Black Crypt",
                         plot_summary: raw.plot_summary || "",
                         scene_tags: raw.scene_tags || { biome: "crypt", weather: "none", mood: "oppressive" },
-                        party: raw.party || {
-                            "Fighter": { hp: 15, max_hp: 15, resolve: 0, corruption: 0, active_traits: [], permanent_conditions: [], echo_tags: [] }
-                        },
+                        party: raw.party || {},
                         inventory: raw.inventory || {}
                     };
                     if (codexData.scene_tags) currentSceneTags = codexData.scene_tags;
@@ -143,7 +212,7 @@
         });
 
         // Visually echo local player input instantly
-        addChatEntry({ author: 'You', text: userAction, type: 'player' });
+        addChatEntry({ author: characterName || 'You', text: userAction, type: 'player' });
 
         if (isProcessor) {
             addChatEntry({ author: 'System', text: 'Gathering party actions (5s window)...', type: 'dm' });
@@ -201,189 +270,235 @@
         <CinematicDiorama sceneTags={currentSceneTags} />
     </div>
 
-    <!-- UI Overlay Grid -->
-    <div class="layout-grid">
-        
-        <!-- Header HUD -->
-        <header class="hud-header panel">
-            <div class="hud-left">
-                <button class="menu-toggle" onclick={() => showCodexMobile = !showCodexMobile}>
-                    🛡️ Codex
-                </button>
-                <div class="brand">
-                    <h1>ROUND TABLE</h1>
-                    <span class="version">v1.1</span>
+    {#if !isReady}
+        <!-- Save API Key screen -->
+        <div class="modal-overlay">
+            <div class="settings-drawer panel entry-panel">
+                <h2>ROUND TABLE</h2>
+                <p class="intro-desc">Welcome to the Grimdark AI VTT. To begin, insert your Google AI Studio API key. The key remains entirely local to your browser storage.</p>
+                <div class="input-field">
+                    <label for="api-key-init">GOOGLE AI Studio API KEY</label>
+                    <input id="api-key-init" type="password" bind:value={apiKey} placeholder="AIzaSy..." />
                 </div>
+                <button class="save-btn" disabled={!apiKey} onclick={saveSettings}>ENTER COMPASS</button>
             </div>
+        </div>
+    {:else if !characterSelected}
+        <!-- Choose Character Soul screen -->
+        <div class="modal-overlay">
+            <div class="settings-drawer panel character-select-drawer">
+                <h2>CHOOSE YOUR SOUL</h2>
+                <p class="note text-center">Select your character archetype to bind your soul to the table.</p>
+                
+                <div class="archetype-grid">
+                    {#each archetypes as arc}
+                        <button class="arc-option-card {selectedArc === arc.id ? 'selected' : ''}" onclick={() => selectedArc = arc.id}>
+                            <span class="arc-icon">{arc.icon}</span>
+                            <span class="arc-title">{arc.name}</span>
+                            <div class="arc-stats">
+                                <span>HP: {arc.hp}</span>
+                                <span>RES: {arc.resolve}%</span>
+                                <span>COR: {arc.corruption}%</span>
+                            </div>
+                            <div class="arc-starting-item">Item: {arc.item}</div>
+                        </button>
+                    {/each}
+                </div>
+
+                <div class="input-field name-input-container">
+                    <label for="char-name-init">CHARACTER NAME</label>
+                    <input id="char-name-init" type="text" bind:value={characterName} placeholder="Enter your name..." />
+                </div>
+
+                <button class="save-btn" disabled={!characterName.trim() || !selectedArc} onclick={confirmCharacter}>
+                    BIND SOUL & ENTER
+                </button>
+            </div>
+        </div>
+    {:else}
+        <!-- Main UI Overlay Grid -->
+        <div class="layout-grid">
             
-            <div class="hud-center">
-                <div class="location-tag">
-                    <span class="icon">📍</span>
-                    <span class="loc-text">{codexData.location}</span>
-                </div>
-            </div>
-
-            <div class="hud-right">
-                <div class="status-orb {connectionStatus.toLowerCase().replace(' ', '-')}">
-                    <span class="ping-pulse"></span>
-                    <span class="status-text">{connectionStatus} ({activePeers} peers)</span>
-                </div>
-                <button class="settings-btn" onclick={() => showSettings = !showSettings}>
-                    ⚙️
-                </button>
-            </div>
-        </header>
-
-        <div class="main-content">
-            <!-- Left Sidebar: Soul Forge & Codex -->
-            <aside class="codex-sidebar panel {showCodexMobile ? 'mobile-visible' : ''}">
-                <div class="sidebar-header">
-                    <h2>SOUL FORGE</h2>
-                    <span class="archetype">FIGHTER - DEGRADABLE STATE</span>
-                </div>
-
-                <div class="sidebar-body">
-                    <!-- HP Status -->
-                    <div class="stat-group">
-                        <div class="stat-label-row">
-                            <span>VITALITY (HP)</span>
-                            <span class="val red">{codexData.party.Fighter?.hp || 15} / {codexData.party.Fighter?.max_hp || 15}</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="fill hp" style="width: {((codexData.party.Fighter?.hp || 15) / (codexData.party.Fighter?.max_hp || 15)) * 100}%"></div>
-                        </div>
-                    </div>
-
-                    <!-- Resolve Status -->
-                    <div class="stat-group">
-                        <div class="stat-label-row">
-                            <span>SANITY / RESOLVE</span>
-                            <span class="val gold">{codexData.party.Fighter?.resolve || 0} %</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="fill resolve" style="width: {codexData.party.Fighter?.resolve || 0}%"></div>
-                        </div>
-                    </div>
-
-                    <!-- Corruption Status -->
-                    <div class="stat-group">
-                        <div class="stat-label-row">
-                            <span>CORRUPTION</span>
-                            <span class="val purple">{codexData.party.Fighter?.corruption || 0} %</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="fill corruption" style="width: {codexData.party.Fighter?.corruption || 0}%"></div>
-                        </div>
-                    </div>
-
-                    <hr class="divider" />
-
-                    <!-- Permanent Conditions -->
-                    <div class="codex-section">
-                        <h3>PERMANENT SCARS</h3>
-                        {#if !codexData.party.Fighter?.permanent_conditions || codexData.party.Fighter.permanent_conditions.length === 0}
-                            <p class="empty-state">No scars yet. Survive the night.</p>
-                        {:else}
-                            <ul class="scar-list">
-                                {#each codexData.party.Fighter.permanent_conditions as scar}
-                                    <li class="scar-item">{scar}</li>
-                                {/each}
-                            </ul>
-                        {/if}
-                    </div>
-
-                    <hr class="divider" />
-
-                    <!-- Inventory Grid -->
-                    <div class="codex-section">
-                        <h3>ACTIVE DEGRADABLES</h3>
-                        <div class="inventory-grid">
-                            {#each Array(6) as _, i}
-                                {@const keys = Object.keys(codexData.inventory)}
-                                {@const item = keys[i] ? { name: keys[i], ...codexData.inventory[keys[i]] } : null}
-                                <div class="inv-slot {item ? 'occupied' : ''}">
-                                    {#if item}
-                                        <div class="item-name">{item.name}</div>
-                                        <div class="durability-indicator">
-                                            <span class="label">DUR:</span>
-                                            <span class="dur-bar-bg">
-                                                <span class="dur-bar-fill" style="width: {(item.durability / 3) * 100}%"></span>
-                                            </span>
-                                            <span class="count">{item.durability}/3</span>
-                                        </div>
-                                    {:else}
-                                        <span class="slot-num">{i + 1}</span>
-                                    {/if}
-                                </div>
-                            {/each}
-                        </div>
+            <!-- Header HUD -->
+            <header class="hud-header panel">
+                <div class="hud-left">
+                    <button class="menu-toggle" onclick={() => showCodexMobile = !showCodexMobile}>
+                        🛡️ Codex
+                    </button>
+                    <div class="brand">
+                        <h1>ROUND TABLE</h1>
+                        <span class="version">v1.2 (PWA)</span>
                     </div>
                 </div>
-            </aside>
-
-            <!-- Main Panel: Chat Log Console -->
-            <section class="console-panel panel">
-                <!-- Chat log body -->
-                <div class="chat-log-scroll">
-                    <div class="chat-log-container">
-                        <!-- Default introduction if chat is empty -->
-                        {#if chatLog.length === 0}
-                            <div class="intro-card">
-                                <h3>Welcome to the Round Table</h3>
-                                <p>A fluid, serverless AI-driven Grimdark VTT. Provide player input to trigger batched turns and math rolls.</p>
-                            </div>
-                        {/if}
-
-                        {#each chatLog as entry}
-                            <div class="log-message {entry.type}">
-                                <div class="message-header">
-                                    <span class="sender">{entry.author}</span>
-                                </div>
-                                <div class="message-body">
-                                    {#if entry.type === 'dm'}
-                                        <p class="dm-narrative">{@html entry.text}</p>
-                                    {:else}
-                                        <p class="player-text">{entry.text}</p>
-                                    {/if}
-                                </div>
-                            </div>
-                        {/each}
-
-                        {#if isLoading}
-                            <div class="log-message dm loading">
-                                <div class="message-header"><span class="sender">DM</span></div>
-                                <div class="message-body">
-                                    <div class="weaving-spinner">
-                                        <span class="dot"></span>
-                                        <span class="dot"></span>
-                                        <span class="dot"></span>
-                                        <span class="text">Weaving fate...</span>
-                                    </div>
-                                </div>
-                            </div>
-                        {/if}
+                
+                <div class="hud-center">
+                    <div class="location-tag">
+                        <span class="icon">📍</span>
+                        <span class="loc-text">{codexData.location}</span>
                     </div>
                 </div>
 
-                <!-- Bottom Input: Action Crucible -->
-                <div class="action-crucible">
-                    <input 
-                        type="text" 
-                        bind:value={chatInput} 
-                        onkeydown={(e) => e.key === 'Enter' && submitAction()} 
-                        placeholder={isLoading ? 'The wheel of fate turns...' : 'Formulate your action (rolls d20 +5 vs DC 12)...'} 
-                        disabled={isLoading || !isReady} 
-                    />
-                    <button class="act-btn" onclick={submitAction} disabled={isLoading || !isReady}>
-                        {isLoading ? '...' : 'ACT'}
+                <div class="hud-right">
+                    <div class="status-orb {connectionStatus.toLowerCase().replace(' ', '-')}">
+                        <span class="ping-pulse"></span>
+                        <span class="status-text">{connectionStatus} ({activePeers} peers)</span>
+                    </div>
+                    <button class="settings-btn" onclick={() => showSettings = !showSettings}>
+                        ⚙️
                     </button>
                 </div>
-            </section>
+            </header>
+
+            <div class="main-content">
+                <!-- Left Sidebar: Soul Forge & Codex -->
+                <aside class="codex-sidebar panel {showCodexMobile ? 'mobile-visible' : ''}">
+                    <div class="sidebar-header">
+                        <h2>{characterName.toUpperCase()}</h2>
+                        <span class="archetype">{myArchetypeLabel.toUpperCase()} - DEGRADABLE STATE</span>
+                    </div>
+
+                    <div class="sidebar-body">
+                        <!-- HP Status -->
+                        <div class="stat-group">
+                            <div class="stat-label-row">
+                                <span>VITALITY (HP)</span>
+                                <span class="val red">{myCharacter.hp} / {myCharacter.max_hp}</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="fill hp" style="width: {(myCharacter.hp / myCharacter.max_hp) * 100}%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Resolve Status -->
+                        <div class="stat-group">
+                            <div class="stat-label-row">
+                                <span>SANITY / RESOLVE</span>
+                                <span class="val gold">{myCharacter.resolve} %</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="fill resolve" style="width: {myCharacter.resolve}%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Corruption Status -->
+                        <div class="stat-group">
+                            <div class="stat-label-row">
+                                <span>CORRUPTION</span>
+                                <span class="val purple">{myCharacter.corruption} %</span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="fill corruption" style="width: {myCharacter.corruption}%"></div>
+                            </div>
+                        </div>
+
+                        <hr class="divider" />
+
+                        <!-- Permanent Conditions -->
+                        <div class="codex-section">
+                            <h3>PERMANENT SCARS</h3>
+                            {#if !myCharacter.permanent_conditions || myCharacter.permanent_conditions.length === 0}
+                                <p class="empty-state">No scars yet. Survive the night.</p>
+                            {:else}
+                                <ul class="scar-list">
+                                    {#each myCharacter.permanent_conditions as scar}
+                                        <li class="scar-item">{scar}</li>
+                                    {/each}
+                                </ul>
+                            {/if}
+                        </div>
+
+                        <hr class="divider" />
+
+                        <!-- Inventory Grid -->
+                        <div class="codex-section">
+                            <h3>ACTIVE DEGRADABLES</h3>
+                            <div class="inventory-grid">
+                                {#each Array(6) as _, i}
+                                    {@const keys = Object.keys(codexData.inventory)}
+                                    {@const item = keys[i] ? { name: keys[i], ...codexData.inventory[keys[i]] } : null}
+                                    <div class="inv-slot {item ? 'occupied' : ''}">
+                                        {#if item}
+                                            <div class="item-name">{item.name}</div>
+                                            <div class="durability-indicator">
+                                                <span class="label">DUR:</span>
+                                                <span class="dur-bar-bg">
+                                                    <span class="dur-bar-fill" style="width: {(item.durability / 3) * 100}%"></span>
+                                                </span>
+                                                <span class="count">{item.durability}/3</span>
+                                            </div>
+                                        {:else}
+                                            <span class="slot-num">{i + 1}</span>
+                                        {/if}
+                                    </div>
+                                {/each}
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- Main Panel: Chat Log Console -->
+                <section class="console-panel panel">
+                    <!-- Chat log body -->
+                    <div class="chat-log-scroll">
+                        <div class="chat-log-container">
+                            {#if chatLog.length === 0}
+                                <div class="intro-card">
+                                    <h3>Welcome to the Round Table</h3>
+                                    <p>Your soul is bound. Present your actions inside the Action Crucible to progress the adventure.</p>
+                                </div>
+                            {/if}
+
+                            {#each chatLog as entry}
+                                <div class="log-message {entry.type}">
+                                    <div class="message-header">
+                                        <span class="sender">{entry.author}</span>
+                                    </div>
+                                    <div class="message-body">
+                                        {#if entry.type === 'dm'}
+                                            <p class="dm-narrative">{@html entry.text}</p>
+                                        {:else}
+                                            <p class="player-text">{entry.text}</p>
+                                        {/if}
+                                    </div>
+                                </div>
+                            {/each}
+
+                            {#if isLoading}
+                                <div class="log-message dm loading">
+                                    <div class="message-header"><span class="sender">DM</span></div>
+                                    <div class="message-body">
+                                        <div class="weaving-spinner">
+                                            <span class="dot"></span>
+                                            <span class="dot"></span>
+                                            <span class="dot"></span>
+                                            <span class="text">Weaving fate...</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            {/if}
+                        </div>
+                    </div>
+
+                    <!-- Bottom Input: Action Crucible -->
+                    <div class="action-crucible">
+                        <input 
+                            type="text" 
+                            bind:value={chatInput} 
+                            onkeydown={(e) => e.key === 'Enter' && submitAction()} 
+                            placeholder={isLoading ? 'The wheel of fate turns...' : 'Formulate your action (rolls d20 +5 vs DC 12)...'} 
+                            disabled={isLoading || !isReady} 
+                        />
+                        <button class="act-btn" onclick={submitAction} disabled={isLoading || !isReady}>
+                            {isLoading ? '...' : 'ACT'}
+                        </button>
+                    </div>
+                </section>
+            </div>
         </div>
-    </div>
+    {/if}
 
     <!-- Modal settings drawer -->
-    {#if showSettings}
+    {#if showSettings && isReady && characterSelected}
         <div class="modal-overlay">
             <div class="settings-drawer panel">
                 <h2>HUD & COMPASS</h2>
@@ -442,6 +557,100 @@
         padding: 1.5rem;
         gap: 1.2rem;
         pointer-events: none;
+    }
+
+    /* Entry / Initial API Key configurations */
+    .entry-panel h2 {
+        font-family: var(--font-serif);
+        text-align: center;
+        letter-spacing: 3px;
+        color: #fff;
+        margin-bottom: 0.5rem;
+    }
+
+    .intro-desc {
+        font-size: 0.8rem;
+        line-height: 1.5;
+        opacity: 0.7;
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+
+    /* Character Selection styles */
+    .character-select-drawer {
+        max-width: 600px;
+        width: 90%;
+        padding: 2.2rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1.2rem;
+    }
+
+    .text-center {
+        text-align: center;
+    }
+
+    .archetype-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.8rem;
+        margin: 0.6rem 0;
+    }
+
+    .arc-option-card {
+        background: rgba(0, 0, 0, 0.4);
+        border: 1px solid var(--glass-border);
+        border-radius: 8px;
+        padding: 1rem;
+        color: var(--ash-gray);
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.35rem;
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        text-align: center;
+    }
+
+    .arc-option-card:hover {
+        border-color: rgba(158, 27, 27, 0.4);
+        background: rgba(158, 27, 27, 0.05);
+    }
+
+    .arc-option-card.selected {
+        border-color: var(--gold);
+        background: rgba(158, 27, 27, 0.1);
+        box-shadow: 0 0 15px var(--gold-glow);
+        color: #fff;
+    }
+
+    .arc-icon {
+        font-size: 1.8rem;
+    }
+
+    .arc-title {
+        font-family: var(--font-serif);
+        font-weight: bold;
+        font-size: 0.95rem;
+        letter-spacing: 1px;
+    }
+
+    .arc-stats {
+        display: flex;
+        gap: 0.6rem;
+        font-size: 0.65rem;
+        opacity: 0.7;
+    }
+
+    .arc-starting-item {
+        font-size: 0.6rem;
+        font-style: italic;
+        color: var(--gold);
+        margin-top: 0.2rem;
+    }
+
+    .name-input-container {
+        margin-top: 0.4rem;
     }
 
     /* HUD Header Styles */
@@ -612,6 +821,10 @@
         gap: 0.35rem;
     }
 
+    .stat-group .fill {
+        transition: width 0.3s ease;
+    }
+
     .stat-label-row {
         display: flex;
         justify-content: space-between;
@@ -641,7 +854,6 @@
     .fill {
         height: 100%;
         border-radius: 3px;
-        transition: width 0.4s ease;
     }
 
     .fill.hp {
@@ -985,6 +1197,7 @@
         justify-content: center;
         align-items: center;
         animation: fade-in 0.2s ease-out;
+        pointer-events: auto;
     }
 
     @keyframes fade-in {
@@ -1000,6 +1213,10 @@
         flex-direction: column;
         gap: 1.5rem;
         animation: scale-up 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .settings-drawer.character-select-drawer {
+        max-width: 580px;
     }
 
     @keyframes scale-up {
@@ -1114,6 +1331,13 @@
 
         .log-message {
             max-width: 95%;
+        }
+
+        .archetype-grid {
+            grid-template-columns: 1fr;
+            max-height: 250px;
+            overflow-y: auto;
+            padding-right: 4px;
         }
     }
 </style>

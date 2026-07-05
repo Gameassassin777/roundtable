@@ -23,10 +23,8 @@ export function createGameState(roomId: string) {
             yCodex.set('location', "The Black Crypt");
             yCodex.set('plot_summary', "The party seeks the Ashen Crown.");
             yCodex.set('scene_tags', { biome: "crypt", weather: "none", mood: "oppressive" });
-            yCodex.set('party', {
-                "Fighter": { hp: 15, max_hp: 15, resolve: 0, corruption: 0, active_traits: [], permanent_conditions: [], echo_tags: [] }
-            });
-            yCodex.set('inventory', { "Rusty Sword": { durability: 3 } });
+            yCodex.set('party', {});
+            yCodex.set('inventory', {});
         });
     }
 
