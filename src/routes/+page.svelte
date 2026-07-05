@@ -13,7 +13,10 @@
 
     let chatLog = $state([]);
     let apiKey = $state(localStorage.getItem('rt_api_key') || '');
-    let isReady = $derived(!!apiKey);
+    // "Committed" gate — NOT derived from apiKey. If this were `$derived(!!apiKey)`,
+    // the entry screen would vanish on the first keystroke (before the key is even
+    // finished/saved), because typing updates apiKey live. Only ENTER COMPASS commits.
+    let isReady = $state(!!localStorage.getItem('rt_api_key'));
     let chatInput = $state('');
     let isLoading = $state(false);
     let showQTE = $state(false);
@@ -62,33 +65,32 @@
         archetypes.find(a => a.id === selectedArc)?.name || 'Fighter'
     );
 
-    const unsubscribe = chatStore.subscribe(value => {
-        chatLog = value;
-        // Scroll chat log to bottom
+    // Monitor Yjs WebRTC peer events
+    let activePeers = $state(0);
+
+    // --- Live-sync wiring (extracted so switchRoom can rebind cleanly) ---
+    function scrollChatToBottom() {
         setTimeout(() => {
             const el = document.querySelector('.chat-log-scroll');
             if (el) el.scrollTop = el.scrollHeight;
         }, 50);
-    });
+    }
 
-    // Monitor Yjs WebRTC peer events
-    let activePeers = $state(0);
-    
-    onMount(() => {
-        // Load saved character config
-        const savedName = localStorage.getItem('rt_char_name');
-        const savedSelected = localStorage.getItem('rt_character_selected');
-        if (savedName && savedSelected === 'true') {
-            characterName = savedName;
-            selectedArc = localStorage.getItem('rt_char_arc') || 'fighter';
-            characterSelected = true;
-        }
+    function subscribeChat() {
+        return chatStore.subscribe(value => {
+            chatLog = value;
+            scrollChatToBottom();
+        });
+    }
 
-        provider.on('peers', (event) => {
+    function bindPeers() {
+        provider.on('peers', (event: any) => {
             activePeers = event.webrtcConns.size;
             connectionStatus = activePeers > 0 ? "Synced" : "Offline P2P";
         });
+    }
 
+    function bindCodex() {
         const yCodex = ydoc.getMap('memoryCodex');
         yCodex.observe(() => {
             const raw = yCodex.toJSON();
@@ -103,12 +105,29 @@
                 if (codexData.scene_tags) currentSceneTags = codexData.scene_tags;
             }
         });
+    }
+
+    let unsubscribe = subscribeChat();
+
+    onMount(() => {
+        // Load saved character config
+        const savedName = localStorage.getItem('rt_char_name');
+        const savedSelected = localStorage.getItem('rt_character_selected');
+        if (savedName && savedSelected === 'true') {
+            characterName = savedName;
+            selectedArc = localStorage.getItem('rt_char_arc') || 'fighter';
+            characterSelected = true;
+        }
+
+        bindPeers();
+        bindCodex();
     });
 
     function saveSettings() {
-        if (apiKey) { 
-            localStorage.setItem('rt_api_key', apiKey); 
-            showSettings = false; 
+        if (apiKey) {
+            localStorage.setItem('rt_api_key', apiKey);
+            isReady = true;   // commit the key — this is what advances past the entry screen
+            showSettings = false;
         }
     }
 
@@ -153,9 +172,10 @@
 
     function switchRoom() {
         if (roomId.trim()) {
-            provider.destroy();
+            // Tear down the old room completely before rebuilding.
             unsubscribe();
-            
+            provider.destroy();
+
             // Reinitialize game state
             gameState = createGameState(roomId.trim());
             chatStore = gameState.chatStore;
@@ -165,32 +185,14 @@
             yPendingActions = gameState.yPendingActions;
             actionLock = gameState.actionLock;
             reportKeyExhausted = gameState.reportKeyExhausted;
-            
-            // Re-subscribe
-            chatStore.subscribe(value => {
-                chatLog = value;
-                setTimeout(() => {
-                    const el = document.querySelector('.chat-log-scroll');
-                    if (el) el.scrollTop = el.scrollHeight;
-                }, 50);
-            });
-            
-            // Re-bind observers
-            const yCodex = ydoc.getMap('memoryCodex');
-            yCodex.observe(() => {
-                const raw = yCodex.toJSON();
-                if (raw) {
-                    codexData = {
-                        location: raw.location || "The Black Crypt",
-                        plot_summary: raw.plot_summary || "",
-                        scene_tags: raw.scene_tags || { biome: "crypt", weather: "none", mood: "oppressive" },
-                        party: raw.party || {},
-                        inventory: raw.inventory || {}
-                    };
-                    if (codexData.scene_tags) currentSceneTags = codexData.scene_tags;
-                }
-            });
-            
+
+            // Rebind live sync to the new room, keeping the handle so onDestroy
+            // (and the next switch) can clean it up. Previously the new subscription
+            // was orphaned and the peer listener was never re-registered.
+            unsubscribe = subscribeChat();
+            bindPeers();
+            bindCodex();
+
             addChatEntry({ author: 'System', text: `Moved to room: ${roomId}`, type: 'dm' });
         }
     }

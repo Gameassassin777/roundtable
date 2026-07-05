@@ -22,7 +22,8 @@ export async function callAI(prompt: string, apiKey: string, ydoc: Y.Doc, myClie
         });
 
         if (response.status === 429) {
-            ydoc.getMap('yKeyHealth').set(myClientId.toString(), 'exhausted');
+            // NOTE: must match the map name used in gameStore.ts (`keyHealth`).
+            ydoc.getMap('keyHealth').set(myClientId.toString(), 'exhausted');
             throw new Error("RATE_LIMITED");
         }
 
@@ -30,7 +31,20 @@ export async function callAI(prompt: string, apiKey: string, ydoc: Y.Doc, myClie
         if (!response.ok) throw new Error(`API Error: ${response.status}`);
         if (data.promptFeedback?.blockReason) return { narration: "The action collapses into chaos.", ui_update: {} };
 
-        const parsed = JSON.parse(data.candidates[0].content.parts[0].text);
+        // Gemini can return no candidates (e.g. finishReason SAFETY / RECITATION) with
+        // no content parts. Degrade gracefully instead of throwing a cryptic error.
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawText) return { narration: "The threads of fate blur — the vision refuses to form. Try a different action.", ui_update: {} };
+
+        let parsed: DMResponse;
+        try {
+            parsed = JSON.parse(rawText);
+        } catch {
+            // Model occasionally wraps JSON in prose or code fences despite the mime hint.
+            const match = rawText.match(/\{[\s\S]*\}/);
+            if (!match) return { narration: rawText, ui_update: {} };
+            parsed = JSON.parse(match[0]);
+        }
 
         // Deep Merge new_codex into Yjs
         if (parsed.new_codex) {
