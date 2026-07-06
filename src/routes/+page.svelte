@@ -34,6 +34,11 @@
     // Committed-key gate (NOT derived from apiKey — see saveSettings).
     let isReady = $state(!!localStorage.getItem('rt_api_key'));
     let chatInput = $state('');
+    // Phase 26: in-memory action history for Up/Down recall in the action
+    // field. Session-scoped — not persisted across reloads.
+    let actionHistory: string[] = [];
+    let actionHistoryCursor = 0;
+    let actionHistoryDraft = '';
     let isLoading = $state(false);
     let whisperMode = $state(false);  // Phase 10: route submit through the whisper track
     let whisperInFlight = $state(false);  // separate spinner for the private track
@@ -956,6 +961,15 @@
         lastAction = userAction;
         chatInput = '';
 
+        // Phase 26: push to session history (dedup the most recent so rapid
+        // identical resends don't pollute the cycle). Cursor resets to "after
+        // last" so Up arrow recalls the just-sent action first.
+        if (actionHistory[actionHistory.length - 1] !== userAction) {
+            actionHistory.push(userAction);
+        }
+        actionHistoryCursor = actionHistory.length;
+        actionHistoryDraft = '';
+
         if (whisperMode || forceWhisper) {
             whisperInFlight = true;
             addLocalWhisper({ author, text: userAction, type: 'whisper', timestamp: Date.now() });
@@ -1688,6 +1702,39 @@
                                 onkeydown={(e) => {
                                     if (e.key === 'Enter') {
                                         submitAction(e.shiftKey);
+                                        return;
+                                    }
+                                    // Phase 26: Up/Down cycles through this
+                                    // session's submitted actions. Draft in
+                                    // progress is saved when leaving the tail.
+                                    if (e.key === 'ArrowUp') {
+                                        if (actionHistory.length === 0) return;
+                                        if (actionHistoryCursor === actionHistory.length) {
+                                            actionHistoryDraft = chatInput;
+                                        }
+                                        actionHistoryCursor = Math.max(0, actionHistoryCursor - 1);
+                                        chatInput = actionHistory[actionHistoryCursor] || '';
+                                        e.preventDefault();
+                                        // Move cursor to end so the recalled
+                                        // text is ready to edit/append.
+                                        requestAnimationFrame(() => {
+                                            const len = chatInput.length;
+                                            actionFieldEl?.setSelectionRange(len, len);
+                                        });
+                                    } else if (e.key === 'ArrowDown') {
+                                        if (actionHistory.length === 0) return;
+                                        if (actionHistoryCursor >= actionHistory.length) return;
+                                        actionHistoryCursor += 1;
+                                        if (actionHistoryCursor >= actionHistory.length) {
+                                            chatInput = actionHistoryDraft;
+                                        } else {
+                                            chatInput = actionHistory[actionHistoryCursor] || '';
+                                        }
+                                        e.preventDefault();
+                                        requestAnimationFrame(() => {
+                                            const len = chatInput.length;
+                                            actionFieldEl?.setSelectionRange(len, len);
+                                        });
                                     }
                                 }}
                                 onfocus={() => actionInputFocused = true}
