@@ -5,6 +5,7 @@
     import QTE_Overlay from '$lib/components/QTE_Overlay.svelte';
     import { createGameState } from '$lib/stores/gameStore';
     import { forgeCharacter, forgeConverse, type ForgedCharacter, type ForgeMessage } from '$lib/ai/soulForge';
+    import { ADVENTURE_SEEDS, type AdventureSeed } from '$lib/adventureSeeds';
 
     let roomId = $state("crossroads-1");
     let gameState = createGameState(roomId);
@@ -265,6 +266,12 @@
         nsPremise = ''; nsTone = ''; nsHook = '';
         showNorthStar = false;
     }
+    function applySeed(seed: AdventureSeed) {
+        nsPremise = seed.premise;
+        nsTone = seed.tone;
+        nsHook = seed.opening_hook;
+    }
+    let showSeedLibrary = $state(false);
 
     let characterSelected = $state(false);
     let characterName = $state('');
@@ -1313,6 +1320,25 @@
 
                 <p class="ns-intro">The foundational premise of this world. The Director, DM, and World Engine all read this — keep it short and load-bearing. Empty fields mean "improvise neutrally."</p>
 
+                <div class="field">
+                    <button class="btn-ghost wide" onclick={() => showSeedLibrary = !showSeedLibrary}>
+                        {showSeedLibrary ? 'Hide seeds' : 'Pick from seed library'}
+                    </button>
+                    {#if showSeedLibrary}
+                        <div class="seed-library">
+                            {#each ADVENTURE_SEEDS as seed (seed.id)}
+                                <button class="seed-card" onclick={() => applySeed(seed)}>
+                                    <div class="seed-card-head">
+                                        <span class="seed-card-title">{seed.title}</span>
+                                        <span class="ns-tone-chip">{seed.tone}</span>
+                                    </div>
+                                    <p class="seed-card-premise">{seed.premise}</p>
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
+
                 <label class="field">
                     <span class="field-label">Premise</span>
                     <textarea class="ns-textarea" bind:value={nsPremise} rows="4" placeholder="A borderland village on the edge of a forest that has started growing back overnight, swallowing farms that have stood for generations…"></textarea>
@@ -2286,6 +2312,53 @@
         gap: 0.6rem;
         justify-content: flex-end;
         margin-top: 0.3rem;
+    }
+
+    /* Phase 7: Adventure seed library */
+    .seed-library {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.6rem;
+        margin-top: 0.5rem;
+    }
+    @media (max-width: 540px) {
+        .seed-library { grid-template-columns: 1fr; }
+    }
+    .seed-card {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        padding: 0.7rem 0.8rem;
+        text-align: left;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        cursor: pointer;
+        font-family: var(--font);
+        transition: border-color 0.15s ease, transform 0.1s ease;
+    }
+    .seed-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .seed-card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .seed-card-title {
+        font-size: 0.88rem;
+        font-weight: 700;
+        color: var(--ink);
+    }
+    .seed-card-premise {
+        font-size: 0.76rem;
+        line-height: 1.4;
+        margin: 0;
+        opacity: 0.75;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
     }
 
     /* Codex sidebar North Star display */
