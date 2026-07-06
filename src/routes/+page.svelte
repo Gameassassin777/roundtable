@@ -37,6 +37,7 @@
     let isLoading = $state(false);
     let whisperMode = $state(false);  // Phase 10: route submit through the whisper track
     let whisperInFlight = $state(false);  // separate spinner for the private track
+    let turnStageLabel = $state('');      // Phase 16: pipeline progress text
     let actionFieldEl = $state<HTMLInputElement | null>(null);  // Phase 11: focus/position cursor after template apply
     let showQTE = $state(false);
     let qteConfig = $state({ time_limit_ms: 1000, start_time: 0 });
@@ -843,6 +844,7 @@
         }
 
         isLoading = true;
+        turnStageLabel = 'The world responds…';
         // Echo our own action locally for instant feedback (peers see it via Yjs sync).
         addChatEntry({ author, text: userAction, type: 'player' });
 
@@ -863,7 +865,19 @@
             if (!evt) return;
             if (evt.type === 'turn-start') {
                 // Beat is in flight; keep isLoading = true.
+                turnStageLabel = 'The world responds…';
+            } else if (evt.type === 'turn-stage') {
+                turnStageLabel = (evt as any).label || 'The world responds…';
             } else if (evt.type === 'turn-result') {
+                isLoading = false;
+                turnStageLabel = '';
+                if (evt.ui_update?.qte) broadcastQTE(evt.ui_update.qte);
+            } else if (evt.type === 'turn-error') {
+                isLoading = false;
+                turnStageLabel = '';
+                lastTurnError = evt.message || 'The world hesitates.';
+                addChatEntry({ author: 'System', text: lastTurnError, type: 'dm' });
+            } else if (evt.type === 'whisper-result') {
                 isLoading = false;
                 if (evt.ui_update?.qte) broadcastQTE(evt.ui_update.qte);
             } else if (evt.type === 'turn-error') {
@@ -1401,7 +1415,7 @@
                                 {#if lastAction}<p class="your-move">“{lastAction}”</p>{/if}
                                 <div class="resolving-ind">
                                     <span class="orb-pulse"></span>
-                                    <span>The world responds…</span>
+                                    <span>{turnStageLabel || 'The world responds…'}</span>
                                 </div>
                             </div>
                         {:else}

@@ -114,6 +114,7 @@ export function createGameState(roomId: string) {
                     data.type === 'turn-start' ||
                     data.type === 'turn-result' ||
                     data.type === 'turn-error' ||
+                    data.type === 'turn-stage' ||
                     data.type === 'action-accepted' ||
                     data.type === 'key-usage' ||
                     data.type === 'whisper-result' ||

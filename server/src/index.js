@@ -463,6 +463,7 @@ export class SignalingRoom {
     const northStar = codexObj.north_star || null;
 
     // --- Phase 1: Director → DM → lint, with one retry on lint failure -----
+    this.broadcast({ type: 'turn-stage', stage: 'director', label: 'Reading the table…' });
     const directorResult = await this.callWithFallback(
       buildDirectorRequestBody(buildDirectorPrompt(actions, codexJson, northStar)),
       keyEntry
@@ -474,6 +475,7 @@ export class SignalingRoom {
       const ruling = parseJsonLoose(directorText);
       if (ruling) {
         // DM call: render the ruling as prose.
+        this.broadcast({ type: 'turn-stage', stage: 'dm', label: 'Composing the scene…' });
         const dmResult = await this.callWithFallback(
           buildRequestBody(buildDmPrompt(ruling, codexJson, northStar)),
           keyEntry
@@ -515,6 +517,7 @@ export class SignalingRoom {
           let criticRetried = false;
           const criticKey = this.keyPool.next();
           if (criticKey && criticKey.value !== keyEntry.value) {
+            this.broadcast({ type: 'turn-stage', stage: 'critic', label: 'Checking the rendering…' });
             const criticResult = await this.callWithFallback(
               buildCriticRequestBody(buildCriticPrompt(ruling, finalNarration, codexJson)),
               criticKey
