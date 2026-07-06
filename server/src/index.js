@@ -656,6 +656,7 @@ export class SignalingRoom {
             thread_changes: ruling.thread_changes || null,
             location_changes: ruling.location_changes || null,
             new_locations: ruling.new_locations || null,
+            xp_awards: ruling.xp_awards || null,
             lint_passed: lint.passes,
             lint_retried: retried,
             critic_passed: criticPassed,
@@ -841,6 +842,42 @@ export class SignalingRoom {
           locs[name] = { ...(locs[name] || {}), ...turn.new_locations[name] };
         }
         yCodex.set('locations', locs);
+      }
+      // Phase 46: XP awards — Director says "Kaelen: +3". We accumulate into
+      // party[name].xp and recompute level from XP (every 10 XP = 1 level).
+      // Each level past 1 grants +1 max_hp from base. On level-up we bump
+      // hp by the same delta so the new capacity isn't empty. base_max_hp
+      // preserves the original forge value so the bonus stays recomputable.
+      if (turn.xp_awards && typeof turn.xp_awards === 'object') {
+        const party = { ...(yCodex.get('party') || {}) };
+        for (const name in turn.xp_awards) {
+          const award = Math.max(0, Math.floor(Number(turn.xp_awards[name]) || 0));
+          if (award === 0) continue;
+          const cur = party[name] || {};
+          const prevXp = typeof cur.xp === 'number' ? cur.xp : 0;
+          const newXp = prevXp + award;
+          const prevLevel = typeof cur.level === 'number' ? cur.level : 1;
+          const newLevel = Math.floor(newXp / 10) + 1;
+          const base = typeof cur.base_max_hp === 'number'
+            ? cur.base_max_hp
+            : (typeof cur.max_hp === 'number' ? cur.max_hp : 15);
+          const updated = {
+            ...cur,
+            xp: newXp,
+            level: newLevel,
+            base_max_hp: base,
+            max_hp: base + (newLevel - 1),
+          };
+          // Level-up: add the gained HP capacity to current HP (so the
+          // expanded capacity isn't empty). Clamp to new max.
+          if (newLevel > prevLevel) {
+            const gained = newLevel - prevLevel;
+            const prevHp = typeof cur.hp === 'number' ? cur.hp : updated.max_hp;
+            updated.hp = Math.min(prevHp + gained, updated.max_hp);
+          }
+          party[name] = updated;
+        }
+        yCodex.set('party', party);
       }
       }
     });

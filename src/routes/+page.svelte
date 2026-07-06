@@ -680,7 +680,7 @@
         location: "a quiet crossroads at the edge of an unfinished map",
         plot_summary: "The party has just arrived, each looking for something different.",
         scene_tags: { biome: "crossroads", weather: "clear", mood: "unsettled" },
-        party: {} as Record<string, { hp: number, max_hp: number, resolve: number, corruption: number, active_traits: string[], permanent_conditions: string[], echo_tags: string[] }>,
+        party: {} as Record<string, { hp: number, max_hp: number, resolve: number, corruption: number, active_traits: string[], permanent_conditions: string[], echo_tags: string[], xp?: number, level?: number, base_max_hp?: number }>,
         inventory: {} as Record<string, { durability: number }>,
         world_clock: { turn: 0, day: 1, time_of_day: "morning" } as { turn: number; day: number; time_of_day: string },
         npcs: {} as Record<string, { role?: string; location?: string; goal?: string; disposition?: number; status?: string; last_seen_turn?: number; notes?: string }>,
@@ -696,6 +696,36 @@
             active_traits: [] as string[], permanent_conditions: [] as string[]
         }
     );
+
+    // Phase 46: XP / level. Level = floor(xp / 10) + 1 — matches the server's
+    // award handler. base_max_hp captures the soul-forge hp at the first XP
+    // award so the +1/level bonus stays recomputable.
+    let myXp = $derived.by(() => {
+        const v = (codexData.party as any)?.[characterName]?.xp;
+        return typeof v === 'number' ? v : 0;
+    });
+    let myLevel = $derived.by(() => {
+        const v = (codexData.party as any)?.[characterName]?.level;
+        return typeof v === 'number' ? v : 1;
+    });
+    let xpIntoLevel = $derived(myXp % 10);            // progress within the current level
+    let xpForNextLevel = $derived(10 - xpIntoLevel);   // points still needed to ding
+    let xpLevelPct = $derived((xpIntoLevel / 10) * 100);
+
+    let myLevelForSfx = $state(1);                    // tracked separately to detect level-up edges
+    let levelUpToast = $state<string | null>(null);
+    let levelUpTimer: any = null;
+    $effect(() => {
+        const lvl = myLevel;
+        if (lvl > myLevelForSfx) {
+            // Level-up! Fire the sfx + a sticky toast that auto-dismisses.
+            sfx.play('level-up');
+            levelUpToast = `${characterName || 'You'} reached level ${lvl}!`;
+            if (levelUpTimer) clearTimeout(levelUpTimer);
+            levelUpTimer = setTimeout(() => { levelUpToast = null; }, 6000);
+        }
+        myLevelForSfx = lvl;
+    });
 
     let myArchetypeLabel = $derived(
         classTitle || (selectedArc ? selectedArc.charAt(0).toUpperCase() + selectedArc.slice(1) : 'Wanderer')
@@ -1500,6 +1530,14 @@
         </div>
     {/if}
 
+    <!-- Phase 46: Level-up toast — fires when myLevel increments. Auto-dismisses after 6s. -->
+    {#if levelUpToast}
+        <div class="level-up-toast" role="status" aria-live="polite">
+            <span class="level-up-glow">✦</span>
+            <span class="level-up-text">{levelUpToast}</span>
+        </div>
+    {/if}
+
     <!-- Background diorama (in-game atmosphere) -->
     <div class="canvas-container">
         <CinematicDiorama sceneTags={currentSceneTags} />
@@ -2228,6 +2266,7 @@
                         <span class="turn-cue">{characterName || 'You'} — what do you do?</span>
                         {#if myCharacter}
                             <div class="vitals-chip" aria-label="Your vitals">
+                                <span class="vital-level" title={`Level ${myLevel} · ${myXp} XP`}>Lv {myLevel}</span>
                                 <div class="vital vital-hp" title={`Vitality ${myCharacter.hp} / ${myCharacter.max_hp}`}>
                                     <span class="vital-icon">♥</span>
                                     <div class="vital-bar"><div class="vital-fill" style="width: {Math.max(0, Math.min(100, (myCharacter.hp / myCharacter.max_hp) * 100))}%"></div></div>
@@ -2243,6 +2282,14 @@
                                         <div class="vital-bar"><div class="vital-fill" style="width: {Math.max(0, Math.min(100, myCharacter.corruption))}%"></div></div>
                                     </div>
                                 {/if}
+                                <div
+                                    class="vital vital-xp"
+                                    title={`${xpIntoLevel} / 10 XP toward level ${myLevel + 1} · ${myXp} XP total`}
+                                    aria-label={`XP progress: ${xpIntoLevel} of 10`}
+                                >
+                                    <span class="vital-icon">✦</span>
+                                    <div class="vital-bar"><div class="vital-fill" style="width: {Math.max(0, Math.min(100, xpLevelPct))}%"></div></div>
+                                </div>
                                 {#if myCharacter.permanent_conditions && myCharacter.permanent_conditions.length > 0}
                                     <span class="vital-scars" title="Permanent conditions">{myCharacter.permanent_conditions.length} scar{myCharacter.permanent_conditions.length === 1 ? '' : 's'}</span>
                                 {/if}
@@ -3014,11 +3061,17 @@
                     <button class="icon-btn" onclick={closePartyDetail} aria-label="Close">✕</button>
                 </header>
                 <dl class="npc-detail-grid">
+                    {#if typeof partyDetailData.level === 'number'}
+                        <div class="detail-row"><dt>Level</dt><dd>{partyDetailData.level}</dd></div>
+                    {/if}
                     {#if typeof partyDetailData.hp === 'number' && typeof partyDetailData.max_hp === 'number'}
                         <div class="detail-row">
                             <dt>Vitality</dt>
                             <dd>{partyDetailData.hp} / {partyDetailData.max_hp}</dd>
                         </div>
+                    {/if}
+                    {#if typeof partyDetailData.xp === 'number'}
+                        <div class="detail-row"><dt>XP</dt><dd>{partyDetailData.xp} ({(partyDetailData.xp % 10)} / 10 to next level)</dd></div>
                     {/if}
                     {#if typeof partyDetailData.resolve === 'number'}
                         <div class="detail-row"><dt>Resolve</dt><dd>{partyDetailData.resolve}%</dd></div>
@@ -4460,6 +4513,20 @@
     .vital-hp .vital-fill { background: #b03a3a; }
     .vital-resolve .vital-fill { background: #4a7d6c; }
     .vital-corruption .vital-fill { background: #6b4a8a; }
+    /* Phase 46: XP — golden bar so it reads distinct from HP/resolve/corruption. */
+    .vital-xp .vital-fill { background: #c79a3a; }
+    .vital-level {
+        font: inherit;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: var(--accent);
+        background: rgba(199, 154, 58, 0.12);
+        border: 1px solid rgba(199, 154, 58, 0.3);
+        padding: 0.1rem 0.4rem;
+        border-radius: 4px;
+    }
     .vital-num { font-weight: 600; min-width: 1.4rem; text-align: right; opacity: 0.9; }
     .vital-scars {
         font-size: 0.68rem;
@@ -5417,6 +5484,46 @@
         100% { box-shadow: 0 0 0 0 rgba(210, 154, 58, 0); }
     }
     .conn-text { line-height: 1.35; }
+
+    /* Phase 46: Level-up toast — sits below the conn-banner. Golden serif
+       type + glow icon, fades out on its own. */
+    .level-up-toast {
+        position: fixed;
+        top: calc(3.2rem + env(safe-area-inset-top));
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 91;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.55rem 1rem;
+        background: linear-gradient(135deg, rgba(199, 154, 58, 0.95), rgba(160, 120, 40, 0.95));
+        color: #fff8e6;
+        font-family: var(--font-serif);
+        font-size: 0.95rem;
+        font-weight: 600;
+        border-radius: var(--radius-pill);
+        box-shadow: 0 12px 32px rgba(160, 120, 40, 0.4), 0 0 0 1px rgba(255, 220, 140, 0.3);
+        animation: levelUpSlide 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes levelUpSlide {
+        from { opacity: 0; transform: translateX(-50%) translateY(-12px) scale(0.95); }
+        to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+    }
+    .level-up-glow {
+        font-size: 1.1rem;
+        line-height: 1;
+        animation: levelUpGlow 1.4s ease-in-out infinite;
+    }
+    @keyframes levelUpGlow {
+        0%, 100% { opacity: 0.85; text-shadow: 0 0 6px rgba(255, 235, 170, 0.5); }
+        50%      { opacity: 1;    text-shadow: 0 0 14px rgba(255, 235, 170, 0.9); }
+    }
+    .level-up-text { letter-spacing: 0.3px; }
+
+    @media (max-width: 540px) {
+        .level-up-toast { font-size: 0.85rem; padding: 0.45rem 0.85rem; top: calc(2.8rem + env(safe-area-inset-top)); }
+    }
 
     @media (max-width: 540px) {
         /* Phase 42: keep safe-area top offset even at small breakpoints so

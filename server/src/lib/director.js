@@ -47,6 +47,7 @@ Also decide at the round level:
 - thread_changes: array of { id, ...partial fields } for active/landed thread state shifts — null if none.
 - location_changes: partial merge over existing locations by name (e.g. reveal a newly-seen exit, update description after exploring). null if none.
 - new_locations: full location objects for first-time discoveries — { description, exits: [names], biome, notes }. Use when the party reaches, glimpses, or hears tell of a place they have never been. null if none.
+- xp_awards: { "<character name>": <int points to add> } — null if none. Award 1-3 for a meaningful success, 4-6 for a major beat (defeating a foe, resolving a thread, discovering a place of significance). Failure/catastrophe awards 0. Do NOT inflate — small steady accrual levels characters up over many turns.
 - qte: only if a sudden reflex is demanded (trap springs, something lunges) — null otherwise
 - scene_tags_change: only if biome/weather/mood actually shift — null otherwise
 
@@ -69,6 +70,7 @@ OUTPUT (STRICT JSON, no markdown, no prose narration):
   "thread_changes": null | [ { "id": "<id>", ...partial fields to merge } ],
   "location_changes": null | { "<name>": { partial fields to merge } },
   "new_locations": null | { "<name>": { description, exits, biome, notes } },
+  "xp_awards": null | { "<character name>": <int points> },
   "qte": null | { "type": "dodge"|"block"|"counter"|"grab", "time_limit_ms": 1200 },
   "scene_tags_change": null | { "biome"?, "weather"?, "mood"? }
 }`;
