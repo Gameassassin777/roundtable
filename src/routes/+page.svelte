@@ -241,6 +241,19 @@
         if (!q) return partyRoster;
         return partyRoster.filter((n: string) => n.toLowerCase().includes(q));
     });
+    // Phase 45: Travel — locations match on name, description, biome, or exits.
+    let filteredLocations = $derived.by(() => {
+        const q = worldQuery;
+        const entries = Object.entries((codexData as any).locations || {});
+        if (!q) return entries;
+        return entries.filter(([name, val]: [string, any]) => {
+            if (name.toLowerCase().includes(q)) return true;
+            if ((val?.description || '').toLowerCase().includes(q)) return true;
+            if ((val?.biome || '').toLowerCase().includes(q)) return true;
+            if (Array.isArray(val?.exits) && val.exits.some((e: string) => e.toLowerCase().includes(q))) return true;
+            return false;
+        });
+    });
     let filteredChronicleItems = $derived.by(() => {
         // Phase 41: whisper-only filter applied before text search.
         let pool = chronicleItems;
@@ -318,6 +331,53 @@
         const facs = (codexData as any).factions || {};
         return Object.entries(facs).map(([name, v]: any) => ({ name, ...v }));
     });
+
+    // Phase 45: Travel — the current location entry (looked up by name from
+    // the codex). Falls back to a stub keyed off the legacy `location` string
+    // so travel chips work even before the Director has written a full entry.
+    let currentLocationName = $derived.by(() => (codexData as any).location || '');
+    let currentLocation = $derived.by(() => {
+        const locs = (codexData as any).locations || {};
+        const name = currentLocationName;
+        if (name && locs[name]) return { name, ...locs[name] };
+        return name
+            ? { name, description: '', exits: [], biome: (codexData as any).scene_tags?.biome }
+            : null;
+    });
+    // Travel chips: known exits from the current location. We surface up to 5
+    // so the situation bar doesn't overflow on mobile.
+    let travelExits = $derived.by(() => {
+        const cur = currentLocation;
+        if (!cur) return [] as string[];
+        const exits = Array.isArray(cur.exits) ? cur.exits : [];
+        return exits.slice(0, 5);
+    });
+    let discoveredLocations = $derived.by(() => {
+        const locs = (codexData as any).locations || {};
+        return Object.entries(locs).map(([name, v]: any) => ({ name, ...v }));
+    });
+
+    function travelTo(name: string) {
+        if (!name || isLoading) return;
+        const text = `I travel to ${name}.`;
+        const author = characterName || 'Wanderer';
+        const accepted = sendAction(text, author, false);
+        if (accepted) {
+            chatInput = '';
+            isLoading = true;
+            turnStageLabel = 'You set out…';
+        }
+    }
+
+    let locationDetailName = $state<string | null>(null);
+    let locationDetailData = $derived.by(() => {
+        if (!locationDetailName) return null;
+        const locs = (codexData as any).locations || {};
+        const v = locs[locationDetailName];
+        return v ? { name: locationDetailName, ...v } : null;
+    });
+    function openLocationDetail(name: string) { locationDetailName = name; }
+    function closeLocationDetail() { locationDetailName = null; }
 
     // Phase 28: encounter difficulty meter — derived heuristic from present
     // NPCs' dispositions, party vitals, and imminent threads. NOT authoritative;
@@ -626,6 +686,7 @@
         npcs: {} as Record<string, { role?: string; location?: string; goal?: string; disposition?: number; status?: string; last_seen_turn?: number; notes?: string }>,
         factions: {} as Record<string, { type?: string; resources?: number; disposition?: number; agenda?: string; tension?: number; next_move_turn?: number }>,
         threads: [] as Array<{ id: string; name: string; description: string; status: string; escalate_after_turn?: number; lands_at_turn?: number }>,
+        locations: {} as Record<string, { description?: string; exits?: string[]; biome?: string; visited_turn?: number; notes?: string }>,
         north_star: null as { premise: string; tone: string; opening_hook: string; set_at: number | null; set_by: string | null } | null
     });
 
@@ -704,6 +765,7 @@
                     npcs: raw.npcs || {},
                     factions: raw.factions || {},
                     threads: raw.threads || [],
+                    locations: raw.locations || {},
                     north_star: raw.north_star || null
                 };
                 if (codexData.scene_tags) currentSceneTags = codexData.scene_tags;
@@ -1722,7 +1784,7 @@
             </header>
 
             <!-- Phase 3: Situation Bar — surface the World Engine's live state -->
-            {#if ((codexData as any).world_clock?.turn > 0) || presentNpcs.length > 0 || activeThreads.length > 0 || visibleFactions.length > 0 || sceneSummary}
+            {#if ((codexData as any).world_clock?.turn > 0) || presentNpcs.length > 0 || activeThreads.length > 0 || visibleFactions.length > 0 || sceneSummary || currentLocationName || travelExits.length > 0}
                 <div class="situation-bar panel">
                     <div class="sit-segment sit-clock">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -1732,6 +1794,40 @@
                         <span class="sit-sep">·</span>
                         <span class="sit-value">Turn {(codexData as any).world_clock?.turn || 0}</span>
                     </div>
+
+                    {#if currentLocationName}
+                        <div class="sit-segment sit-loc">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.5-7-12a7 7 0 0 1 14 0c0 5.5-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/></svg>
+                            <button
+                                type="button"
+                                class="sit-chip loc-chip npc-chip-btn"
+                                onclick={() => openLocationDetail(currentLocationName)}
+                                aria-label={`Details for ${currentLocationName}`}
+                                title="Open current location details"
+                            >
+                                <span class="chip-name">{currentLocationName}</span>
+                            </button>
+                        </div>
+                    {/if}
+
+                    {#if travelExits.length > 0}
+                        <div class="sit-segment sit-travel">
+                            <span class="sit-label">Travel</span>
+                            {#each travelExits as exit}
+                                <button
+                                    type="button"
+                                    class="sit-chip travel-chip"
+                                    onclick={() => travelTo(exit)}
+                                    disabled={isLoading}
+                                    aria-label={`Travel to ${exit}`}
+                                    title={isLoading ? 'Wait for the current beat to resolve' : `Travel to ${exit}`}
+                                >
+                                    <span class="chip-name">{exit}</span>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
 
                     {#if sceneSummary}
                         <div class="sit-segment sit-scene">
@@ -2006,13 +2102,13 @@
                                     {/if}
                                 </div>
 
-                                {#if Object.keys(codexData.npcs || {}).length > 0 || Object.keys(codexData.factions || {}).length > 0 || (codexData.threads || []).length > 0 || partyRoster.length > 0}
+                                {#if Object.keys(codexData.npcs || {}).length > 0 || Object.keys(codexData.factions || {}).length > 0 || (codexData.threads || []).length > 0 || partyRoster.length > 0 || discoveredLocations.length > 0}
                                     <div class="world-search-row">
                                         <input
                                             type="text"
                                             class="world-search"
                                             bind:value={worldSearch}
-                                            placeholder="Filter NPCs, factions, threads, party…"
+                                            placeholder="Filter NPCs, factions, threads, places, party…"
                                             aria-label="Filter world entries"
                                         />
                                         {#if worldSearch}
@@ -2081,6 +2177,26 @@
                                                     >{t.name}</button>
                                                 </span>
                                                 {#if t.description}<span class="world-note">{t.description}</span>{/if}
+                                            </li>
+                                        {/each}
+                                    </ul>
+                                {/if}
+
+                                {#if filteredLocations.length > 0}
+                                    <ul class="world-list location-list">
+                                        {#each filteredLocations as [name, loc]}
+                                            <li class="world-item location-item" class:is-current={name === currentLocationName}>
+                                                <span class="world-name">
+                                                    <button
+                                                        type="button"
+                                                        class="npc-detail-trigger"
+                                                        onclick={() => openLocationDetail(name)}
+                                                        aria-label={`Details for ${name}`}
+                                                        title="Open location details"
+                                                    >{name}{name === currentLocationName ? ' · here' : ''}</button>
+                                                </span>
+                                                {#if (loc as any).biome}<span class="world-sub">{(loc as any).biome}</span>{/if}
+                                                {#if (loc as any).description}<span class="world-note">{(loc as any).description}</span>{/if}
                                             </li>
                                         {/each}
                                     </ul>
@@ -2947,6 +3063,63 @@
                     <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Persuade', partyDetailData.name); closePartyDetail(); }}>Persuade</button>
                     <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Help', partyDetailData.name); closePartyDetail(); }}>Help</button>
                     <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Heal', partyDetailData.name); closePartyDetail(); }}>Heal</button>
+                </footer>
+            </div>
+        </div>
+    {/if}
+
+    <!-- Phase 45: location detail popover — mirrors NPC/faction/thread/party. -->
+    {#if locationDetailName && locationDetailData}
+        <div
+            class="modal-overlay npc-detail-overlay"
+            role="button"
+            tabindex="-1"
+            onkeydown={(e) => { if (e.key === 'Escape') closeLocationDetail(); }}
+            onclick={(e) => { if (e.target === e.currentTarget) closeLocationDetail(); }}
+        >
+            <div class="npc-detail-card panel">
+                <header class="npc-detail-head">
+                    <div class="npc-detail-id">
+                        <h3>{locationDetailData.name}</h3>
+                        {#if locationDetailData.name === currentLocationName}
+                            <span class="npc-detail-role">· here ·</span>
+                        {:else if locationDetailData.biome}
+                            <span class="npc-detail-role">{locationDetailData.biome}</span>
+                        {/if}
+                    </div>
+                    <button class="icon-btn" onclick={closeLocationDetail} aria-label="Close">✕</button>
+                </header>
+                <dl class="npc-detail-grid">
+                    {#if locationDetailData.biome && locationDetailData.name !== currentLocationName}
+                        <div class="detail-row"><dt>Biome</dt><dd>{locationDetailData.biome}</dd></div>
+                    {/if}
+                    {#if typeof locationDetailData.visited_turn === 'number'}
+                        <div class="detail-row"><dt>Last visited</dt><dd>Turn {locationDetailData.visited_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>
+                    {/if}
+                    {#if locationDetailData.exits && locationDetailData.exits.length > 0}
+                        <div class="detail-row"><dt>Exits</dt><dd>{locationDetailData.exits.join(', ')}</dd></div>
+                    {/if}
+                </dl>
+                {#if locationDetailData.description}
+                    <div class="npc-detail-notes">
+                        <h4>Description</h4>
+                        <p>{locationDetailData.description}</p>
+                    </div>
+                {/if}
+                {#if locationDetailData.notes}
+                    <div class="npc-detail-notes">
+                        <h4>Notes</h4>
+                        <p>{locationDetailData.notes}</p>
+                    </div>
+                {/if}
+                <footer class="popover-actions">
+                    <span class="popover-actions-label">Quick action:</span>
+                    {#if locationDetailData.name !== currentLocationName}
+                        <button type="button" class="action-template-chip" onclick={() => { travelTo(locationDetailData.name); closeLocationDetail(); }} disabled={isLoading}>Travel here</button>
+                    {/if}
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Search', locationDetailData.name); closeLocationDetail(); }}>Search</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Investigate', locationDetailData.name); closeLocationDetail(); }}>Investigate</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Look around', locationDetailData.name); closeLocationDetail(); }}>Look around</button>
                 </footer>
             </div>
         </div>
@@ -4008,6 +4181,38 @@
         padding-left: 0.15rem;
         border-left: 1px solid rgba(0,0,0,0.1);
         margin-left: 0.1rem;
+    }
+
+    /* Phase 45: Travel — current location chip + exit chips in the situation
+       bar. Exit chips are clearly buttons (arrow icon, hover lift) so the
+       affordance reads as "go there" rather than just a label. */
+    .sit-loc .loc-chip {
+        background: rgba(0, 0, 0, 0.06);
+        border-color: rgba(0, 0, 0, 0.12);
+        cursor: pointer;
+    }
+    .sit-loc .loc-chip:hover { background: rgba(0, 0, 0, 0.1); }
+    .travel-chip {
+        cursor: pointer;
+        background: rgba(0, 0, 0, 0.04);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        color: var(--ink);
+        font: inherit;
+    }
+    .travel-chip:hover:not(:disabled) {
+        background: rgba(0, 0, 0, 0.09);
+        transform: translateY(-1px);
+    }
+    .travel-chip:disabled { opacity: 0.45; cursor: default; }
+    .travel-chip svg { width: 10px; height: 10px; opacity: 0.55; }
+    .location-item.is-current {
+        background: rgba(0, 0, 0, 0.04);
+        border-radius: 6px;
+        padding-left: 0.4rem;
+        padding-right: 0.4rem;
+    }
+    .location-item.is-current .world-name::after {
+        content: '';
     }
 
     /* NPC disposition color coding */

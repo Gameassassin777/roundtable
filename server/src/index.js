@@ -93,6 +93,13 @@ export class SignalingRoom {
       yCodex.set('npcs', {});
       yCodex.set('factions', {});
       yCodex.set('threads', []);
+      // Phase 45: Travel — discovered locations keyed by name. Each entry
+      // holds description, exits (names of connected locations, may include
+      // undiscovered ones the party has only heard of), biome, visited_turn.
+      // The legacy top-level `location` string is the CURRENT location name
+      // (a key into this map). Ad-hoc scene descriptions still flow through
+      // scene_tags / plot_summary.
+      if (!yCodex.get('locations')) yCodex.set('locations', {});
       // Phase 6: North Star — host-defined premise + tone. Empty by default;
       // prompts treat an empty north_star as "improvise neutrally".
       if (!yCodex.get('north_star')) {
@@ -647,6 +654,8 @@ export class SignalingRoom {
             new_npcs: ruling.new_npcs || null,
             faction_changes: ruling.faction_changes || null,
             thread_changes: ruling.thread_changes || null,
+            location_changes: ruling.location_changes || null,
+            new_locations: ruling.new_locations || null,
             lint_passed: lint.passes,
             lint_retried: retried,
             critic_passed: criticPassed,
@@ -818,6 +827,22 @@ export class SignalingRoom {
         }
         yCodex.set('threads', threads);
       }
+      // Phase 45: Travel — merge discovered/updated locations. Both
+      // location_changes (partial merge, e.g. new exits come into view) and
+      // new_locations (first discovery) flow through the same accumulator
+      // so the map only ever grows richer. Mark visited_turn on any
+      // location that matches the current location name post-write.
+      if (turn.location_changes || turn.new_locations) {
+        const locs = { ...(yCodex.get('locations') || {}) };
+        for (const name in (turn.location_changes || {})) {
+          locs[name] = { ...(locs[name] || {}), ...turn.location_changes[name] };
+        }
+        for (const name in (turn.new_locations || {})) {
+          locs[name] = { ...(locs[name] || {}), ...turn.new_locations[name] };
+        }
+        yCodex.set('locations', locs);
+      }
+      }
     });
 
     // Broadcast turn-result with the parsed payload (UI uses this for QTE,
@@ -917,6 +942,8 @@ export class SignalingRoom {
             new_npcs: ruling.new_npcs || null,
             faction_changes: ruling.faction_changes || null,
             thread_changes: ruling.thread_changes || null,
+            location_changes: ruling.location_changes || null,
+            new_locations: ruling.new_locations || null,
             lint_passed: lint.passes,
             lint_retried: retried,
             pipeline: 'director-dm'
@@ -1010,6 +1037,18 @@ export class SignalingRoom {
           else threads.push(change);
         }
         yCodex.set('threads', threads);
+      }
+      // Phase 45: Travel — same merge path as the main turn. Lets a whisper
+      // (e.g. "I scout ahead and listen") discover or update locations.
+      if (turn.location_changes || turn.new_locations) {
+        const locs = { ...(yCodex.get('locations') || {}) };
+        for (const name in (turn.location_changes || {})) {
+          locs[name] = { ...(locs[name] || {}), ...turn.location_changes[name] };
+        }
+        for (const name in (turn.new_locations || {})) {
+          locs[name] = { ...(locs[name] || {}), ...turn.new_locations[name] };
+        }
+        yCodex.set('locations', locs);
       }
     });
 
