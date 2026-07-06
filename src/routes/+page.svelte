@@ -1775,6 +1775,21 @@
                                         title={`Pre-fill: ${tpl.stem.trim()}`}
                                     >{tpl.label}</button>
                                 {/each}
+                                <!-- Phase 29: Wait chip — submit a no-op "I wait,
+                                     watching" without typing. Useful when an
+                                     ambient beat lands and the player wants to
+                                     let the world keep moving. -->
+                                <button
+                                    type="button"
+                                    class="action-template-chip wait-chip"
+                                    onclick={() => {
+                                        if (isLoading || whisperInFlight || !isReady) return;
+                                        chatInput = 'I wait, watching.';
+                                        submitAction();
+                                    }}
+                                    disabled={isLoading || whisperInFlight || !isReady}
+                                    title="Submit a watching wait — let the world develop."
+                                >⌛ Wait</button>
                             </div>
                         {/if}
                         <div class="action-row">
@@ -3300,6 +3315,22 @@
         transform: translateY(-1px);
     }
     .action-template-chip:active { transform: translateY(0); }
+
+    /* Phase 29: Wait chip — distinct from verb palette. Submits immediately. */
+    .wait-chip {
+        background: rgba(120, 100, 70, 0.08);
+        border-color: rgba(120, 100, 70, 0.32);
+        color: #5a4a2a;
+        font-weight: 600;
+        margin-left: 0.4rem;
+        border-style: dashed;
+    }
+    .wait-chip:hover:not(:disabled) {
+        background: rgba(120, 100, 70, 0.18);
+        border-color: rgba(120, 100, 70, 0.5);
+        color: #3a2a1a;
+    }
+    .wait-chip:disabled { opacity: 0.45; cursor: not-allowed; }
     .npc-templates { margin-bottom: 0.2rem; }
     .npc-chip {
         background: rgba(140, 47, 47, 0.06);
