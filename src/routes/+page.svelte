@@ -828,6 +828,44 @@
         applyTemplate({ stem, cursor_at_end: true });
     }
 
+    // Phase 18: cycle through locally-derived suggestions for the cold-start
+    // "I don't know what to do" moment. No AI call — just structural prompts
+    // drawn from the live situation (present NPCs, active threads, scene).
+    let hintIndex = $state(0);
+    let hintSuggestions = $derived.by(() => {
+        const out: string[] = [];
+        const scene = (codexData as any).scene_tags || {};
+        if (scene.biome || scene.mood) {
+            out.push(`Look around the ${scene.biome || 'scene'} — what details stand out?`);
+        }
+        if (presentNpcs.length > 0) {
+            const n = presentNpcs[0].name;
+            out.push(`Watch ${n} for a beat — what are they doing?`);
+            out.push(`Ask ${n} about the situation.`);
+        }
+        if (activeThreads.length > 0) {
+            const t = activeThreads[0];
+            out.push(`Turn your attention to ${t.name} — what can you learn?`);
+        }
+        const inv = (codexData as any).inventory || {};
+        const items = Object.keys(inv);
+        if (items.length > 0) {
+            out.push(`Check your ${items[0]} — any detail you missed?`);
+        }
+        if (out.length === 0) {
+            out.push('Take a steadying breath and look closer at where you are.');
+            out.push('What does the air smell like here?');
+            out.push('Name one thing your character would notice.');
+        }
+        return out;
+    });
+    let currentHint = $state('');
+    function cycleHint() {
+        if (hintSuggestions.length === 0) return;
+        currentHint = hintSuggestions[hintIndex % hintSuggestions.length];
+        hintIndex += 1;
+    }
+
     // Submit a free-text action to the server. Server batches for ~5s, calls the
     // AI with a pooled key, and writes the DM beat to Yjs (arrives here as a
     // chatLog update via sync). turn-result / turn-error clear isLoading.
@@ -1464,6 +1502,25 @@
                             </div>
                         {/if}
                         {#if !isLoading && !whisperInFlight && chatInput.length === 0}
+                            <div class="hint-row">
+                                <button
+                                    type="button"
+                                    class="hint-chip"
+                                    onclick={cycleHint}
+                                    title="Get a nudge"
+                                    aria-label="Get a suggestion"
+                                >Hm…</button>
+                                {#if currentHint}
+                                    <span class="hint-text">{currentHint}</span>
+                                    <button
+                                        type="button"
+                                        class="hint-apply"
+                                        onclick={() => { if (currentHint) { chatInput = currentHint; currentHint = ''; } }}
+                                        title="Use as action"
+                                        aria-label="Use as action"
+                                    >Use</button>
+                                {/if}
+                            </div>
                             {#if presentNpcs.length > 0}
                                 <div class="action-templates npc-templates" role="group" aria-label="Address a present NPC">
                                     {#each presentNpcs.slice(0, 3) as npc}
@@ -2632,6 +2689,61 @@
         flex-wrap: wrap;
         gap: 0.3rem;
         margin-bottom: 0.4rem;
+    }
+
+    /* Phase 18: Hm... hint chip — soft nudge for the cold-start moment */
+    .hint-row {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        margin-bottom: 0.4rem;
+        flex-wrap: wrap;
+        font-size: 0.76rem;
+    }
+    .hint-chip {
+        font-family: var(--font);
+        font-size: 0.72rem;
+        font-style: italic;
+        padding: 0.22rem 0.6rem;
+        background: transparent;
+        color: var(--ink);
+        opacity: 0.55;
+        border: 1px dashed var(--line);
+        border-radius: 999px;
+        cursor: pointer;
+        transition: opacity 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    }
+    .hint-chip:hover {
+        opacity: 0.9;
+        border-style: solid;
+        border-color: var(--accent);
+        color: var(--accent);
+    }
+    .hint-text {
+        flex: 1 1 auto;
+        line-height: 1.4;
+        color: var(--ink);
+        opacity: 0.75;
+        font-style: italic;
+        min-width: 0;
+    }
+    .hint-apply {
+        font-family: var(--font);
+        font-size: 0.68rem;
+        padding: 0.2rem 0.5rem;
+        background: var(--surface);
+        color: var(--ink);
+        opacity: 0.7;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: opacity 0.15s ease, border-color 0.15s ease;
+    }
+    .hint-apply:hover {
+        opacity: 1;
+        border-color: var(--accent);
+        color: var(--accent);
     }
 
     /* Phase 14: table roster popover */
