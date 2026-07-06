@@ -820,6 +820,14 @@
         }, 0);
     }
 
+    // Phase 17: same shape as applyTemplate but takes a verb + NPC name, so
+    // chips like "Ask Mira" pre-fill "Ask Mira " and position the cursor at
+    // the end for the player to type their actual question.
+    function applyNpcTemplate(verb: string, npcName: string) {
+        const stem = `${verb} ${npcName} `;
+        applyTemplate({ stem, cursor_at_end: true });
+    }
+
     // Submit a free-text action to the server. Server batches for ~5s, calls the
     // AI with a pooled key, and writes the DM beat to Yjs (arrives here as a
     // chatLog update via sync). turn-result / turn-error clear isLoading.
@@ -1456,6 +1464,24 @@
                             </div>
                         {/if}
                         {#if !isLoading && !whisperInFlight && chatInput.length === 0}
+                            {#if presentNpcs.length > 0}
+                                <div class="action-templates npc-templates" role="group" aria-label="Address a present NPC">
+                                    {#each presentNpcs.slice(0, 3) as npc}
+                                        <button
+                                            type="button"
+                                            class="action-template-chip npc-chip"
+                                            onclick={() => applyNpcTemplate('Ask', npc.name)}
+                                            title={`Pre-fill: Ask ${npc.name}`}
+                                        >Ask {npc.name}</button>
+                                        <button
+                                            type="button"
+                                            class="action-template-chip npc-chip"
+                                            onclick={() => applyNpcTemplate('Persuade', npc.name)}
+                                            title={`Pre-fill: Persuade ${npc.name}`}
+                                        >Persuade {npc.name}</button>
+                                    {/each}
+                                </div>
+                            {/if}
                             <div class="action-templates" role="group" aria-label="Action templates">
                                 {#each ACTION_TEMPLATES as tpl (tpl.id)}
                                     <button
@@ -2748,6 +2774,18 @@
         transform: translateY(-1px);
     }
     .action-template-chip:active { transform: translateY(0); }
+    .npc-templates { margin-bottom: 0.2rem; }
+    .npc-chip {
+        background: rgba(140, 47, 47, 0.06);
+        border-color: rgba(140, 47, 47, 0.2);
+        color: var(--accent);
+        opacity: 0.85;
+    }
+    .npc-chip:hover {
+        background: rgba(140, 47, 47, 0.12);
+        border-color: var(--accent);
+        opacity: 1;
+    }
     .action-field { flex: 1; font-size: 1rem; }
 
     /* Phase 4: Scene portrait backdrop */
