@@ -429,7 +429,15 @@
         const aw = provider.awareness;
         aw.setLocalStateField('user', { name: characterName || 'Wanderer' });
         const update = () => {
-            activePeers = Math.max(0, aw.getStates().size - 1);
+            const states = aw.getStates();
+            const names: string[] = [];
+            for (const s of states.values()) {
+                const n = (s as any)?.user?.name;
+                if (n && !names.includes(n)) names.push(n);
+            }
+            activePeers = Math.max(0, states.size - 1);
+            // For the roster we want to include ourselves, so use the full list.
+            tableRoster = names;
             connectionStatus = activePeers > 0 ? "Live" : "Solo";
         };
         aw.on('change', update);
@@ -478,6 +486,8 @@
     let unsubscribe = subscribeChat();
     let unsubscribeServer = subscribeServerEvents();
     let activePeers = $state(0);
+    let tableRoster = $state<string[]>([]);
+    let rosterOpen = $state(false);
 
     onMount(() => {
         try { recentWorlds = JSON.parse(localStorage.getItem('rt_worlds') || '[]'); } catch { recentWorlds = []; }
@@ -1084,9 +1094,38 @@
                 </div>
 
                 <div class="hud-right">
-                    <div class="status-orb {connectionStatus.toLowerCase().replace(' ', '-')}">
-                        <span class="ping-pulse"></span>
-                        <span class="status-text">{connectionStatus}{activePeers > 0 ? ` · ${activePeers}` : ''}</span>
+                    <div class="roster-wrap">
+                        <button
+                            type="button"
+                            class="status-orb {connectionStatus.toLowerCase().replace(' ', '-')}"
+                            onclick={() => rosterOpen = !rosterOpen}
+                            aria-expanded={rosterOpen}
+                            aria-label={`Table roster: ${tableRoster.length} player${tableRoster.length === 1 ? '' : 's'}`}
+                        >
+                            <span class="ping-pulse"></span>
+                            <span class="status-text">{connectionStatus}{activePeers > 0 ? ` · ${activePeers}` : ''}</span>
+                        </button>
+                        {#if rosterOpen}
+                            <div class="roster-pop panel">
+                                <header class="roster-head">
+                                    <h4>At the Table</h4>
+                                    <span class="roster-count">{tableRoster.length}</span>
+                                </header>
+                                {#if tableRoster.length === 0}
+                                    <p class="roster-empty">No one here yet.</p>
+                                {:else}
+                                    <ul class="roster-list">
+                                        {#each tableRoster as name}
+                                            <li class="roster-name" class:is-self={name === characterName}>
+                                                <span class="roster-dot"></span>
+                                                <span>{name}</span>
+                                                {#if name === characterName}<span class="roster-self-tag">you</span>{/if}
+                                            </li>
+                                        {/each}
+                                    </ul>
+                                {/if}
+                            </div>
+                        {/if}
                     </div>
                     <button class="icon-btn chronicle-btn" onclick={() => showChronicle = !showChronicle} class:active={showChronicle} aria-label="Chronicle">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -2477,7 +2516,86 @@
         margin-bottom: 0.4rem;
     }
 
-    /* Phase 13: persistent vitals chip — always-visible HP/Resolve/Corruption */
+    /* Phase 14: table roster popover */
+    .roster-wrap { position: relative; }
+    .status-orb {
+        cursor: pointer;
+        font-family: var(--font);
+        transition: opacity 0.15s ease;
+    }
+    .status-orb:hover { opacity: 0.85; }
+    .roster-pop {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        min-width: 200px;
+        max-width: 260px;
+        padding: 0.6rem 0.75rem;
+        z-index: 50;
+        background: var(--surface);
+        box-shadow: 0 6px 22px rgba(0,0,0,0.12);
+        animation: fade-in 0.15s ease-out;
+    }
+    .roster-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.4rem;
+    }
+    .roster-head h4 {
+        margin: 0;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.7px;
+        text-transform: uppercase;
+        opacity: 0.6;
+    }
+    .roster-count {
+        font-size: 0.7rem;
+        font-weight: 600;
+        opacity: 0.55;
+    }
+    .roster-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+    }
+    .roster-name {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.82rem;
+        padding: 0.25rem 0.3rem;
+        border-radius: 4px;
+    }
+    .roster-name.is-self { background: rgba(140,47,47,0.06); }
+    .roster-dot {
+        width: 6px; height: 6px;
+        background: #4a7d6c;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+    .roster-self-tag {
+        margin-left: auto;
+        font-size: 0.62rem;
+        padding: 0.05rem 0.35rem;
+        background: var(--accent);
+        color: #fff;
+        border-radius: 3px;
+        font-weight: 600;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+    }
+    .roster-empty {
+        margin: 0;
+        padding: 0.3rem 0;
+        font-size: 0.78rem;
+        opacity: 0.55;
+        font-style: italic;
+    }
     .vitals-chip {
         display: flex;
         align-items: center;
