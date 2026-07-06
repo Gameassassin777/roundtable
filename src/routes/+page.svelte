@@ -39,6 +39,7 @@
     let whisperInFlight = $state(false);  // separate spinner for the private track
     let turnStageLabel = $state('');      // Phase 16: pipeline progress text
     let actionFieldEl = $state<HTMLInputElement | null>(null);  // Phase 11: focus/position cursor after template apply
+    let inventoryAddName = $state('');   // Phase 20: bound to the inline inventory add input
     let showQTE = $state(false);
     let qteConfig = $state({ time_limit_ms: 1000, start_time: 0 });
     let currentSceneTags = $state({ biome: "crossroads", weather: "clear", mood: "unsettled" });
@@ -854,6 +855,33 @@
         applyTemplate({ stem, cursor_at_end: true });
     }
 
+    // Phase 20: inline inventory add. AI sometimes fails to materialize items
+    // the Director mentioned ("you find a brass key" but no key in inventory).
+    // The host types the name, hits +, and the item lands via Yjs.
+    function addItemToInventory(evt: Event) {
+        evt.preventDefault();
+        const name = inventoryAddName.trim();
+        if (!name) return;
+        const yCodex = (ydoc as any).getMap('memoryCodex');
+        const inventory = yCodex.get('inventory') || {};
+        if (inventory[name]) {
+            inventoryAddName = '';
+            return;
+        }
+        inventory[name] = { durability: 3, note: '' };
+        ydoc.transact(() => {
+            yCodex.set('inventory', inventory);
+            const yChat = (ydoc as any).getArray('chatLog');
+            yChat.push([{
+                author: 'System',
+                text: `${characterName || 'You'} acquired ${name} (manual add)`,
+                type: 'world',
+                timestamp: Date.now()
+            }]);
+        });
+        inventoryAddName = '';
+    }
+
     // Phase 18: cycle through locally-derived suggestions for the cold-start
     // "I don't know what to do" moment. No AI call — just structural prompts
     // drawn from the live situation (present NPCs, active threads, scene).
@@ -1413,6 +1441,17 @@
                                     </div>
                                 {/each}
                             </div>
+                            <form class="inv-add" onsubmit={addItemToInventory}>
+                                <input
+                                    class="inv-add-input"
+                                    type="text"
+                                    bind:value={inventoryAddName}
+                                    placeholder="Add item…"
+                                    maxlength="40"
+                                    aria-label="Add item to inventory"
+                                />
+                                <button type="submit" class="inv-add-btn" disabled={!inventoryAddName.trim()}>+</button>
+                            </form>
                         </div>
 
                         {#if Object.keys(codexData.npcs || {}).length > 0 || (codexData.threads || []).length > 0 || Object.keys(codexData.factions || {}).length > 0 || (codexData as any).north_star?.premise}
@@ -2473,6 +2512,50 @@
     }
 
     .inventory-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
+
+    /* Phase 20: inline inventory quick-add form */
+    .inv-add {
+        display: flex;
+        gap: 0.35rem;
+        margin-top: 0.5rem;
+    }
+    .inv-add-input {
+        flex: 1 1 auto;
+        min-width: 0;
+        font-family: var(--font);
+        font-size: 0.78rem;
+        padding: 0.35rem 0.55rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        color: var(--ink);
+    }
+    .inv-add-input:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    .inv-add-btn {
+        flex-shrink: 0;
+        width: 32px;
+        font-family: var(--font);
+        font-size: 1.05rem;
+        font-weight: 600;
+        line-height: 1;
+        background: var(--surface);
+        color: var(--ink);
+        opacity: 0.7;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        cursor: pointer;
+        transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+    .inv-add-btn:hover:not(:disabled) {
+        opacity: 1;
+        border-color: var(--accent);
+        background: rgba(140, 47, 47, 0.06);
+        color: var(--accent);
+    }
+    .inv-add-btn:disabled { cursor: not-allowed; opacity: 0.35; }
 
     .world-section { border-top: 1px solid var(--line); padding-top: 0.8rem; margin-top: 0.4rem; }
     .world-clock-chip {
