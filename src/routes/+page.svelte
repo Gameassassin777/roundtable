@@ -189,6 +189,27 @@
         return items;
     });
 
+    // Phase 39: chronicle search — case-insensitive filter over narration,
+    // action text, action authors, and world-beat text. Reset when the
+    // drawer closes. Filters the rendered list; doesn't touch the source.
+    let chronicleSearch = $state('');
+    let filteredChronicleItems = $derived.by(() => {
+        const q = chronicleSearch.trim().toLowerCase();
+        if (!q) return chronicleItems;
+        return chronicleItems.filter((item: any) => {
+            if (item.kind === 'round') {
+                if (item.narration && item.narration.toLowerCase().includes(q)) return true;
+                for (const a of item.actions as any[]) {
+                    if ((a.author || '').toLowerCase().includes(q)) return true;
+                    if ((a.text || '').toLowerCase().includes(q)) return true;
+                }
+                return false;
+            }
+            // world / whisper
+            return ((item.text || '') as string).toLowerCase().includes(q);
+        });
+    });
+
     // Back-compat alias so existing markup that references chronicleRounds keeps working
     // (typed as any because it's only used in template iteration).
     let chronicleRounds = $derived(chronicleItems.filter((i): i is any => i.kind === 'round'));
@@ -2328,7 +2349,7 @@
 
     <!-- Chronicle (Session History) modal -->
     {#if showChronicle && isReady && characterSelected}
-        <div transition:overlayTransition class="modal-overlay chronicle-overlay-container" role="button" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') showChronicle = false; }} onclick={(e) => { if (e.target === e.currentTarget) showChronicle = false; }}>
+        <div transition:overlayTransition class="modal-overlay chronicle-overlay-container" role="button" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') { showChronicle = false; chronicleSearch = ''; } }} onclick={(e) => { if (e.target === e.currentTarget) { showChronicle = false; chronicleSearch = ''; } }}>
             <div transition:chronicleTransition class="chronicle-book panel">
                 <div class="book-header">
                     <div class="book-title-group">
@@ -2344,19 +2365,40 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
                         <span>.weave</span>
                     </button>
-                    <button class="icon-btn close-book-btn" onclick={() => showChronicle = false} aria-label="Close Chronicle">
+                    <button class="icon-btn close-book-btn" onclick={() => { showChronicle = false; chronicleSearch = ''; }} aria-label="Close Chronicle">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
                     </button>
                 </div>
 
                 <div class="book-body scrollable-parchment">
+                    {#if chronicleItems.length > 5}
+                        <div class="chronicle-search-row">
+                            <input
+                                type="text"
+                                class="chronicle-search"
+                                bind:value={chronicleSearch}
+                                placeholder="Search the chronicle — actions, narration, authors…"
+                                aria-label="Search chronicle"
+                            />
+                            {#if chronicleSearch}
+                                <button type="button" class="chronicle-search-clear" onclick={() => { chronicleSearch = ''; }} aria-label="Clear search">✕</button>
+                            {/if}
+                            {#if chronicleSearch && filteredChronicleItems.length !== chronicleItems.length}
+                                <span class="chronicle-search-count">{filteredChronicleItems.length} / {chronicleItems.length}</span>
+                            {/if}
+                        </div>
+                    {/if}
                     {#if chronicleItems.length === 0}
                         <div class="chronicle-empty">
                             <p class="empty-text">No deeds have been recorded in this realm yet. Begin your actions to write the chronicle.</p>
                         </div>
+                    {:else if filteredChronicleItems.length === 0}
+                        <div class="chronicle-empty">
+                            <p class="empty-text">No beats match “{chronicleSearch}”.</p>
+                        </div>
                     {:else}
                         <div class="rounds-list">
-                            {#each chronicleItems as item (item.id)}
+                            {#each filteredChronicleItems as item (item.id)}
                                 {#if item.kind === 'round'}
                                     <article class="round-entry">
                                         <header class="round-header-row">
@@ -4429,6 +4471,53 @@
         height: 100%;
         text-align: center;
         padding: 4rem 2rem;
+    }
+
+    /* Phase 39: chronicle search row — sticky at the top of the scroll
+       area so the filter survives scrolling the result list. Only renders
+       once there are enough items to warrant a search. */
+    .chronicle-search-row {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.5rem 0.6rem 0.7rem;
+        background: linear-gradient(to bottom, var(--surface) 70%, transparent);
+        backdrop-filter: blur(4px);
+    }
+    .chronicle-search {
+        flex: 1;
+        font: inherit;
+        font-size: 0.85rem;
+        font-family: var(--font-sans);
+        padding: 0.45rem 0.7rem;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--ink);
+    }
+    .chronicle-search:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(0,0,0,0.04);
+    }
+    .chronicle-search-clear {
+        background: rgba(0,0,0,0.06);
+        border: none;
+        cursor: pointer;
+        padding: 0.3rem 0.5rem;
+        font-size: 0.75rem;
+        border-radius: 4px;
+        color: var(--ink-soft);
+    }
+    .chronicle-search-clear:hover { background: rgba(0,0,0,0.1); color: var(--ink); }
+    .chronicle-search-count {
+        font-size: 0.72rem;
+        color: var(--ink-soft);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
     }
 
     .chronicle-empty .empty-text {
