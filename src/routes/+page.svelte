@@ -12,13 +12,30 @@
 
     let { chatStore, addChatEntry, ydoc, provider, serverEvents, sendAction, registerKey, reportKeyExhausted } = gameState;
 
-    type ChatEntry = { author: string; text: string; type: 'player' | 'dm' | 'world'; timestamp?: number };
+    type ChatEntry = { author: string; text: string; type: 'player' | 'dm' | 'world' | 'whisper'; timestamp?: number };
     let chatLog = $state<ChatEntry[]>([]);
+    // Phase 10: local-only mirror for whispered beats. Never written to Yjs —
+    // whisper echoes and whisper-result narrations live here so other clients
+    // never see them. Merged into the chronicle via displayChatLog.
+    let localWhispers = $state<ChatEntry[]>([]);
+    function addLocalWhisper(entry: ChatEntry) {
+        localWhispers = [...localWhispers, entry];
+    }
+    let displayChatLog = $derived.by(() => {
+        if (localWhispers.length === 0) return chatLog;
+        return [...chatLog, ...localWhispers].sort((a, b) => {
+            const ta = a.timestamp || 0;
+            const tb = b.timestamp || 0;
+            return ta - tb;
+        });
+    });
     let apiKey = $state(localStorage.getItem('rt_api_key') || '');
     // Committed-key gate (NOT derived from apiKey — see saveSettings).
     let isReady = $state(!!localStorage.getItem('rt_api_key'));
     let chatInput = $state('');
     let isLoading = $state(false);
+    let whisperMode = $state(false);  // Phase 10: route submit through the whisper track
+    let whisperInFlight = $state(false);  // separate spinner for the private track
     let showQTE = $state(false);
     let qteConfig = $state({ time_limit_ms: 1000, start_time: 0 });
     let currentSceneTags = $state({ biome: "crossroads", weather: "clear", mood: "unsettled" });
@@ -51,7 +68,7 @@
             currentRound = null;
         };
 
-        for (const entry of chatLog) {
+        for (const entry of displayChatLog) {
             if (entry.type === 'player') {
                 if (!currentRound) currentRound = { kind: 'round', id: nextRoundId++, actions: [], narration: '' };
                 if (currentRound.narration) {
@@ -59,6 +76,12 @@
                     currentRound = { kind: 'round', id: nextRoundId++, actions: [], narration: '' };
                 }
                 currentRound.actions.push(entry);
+            } else if (entry.type === 'whisper') {
+                // Phase 10: whispers render as their own chronicle item so they
+                // don't get bundled into a public round. System-markered whispers
+                // (e.g. "DM did not hear you") still show up as standalone beats.
+                flush();
+                items.push({ kind: 'world', id: `whisper-${entry.timestamp || Math.random()}`, text: `(whisper) ${entry.author}: ${entry.text}`, timestamp: entry.timestamp });
             } else if (entry.type === 'dm') {
                 if (entry.author === 'System' || entry.author === 'Warning') continue;
                 if (!currentRound) currentRound = { kind: 'round', id: nextRoundId++, actions: [], narration: '' };
@@ -372,8 +395,11 @@
 
     // The current "moment" = the DM's latest narration, shown full-screen. Falls back to an opening line.
     let currentBeat = $derived.by(() => {
-        for (let i = chatLog.length - 1; i >= 0; i--) {
-            if (chatLog[i]?.author === 'Dungeon Master') return chatLog[i].text as string;
+        // Pull from displayChatLog so whispered DM results also surface as the
+        // current beat for the whisperer (they supersede the public beat).
+        const log = displayChatLog;
+        for (let i = log.length - 1; i >= 0; i--) {
+            if (log[i]?.author === 'Dungeon Master' || log[i]?.author === 'DM (whisper)') return log[i].text as string;
         }
         return `You arrive at ${codexData.location}. ${codexData.plot_summary || ''}`.trim();
     });
@@ -624,9 +650,10 @@
         const location = (codexData as any).location || '';
 
         // Build the chronicle stream. Order matters — chatLog is append-only
-        // so timestamps preserve order even across late-arriving syncs.
-        const chronicle = chatLog
-            .filter(e => e.type === 'player' || e.type === 'dm' || e.type === 'world')
+        // so timestamps preserve order even across late-arriving syncs. Pulls
+        // from displayChatLog so the whisperer's local whispers also surface.
+        const chronicle = displayChatLog
+            .filter(e => e.type === 'player' || e.type === 'dm' || e.type === 'world' || e.type === 'whisper')
             .map(e => ({
                 type: e.type,
                 author: e.author || '',
@@ -647,6 +674,8 @@
         for (const entry of chronicle) {
             if (entry.type === 'world') {
                 proseLines.push(`◍ ${entry.text}`);
+            } else if (entry.type === 'whisper') {
+                proseLines.push(`(whisper) ${entry.author}: ${entry.text}`);
             } else if (entry.type === 'player') {
                 proseLines.push(`▶ ${entry.author}: ${entry.text}`);
             } else {
@@ -736,14 +765,27 @@
     // Submit a free-text action to the server. Server batches for ~5s, calls the
     // AI with a pooled key, and writes the DM beat to Yjs (arrives here as a
     // chatLog update via sync). turn-result / turn-error clear isLoading.
+    // Phase 10: when whisperMode is on, route through the whisper track — the
+    // action is hidden from the table and the result returns as whisper-result.
     function submitAction() {
-        if (!chatInput.trim() || isLoading) return;
+        if (!chatInput.trim() || isLoading || whisperInFlight) return;
         const userAction = chatInput.trim();
         const author = characterName || 'You';
         lastAction = userAction;
         chatInput = '';
-        isLoading = true;
 
+        if (whisperMode) {
+            whisperInFlight = true;
+            addLocalWhisper({ author, text: userAction, type: 'whisper', timestamp: Date.now() });
+            const sent = sendAction(userAction, author, true);
+            if (!sent) {
+                addLocalWhisper({ author: 'System', text: 'Not connected to the world — retrying…', type: 'whisper', timestamp: Date.now() });
+                whisperInFlight = false;
+            }
+            return;
+        }
+
+        isLoading = true;
         // Echo our own action locally for instant feedback (peers see it via Yjs sync).
         addChatEntry({ author, text: userAction, type: 'player' });
 
@@ -771,6 +813,15 @@
                 isLoading = false;
                 lastTurnError = evt.message || 'The world hesitates.';
                 addChatEntry({ author: 'System', text: lastTurnError, type: 'dm' });
+            } else if (evt.type === 'whisper-result') {
+                whisperInFlight = false;
+                if (evt.ui_update?.qte) broadcastQTE(evt.ui_update.qte);
+                addLocalWhisper({ author: 'DM (whisper)', text: evt.narration || '', type: 'whisper', timestamp: Date.now() });
+            } else if (evt.type === 'whisper-error') {
+                whisperInFlight = false;
+                addLocalWhisper({ author: 'System', text: evt.message || 'The DM did not hear you.', type: 'whisper', timestamp: Date.now() });
+            } else if (evt.type === 'whisper-status') {
+                // Optional UI hint; no state change required.
             }
         });
     }
@@ -1269,11 +1320,22 @@
                                 onkeydown={(e) => e.key === 'Enter' && submitAction()}
                                 onfocus={() => actionInputFocused = true}
                                 onblur={() => actionInputFocused = false}
-                                placeholder={isLoading ? 'The world responds…' : 'Speak your action…'}
-                                disabled={isLoading || !isReady}
+                                placeholder={whisperMode ? 'Whisper to the DM…' : (isLoading || whisperInFlight ? 'The world responds…' : 'Speak your action…')}
+                                disabled={isLoading || whisperInFlight || !isReady}
                             />
-                            <button class="btn-primary act-go" onclick={submitAction} disabled={isLoading || !isReady || !chatInput.trim()} aria-label="Act">
-                                {#if isLoading}
+                            <button
+                                class="whisper-toggle"
+                                class:active={whisperMode}
+                                onclick={() => whisperMode = !whisperMode}
+                                disabled={isLoading || whisperInFlight}
+                                aria-pressed={whisperMode}
+                                title={whisperMode ? 'Whisper mode on — only the DM hears this' : 'Whisper to the DM (private action)'}
+                                aria-label="Toggle whisper mode"
+                            >
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l4-2v9l-4-2v-5z"/><path d="M7 9l5-3v12l-5-3"/><path d="M12 6l5 0a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2l-5 0"/><path d="M19 9l2 0v6l-2 0"/></svg>
+                            </button>
+                            <button class="btn-primary act-go" onclick={submitAction} disabled={isLoading || whisperInFlight || !isReady || !chatInput.trim()} aria-label="Act">
+                                {#if isLoading || whisperInFlight}
                                     <span class="mini-spinner"></span>
                                 {:else}
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h14"/><path d="M12 6l6 6-6 6"/></svg>
@@ -2692,6 +2754,29 @@
         padding: 0;
     }
     .act-go svg { width: 20px; height: 20px; }
+
+    /* Phase 10: whisper-toggle — soft-corner button next to the action send */
+    .whisper-toggle {
+        width: 44px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        padding: 0;
+        background: var(--surface);
+        color: var(--ink);
+        opacity: 0.55;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+    .whisper-toggle:hover:not(:disabled) { opacity: 0.85; }
+    .whisper-toggle.active {
+        opacity: 1;
+        background: rgba(140, 47, 47, 0.1);
+        border-color: var(--accent);
+        color: var(--accent);
+    }
+    .whisper-toggle:disabled { cursor: not-allowed; opacity: 0.35; }
+    .whisper-toggle svg { width: 20px; height: 20px; }
 
     @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
 

@@ -47,6 +47,10 @@ export class SignalingRoom {
     this.batchTimeoutMs = 5000;
     this.turnInFlight = false;
     this.pendingActions = [];
+    // Phase 10: whisper batches, one per session. Each drains on its own timer
+    // and the resulting narration is unicast to the whisperer only (codex
+    // changes still land on the shared doc). Other players see nothing.
+    this.whisperBatches = new Map();
 
     this.state.blockConcurrencyWhile(async () => {
       const stored = await this.state.storage.get("yDocState");
@@ -247,7 +251,7 @@ export class SignalingRoom {
   // -------------------------------------------------------------------------
   async handleSession(ws) {
     ws.accept();
-    const session = { ws, name: 'Wanderer', keyValue: null };
+    const session = { ws, name: 'Wanderer', keyValue: null, id: `s-${Date.now()}-${Math.random().toString(36).slice(2,8)}` };
     this.sessions.push(session);
 
     const uint8ToB64 = (uint8) => {
@@ -351,13 +355,36 @@ export class SignalingRoom {
 
         // ----- Action submission (the new server-side AI path) ------------
         if (data.type === "submit-action") {
-          // data: { text, author }
+          // data: { text, author, whisper? }
           if (!data.text || typeof data.text !== 'string') return;
           const action = {
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             author: data.author || session.name || 'Wanderer',
             text: data.text.slice(0, 1000)  // hard cap
           };
+
+          // Phase 10: whisper track. Routed to its own batch + flush path so
+          // the resulting narration lands only on the whisperer's screen.
+          if (data.whisper) {
+            const sid = session.id;
+            let batch = this.whisperBatches.get(sid);
+            if (!batch) {
+              batch = { ws: ws, name: action.author, actions: [], timer: null };
+              this.whisperBatches.set(sid, batch);
+            }
+            batch.actions.push(action);
+            ws.send(JSON.stringify({ type: "action-accepted", id: action.id, whisper: true }));
+            if (!batch.timer) {
+              batch.timer = setTimeout(() => {
+                if (batch) batch.timer = null;
+                this.flushWhisperBatch(sid).catch(err => {
+                  console.error('flushWhisperBatch error:', err);
+                });
+              }, this.batchTimeoutMs);
+            }
+            return;
+          }
+
           this.pendingActions = this.pendingActions || [];
           this.pendingActions.push(action);
 
@@ -385,6 +412,13 @@ export class SignalingRoom {
     const removeSession = () => {
       this.sessions = this.sessions.filter((s) => s.ws !== ws);
       if (session.keyValue) this.keyPool.remove(session.keyValue);
+      // Phase 10: drain any pending whisper batch for this session so the
+      // timer doesn't fire on a dead socket.
+      const wb = this.whisperBatches.get(session.id);
+      if (wb) {
+        if (wb.timer) clearTimeout(wb.timer);
+        this.whisperBatches.delete(session.id);
+      }
       sendPresence();
     };
     ws.addEventListener("close", removeSession);
@@ -653,6 +687,197 @@ export class SignalingRoom {
     // Persist updated doc
     const merged = Y.encodeStateAsUpdate(this.yDoc);
     await this.state.storage.put("yDocState", merged);
+  }
+
+  // Phase 10: Whisper pipeline. Same Director → DM → lint flow as flushBatch,
+  // but the resulting narration is unicast to the whisperer only (no shared
+  // chat push). Codex changes still land on the shared doc — only prose
+  // visibility is gated. World clock does NOT advance (a private action is
+  // not a table turn).
+  async flushWhisperBatch(sessionId) {
+    const batch = this.whisperBatches.get(sessionId);
+    if (!batch) return;
+    const actions = batch.actions.slice();
+    batch.actions = [];
+    if (actions.length === 0) {
+      this.whisperBatches.delete(sessionId);
+      return;
+    }
+    const target = batch.ws;
+
+    const keyEntry = this.keyPool.next();
+    if (!keyEntry) {
+      const waitMs = Math.max(1000, this.keyPool.earliestThawMs());
+      // Re-queue and retry. Keep batch entry alive so timer re-arm sees it.
+      batch.actions = actions;
+      setTimeout(() => this.flushWhisperBatch(sessionId).catch(() => {}), waitMs + 200);
+      this.sendTo(target, {
+        type: 'whisper-status',
+        message: `The DM mulls it over… ${Math.ceil(waitMs / 1000)}s`
+      });
+      return;
+    }
+
+    const codexObj = this.yDoc.getMap('memoryCodex').toJSON();
+    const codexJson = JSON.stringify(codexObj, null, 2);
+    const northStar = codexObj.north_star || null;
+
+    const directorResult = await this.callWithFallback(
+      buildDirectorRequestBody(buildDirectorPrompt(actions, codexJson, northStar)),
+      keyEntry
+    );
+
+    let turn;
+    if (directorResult.ok) {
+      const directorText = extractText(directorResult.data);
+      const ruling = parseJsonLoose(directorText);
+      if (ruling) {
+        const dmResult = await this.callWithFallback(
+          buildRequestBody(buildDmPrompt(ruling, codexJson, northStar)),
+          keyEntry
+        );
+        if (dmResult.ok) {
+          const dmText = extractText(dmResult.data);
+          const dmParsed = parseJsonLoose(dmText) || { narration: dmText };
+          let lint = lintProse(dmParsed.narration);
+          let finalNarration = dmParsed.narration;
+          let retried = false;
+          if (!lint.passes) {
+            retried = true;
+            const retryResult = await this.callWithFallback(
+              buildRequestBody(buildDmPrompt(ruling, codexJson, northStar, lint.feedback)),
+              keyEntry
+            );
+            if (retryResult.ok) {
+              const retryText = extractText(retryResult.data);
+              const retryParsed = parseJsonLoose(retryText) || { narration: retryText };
+              const lint2 = lintProse(retryParsed.narration);
+              if (lint2.passes || (!lint.passes && retryParsed.narration?.length > finalNarration.length)) {
+                finalNarration = retryParsed.narration;
+              }
+            }
+          }
+          turn = {
+            narration: finalNarration,
+            scene_tags: null,        // whisper doesn't change the shared scene
+            ui_update: ruling.qte ? { qte: ruling.qte } : null,
+            new_codex: ruling.codex_writes || {},
+            npc_changes: ruling.npc_changes || null,
+            new_npcs: ruling.new_npcs || null,
+            faction_changes: ruling.faction_changes || null,
+            thread_changes: ruling.thread_changes || null,
+            lint_passed: lint.passes,
+            lint_retried: retried,
+            pipeline: 'director-dm'
+          };
+        }
+      }
+    }
+
+    if (!turn) {
+      const fallbackResult = await this.callWithFallback(
+        buildRequestBody(buildBatchPrompt(actions, codexJson, northStar)),
+        keyEntry
+      );
+      if (!fallbackResult.ok) {
+        this.sendTo(target, {
+          type: 'whisper-error',
+          message: 'The DM did not hear you. Try again in a moment.'
+        });
+        return;
+      }
+      const fbText = extractText(fallbackResult.data);
+      const fbParsed = parseJsonLoose(fbText) || { narration: fbText };
+      turn = {
+        narration: fbParsed.narration,
+        scene_tags: null,
+        ui_update: null,
+        new_codex: fbParsed.new_codex || {},
+        lint_passed: null,
+        lint_retried: false,
+        pipeline: 'phase0-fallback'
+      };
+    }
+
+    await this.commitWhisperTurn(turn, target);
+  }
+
+  // Apply codex writes from a whispered turn without touching the shared chat
+  // log, then unicast the narration to the whisperer.
+  async commitWhisperTurn(turn, targetWs) {
+    if (!turn?.narration) {
+      this.sendTo(targetWs, {
+        type: 'whisper-error',
+        message: 'The threads blur — try a different approach.'
+      });
+      return;
+    }
+    this.yDoc.transact(() => {
+      const yCodex = this.yDoc.getMap('memoryCodex');
+      const writes = turn.new_codex || {};
+      for (const key in writes) {
+        if (key === 'party' && typeof writes[key] === 'object') {
+          const current = yCodex.get('party') || {};
+          const updated = { ...current };
+          for (const name in writes.party) {
+            updated[name] = { ...(updated[name] || {}), ...writes.party[name] };
+          }
+          yCodex.set('party', updated);
+        } else if (key === 'scene_tags' || key === 'world_clock') {
+          // Whispers don't change the shared scene or advance the clock.
+        } else if (key === 'npcs' || key === 'factions' || key === 'threads') {
+          // Director should use structured writes, not raw overwrites.
+        } else {
+          yCodex.set(key, writes[key]);
+        }
+      }
+      const npcChanges = turn.npc_changes;
+      const newNpcs = turn.new_npcs;
+      if (npcChanges || newNpcs) {
+        const npcs = { ...(yCodex.get('npcs') || {}) };
+        for (const name in (npcChanges || {})) {
+          npcs[name] = { ...(npcs[name] || {}), ...npcChanges[name] };
+        }
+        for (const name in (newNpcs || {})) {
+          npcs[name] = { ...(npcs[name] || {}), ...newNpcs[name] };
+        }
+        yCodex.set('npcs', npcs);
+      }
+      if (turn.faction_changes) {
+        const facs = { ...(yCodex.get('factions') || {}) };
+        for (const name in turn.faction_changes) {
+          facs[name] = { ...(facs[name] || {}), ...turn.faction_changes[name] };
+        }
+        yCodex.set('factions', facs);
+      }
+      if (turn.thread_changes) {
+        const threads = (yCodex.get('threads') || []).slice();
+        for (const change of turn.thread_changes) {
+          if (!change?.id) continue;
+          const idx = threads.findIndex(t => t?.id === change.id);
+          if (idx >= 0) threads[idx] = { ...threads[idx], ...change };
+          else threads.push(change);
+        }
+        yCodex.set('threads', threads);
+      }
+    });
+
+    this.sendTo(targetWs, {
+      type: 'whisper-result',
+      narration: turn.narration,
+      ui_update: turn.ui_update || null,
+      pipeline: turn.pipeline || null,
+      lint_passed: turn.lint_passed,
+      lint_retried: turn.lint_retried
+    });
+
+    const merged = Y.encodeStateAsUpdate(this.yDoc);
+    await this.state.storage.put("yDocState", merged);
+  }
+
+  sendTo(ws, msg) {
+    if (!ws) return;
+    try { ws.send(JSON.stringify(msg)); } catch {}
   }
 
   broadcast(msg) {

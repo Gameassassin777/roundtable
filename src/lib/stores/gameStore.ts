@@ -178,9 +178,11 @@ export function createGameState(roomId: string) {
     // Server-side AI path: send an action to the Worker. The Worker batches,
     // calls Gemini with a pooled key, and writes the DM beat to Yjs (which
     // arrives here as a sync update). UI clears the input on action-accepted.
-    function sendAction(text: string, author: string) {
+    // Phase 10: whisper=true routes the action to the whisper track so the
+    // resulting narration lands only on this client.
+    function sendAction(text: string, author: string, whisper: boolean = false) {
         if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-        ws.send(JSON.stringify({ type: 'submit-action', text, author }));
+        ws.send(JSON.stringify({ type: 'submit-action', text, author, whisper }));
         return true;
     }
 
