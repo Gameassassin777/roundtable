@@ -76,6 +76,65 @@
     // (typed as any because it's only used in template iteration).
     let chronicleRounds = $derived(chronicleItems.filter((i): i is any => i.kind === 'round'));
 
+    // Phase 3: Situation surface — derived views over the live world state so
+    // the player can see what the World Engine is simulating before they act.
+    // Situation-not-plots requires situation visibility.
+    let sceneSummary = $derived.by(() => {
+        const tags = (codexData as any).scene_tags || {};
+        const parts: string[] = [];
+        if (tags.biome) parts.push(tags.biome);
+        if (tags.weather && tags.weather !== tags.biome) parts.push(tags.weather);
+        if (tags.mood) parts.push(tags.mood);
+        return parts.join(' · ');
+    });
+
+    let presentNpcs = $derived.by(() => {
+        const npcs = (codexData as any).npcs || {};
+        const loc = (codexData as any).location;
+        // NPCs at the party's current location. If location is unset, show all
+        // NPCs with a location field — better than hiding them on first turn.
+        const list = Object.entries(npcs).filter(([, v]: any) => !loc || !v.location || v.location === loc);
+        return list.map(([name, v]: any) => ({ name, ...v }));
+    });
+
+    let activeThreads = $derived.by(() => {
+        const threads = (codexData as any).threads || [];
+        const turn = (codexData as any).world_clock?.turn || 0;
+        return threads
+            .filter((t: any) => t?.status === 'active' || t?.status === 'simmering')
+            .map((t: any) => ({
+                ...t,
+                turnsUntilLands: typeof t.lands_at_turn === 'number' ? t.lands_at_turn - turn : null,
+            }))
+            .sort((a: any, b: any) => {
+                if (a.status === 'active' && b.status !== 'active') return -1;
+                if (b.status === 'active' && a.status !== 'active') return 1;
+                return 0;
+            });
+    });
+
+    let visibleFactions = $derived.by(() => {
+        const facs = (codexData as any).factions || {};
+        return Object.entries(facs).map(([name, v]: any) => ({ name, ...v }));
+    });
+
+    // One-line summary used by the ActionBrief ghost text when the player
+    // focuses the action input. Grounds the action in the live scene.
+    let situationLine = $derived.by(() => {
+        const parts: string[] = [];
+        const scene = sceneSummary.trim();
+        if (scene) parts.push(scene.charAt(0).toUpperCase() + scene.slice(1));
+        if (presentNpcs.length > 0) {
+            const names = presentNpcs.slice(0, 3).map(n => n.name).join(', ');
+            parts.push(`${presentNpcs.length === 1 ? 'Present' : 'Also here'}: ${names}`);
+        }
+        const tension = activeThreads.find((t: any) => t.status === 'active');
+        if (tension) parts.push(`${tension.name}${tension.turnsUntilLands !== null && tension.turnsUntilLands <= 3 ? ` (lands turn ${tension.lands_at_turn})` : ''}`);
+        return parts.join(' · ');
+    });
+
+    let actionInputFocused = $state(false);
+
     // Onboarding wizard step: 'welcome' | 'attune' | 'forge'
     let wizardStep = $state('welcome');
 
@@ -741,6 +800,66 @@
                 </div>
             </header>
 
+            <!-- Phase 3: Situation Bar — surface the World Engine's live state -->
+            {#if ((codexData as any).world_clock?.turn > 0) || presentNpcs.length > 0 || activeThreads.length > 0 || visibleFactions.length > 0 || sceneSummary}
+                <div class="situation-bar panel">
+                    <div class="sit-segment sit-clock">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                        <span class="sit-label">Day {(codexData as any).world_clock?.day || 1}</span>
+                        <span class="sit-sep">·</span>
+                        <span class="sit-value">{(codexData as any).world_clock?.time_of_day || 'morning'}</span>
+                        <span class="sit-sep">·</span>
+                        <span class="sit-value">Turn {(codexData as any).world_clock?.turn || 0}</span>
+                    </div>
+
+                    {#if sceneSummary}
+                        <div class="sit-segment sit-scene">
+                            <span class="sit-label">Scene</span>
+                            <span class="sit-value">{sceneSummary}</span>
+                        </div>
+                    {/if}
+
+                    {#if presentNpcs.length > 0}
+                        <div class="sit-segment sit-present">
+                            <span class="sit-label">Present</span>
+                            {#each presentNpcs.slice(0, 4) as npc}
+                                <span class="sit-chip npc-chip" data-disp={(npc as any).disposition || 'neutral'}>
+                                    <span class="chip-name">{npc.name}</span>
+                                    {#if (npc as any).disposition}
+                                        <span class="chip-disp">{(npc as any).disposition}</span>
+                                    {/if}
+                                </span>
+                            {/each}
+                        </div>
+                    {/if}
+
+                    {#if visibleFactions.length > 0}
+                        <div class="sit-segment sit-factions">
+                            <span class="sit-label">In play</span>
+                            {#each visibleFactions.slice(0, 3) as fac}
+                                <span class="sit-chip faction-chip">
+                                    <span class="chip-name">{fac.name}</span>
+                                </span>
+                            {/each}
+                        </div>
+                    {/if}
+
+                    {#if activeThreads.length > 0}
+                        <div class="sit-segment sit-threads">
+                            <span class="sit-label">Tension</span>
+                            {#each activeThreads.slice(0, 3) as t}
+                                <span class="sit-chip thread-chip thread-{t.status}" class:thread-imminent={t.turnsUntilLands !== null && t.turnsUntilLands <= 3 && t.turnsUntilLands >= 0}>
+                                    <span class="chip-name">{t.name}</span>
+                                    {#if t.turnsUntilLands !== null && t.turnsUntilLands >= 0}
+                                        <span class="chip-count">{t.turnsUntilLands === 0 ? 'lands now' : `${t.turnsUntilLands}t`}</span>
+                                    {/if}
+                                </span>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
+            {/if}
+
             <div class="main-content">
                 <!-- Character Codex -->
                 <aside class="codex-sidebar panel {showCodexMobile ? 'mobile-visible' : ''}">
@@ -888,12 +1007,20 @@
 
                     <div class="stage-action">
                         <span class="turn-cue">{characterName || 'You'} — what do you do?</span>
+                        {#if actionInputFocused && situationLine && !isLoading}
+                            <div class="action-brief">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+                                <span>{situationLine}</span>
+                            </div>
+                        {/if}
                         <div class="action-row">
                             <input
                                 class="action-field"
                                 type="text"
                                 bind:value={chatInput}
                                 onkeydown={(e) => e.key === 'Enter' && submitAction()}
+                                onfocus={() => actionInputFocused = true}
+                                onblur={() => actionInputFocused = false}
                                 placeholder={isLoading ? 'The world responds…' : 'Speak your action…'}
                                 disabled={isLoading || !isReady}
                             />
@@ -1665,6 +1792,115 @@
         text-transform: uppercase;
         color: var(--accent);
     }
+
+    /* Phase 3: Situation Bar */
+    .situation-bar {
+        pointer-events: auto;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.4rem 1.1rem;
+        padding: 0.55rem 0.95rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        font-size: 0.78rem;
+        line-height: 1.4;
+        color: var(--ink);
+        box-shadow: 0 1px 0 rgba(0,0,0,0.03);
+    }
+    .sit-segment {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        min-width: 0;
+    }
+    .sit-segment > svg { width: 14px; height: 14px; opacity: 0.6; flex-shrink: 0; }
+    .sit-label {
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 0.7px;
+        text-transform: uppercase;
+        color: var(--accent);
+        opacity: 0.75;
+        flex-shrink: 0;
+    }
+    .sit-value { color: var(--ink); }
+    .sit-sep { opacity: 0.3; }
+    .sit-clock .sit-value { font-weight: 600; }
+
+    .sit-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.12rem 0.5rem;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.04);
+        border: 1px solid rgba(0, 0, 0, 0.06);
+        font-size: 0.72rem;
+        line-height: 1.2;
+        max-width: 14rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .chip-name { font-weight: 600; }
+    .chip-disp { opacity: 0.55; font-size: 0.66rem; }
+    .chip-count {
+        font-size: 0.62rem;
+        font-weight: 700;
+        opacity: 0.6;
+        padding-left: 0.15rem;
+        border-left: 1px solid rgba(0,0,0,0.1);
+        margin-left: 0.1rem;
+    }
+
+    /* NPC disposition color coding */
+    .npc-chip[data-disp*="friend"] { background: rgba(80, 130, 70, 0.12); border-color: rgba(80, 130, 70, 0.25); }
+    .npc-chip[data-disp*="hostile"] { background: rgba(140, 47, 47, 0.12); border-color: rgba(140, 47, 47, 0.28); }
+    .npc-chip[data-disp*="wary"] , .npc-chip[data-disp*="suspicious"], .npc-chip[data-disp*="cool"] {
+        background: rgba(160, 110, 40, 0.12); border-color: rgba(160, 110, 40, 0.22);
+    }
+    .npc-chip[data-disp*="neutral"] { background: rgba(0,0,0,0.04); }
+
+    .thread-chip { background: rgba(0,0,0,0.04); }
+    .thread-active {
+        background: rgba(140, 47, 47, 0.10);
+        border-color: rgba(140, 47, 47, 0.22);
+    }
+    .thread-imminent {
+        background: rgba(180, 60, 40, 0.18);
+        border-color: rgba(180, 60, 40, 0.4);
+        animation: threadPulse 2.4s ease-in-out infinite;
+    }
+    @keyframes threadPulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(180, 60, 40, 0); }
+        50% { box-shadow: 0 0 0 3px rgba(180, 60, 40, 0.12); }
+    }
+
+    .action-brief {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.4rem 0.7rem;
+        background: rgba(0, 0, 0, 0.025);
+        border-left: 2px solid var(--accent);
+        border-radius: 4px;
+        font-size: 0.78rem;
+        line-height: 1.35;
+        color: var(--ink);
+        opacity: 0.85;
+    }
+    .action-brief svg { width: 13px; height: 13px; opacity: 0.55; flex-shrink: 0; }
+    .action-brief span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        -webkit-box-orient: vertical;
+    }
+
     .action-row { display: flex; gap: 0.6rem; }
     .action-field { flex: 1; font-size: 1rem; }
     .act-go {
