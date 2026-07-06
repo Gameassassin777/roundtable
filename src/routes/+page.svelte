@@ -3796,4 +3796,123 @@
         color: var(--accent);
         background: var(--surface-3);
     }
+
+    /* ============ Phase 24: Mobile responsive audit ============
+       Phone-class refinements (≤540px). The 768px block handles the
+       basic drawer + hide-center transformation; this block fixes the
+       pieces that still cramped or broke at phone width. */
+    @media (max-width: 540px) {
+        /* Header: collapse brand subtitle, tighten icon gaps. */
+        .hud-header { padding: 0.55rem 0.7rem; gap: 0.4rem; }
+        .hud-left, .hud-right { gap: 0.35rem; }
+        .brand .version { display: none; }
+        .brand h1 { font-size: 0.85rem; letter-spacing: 0.02em; }
+        .icon-btn { width: 32px; height: 32px; padding: 0; }
+
+        /* Status orb — just the dot, no count text on the smallest screens. */
+        .status-orb { padding: 0.32rem; }
+        .roster-pop {
+            right: 0.4rem;
+            min-width: 180px;
+        }
+
+        /* Layout-grid tighter gutters so the stage gets more room. */
+        .layout-grid { padding: 0.5rem; gap: 0.5rem; }
+
+        /* Situation bar — allow wrap, slightly smaller text. */
+        .situation-bar {
+            padding: 0.45rem 0.55rem;
+            font-size: 0.7rem;
+            flex-wrap: wrap;
+            gap: 0.3rem 0.5rem;
+        }
+        .sit-segment { flex-basis: auto; }
+        .sit-segment > svg { width: 12px; height: 12px; }
+
+        /* Codex drawer is near-fullscreen on phone. */
+        .codex-sidebar.mobile-visible {
+            width: 88vw;
+            max-width: 320px;
+        }
+        .codex-sidebar { width: 88vw; max-width: 320px; }
+
+        /* Stage body: smaller padding, smaller beat text, but still readable. */
+        .stage-body { padding: 1rem 0.9rem; }
+        .beat-text { font-size: 1.05rem; line-height: 1.6; }
+        .your-move { font-size: 0.95rem; }
+
+        /* Action templates and NPC chips: horizontal scroll, no wrap. */
+        .action-templates, .action-templates.npc-templates {
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--line) transparent;
+            padding-bottom: 0.25rem;
+            margin-bottom: 0.35rem;
+            -webkit-overflow-scrolling: touch;
+        }
+        .action-template-chip { flex-shrink: 0; }
+
+        /* Action row: keep input dominant, square icon buttons. */
+        .action-row { gap: 0.4rem; }
+        .action-field { font-size: 0.95rem; padding: 0.6rem 0.7rem; }
+        .whisper-toggle, .act-go {
+            width: 38px; height: 38px;
+            padding: 0;
+            flex-shrink: 0;
+            display: inline-flex; align-items: center; justify-content: center;
+        }
+
+        /* Stat override rows — keep them on one line. */
+        .stat-override { gap: 0.3rem; }
+        .stat-btn { padding: 0.25rem 0.45rem; font-size: 0.7rem; }
+        .stat-label-row { font-size: 0.74rem; }
+
+        /* Inventory grid: 3 cols on phone instead of 6. */
+        .inventory-grid { grid-template-columns: repeat(3, 1fr); }
+
+        /* Engine controls: smaller text, full-width row. */
+        .engine-btn { font-size: 0.6rem; padding: 0.25rem 0.45rem; }
+
+        /* Chronicle book: near-fullscreen, smaller padding. */
+        .chronicle-overlay-container { padding: 0.5rem; }
+        .chronicle-book {
+            height: 94vh;
+            height: 94dvh;
+            border-width: 2px;
+            border-radius: 8px;
+        }
+        .book-header { padding: 0.7rem 0.9rem; }
+        .book-title { font-size: 1rem; }
+        .book-body { padding: 0.9rem 0.8rem; }
+        .round-number { font-size: 0.85rem; }
+        .narration-text { font-size: 0.88rem; }
+        .narration-text::first-letter { font-size: 1.7rem; margin-right: 0.3rem; }
+
+        /* Wizard cards: vertical tighter. */
+        .wizard-card { padding: 1.2rem; gap: 1rem; }
+        .game-title { font-size: 1.7rem; }
+        .emblem { width: 64px; height: 64px; }
+        .emblem svg { width: 40px; height: 40px; }
+
+        /* Settings drawer: full-width sheet from bottom-ish. */
+        .settings-drawer { max-width: 100%; }
+
+        /* Vital chip — trim the suffix on phone. */
+        .vital-chip { font-size: 0.66rem; padding: 0.22rem 0.4rem; gap: 0.2rem; }
+        .vital-bars { gap: 0.18rem; }
+
+        /* Roster popover: anchor properly under the orb. */
+        .roster-pop { right: 0; left: auto; }
+    }
+
+    /* Very-small phones (≤380px): one more squeeze pass. */
+    @media (max-width: 380px) {
+        .brand h1 { font-size: 0.78rem; }
+        .icon-btn { width: 30px; height: 30px; }
+        .situation-bar { font-size: 0.66rem; }
+        .beat-text { font-size: 0.98rem; }
+        .action-field { font-size: 0.9rem; padding: 0.55rem 0.6rem; }
+        .whisper-toggle, .act-go { width: 34px; height: 34px; }
+    }
 </style>
