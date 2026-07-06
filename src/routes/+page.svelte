@@ -144,11 +144,15 @@
 
     // Reconstruct Codex state reactively
     let codexData = $state({
-        location: "The Black Crypt",
-        plot_summary: "The party seeks the Ashen Crown.",
-        scene_tags: { biome: "crypt", weather: "none", mood: "oppressive" },
+        location: "a quiet crossroads at the edge of an unfinished map",
+        plot_summary: "The party has just arrived, each looking for something different.",
+        scene_tags: { biome: "crossroads", weather: "clear", mood: "unsettled" },
         party: {} as Record<string, { hp: number, max_hp: number, resolve: number, corruption: number, active_traits: string[], permanent_conditions: string[], echo_tags: string[] }>,
-        inventory: {} as Record<string, { durability: number }>
+        inventory: {} as Record<string, { durability: number }>,
+        world_clock: { turn: 0, day: 1, time_of_day: "morning" } as { turn: number; day: number; time_of_day: string },
+        npcs: {} as Record<string, { role?: string; location?: string; goal?: string; disposition?: number; status?: string; last_seen_turn?: number; notes?: string }>,
+        factions: {} as Record<string, { type?: string; resources?: number; disposition?: number; agenda?: string; tension?: number; next_move_turn?: number }>,
+        threads: [] as Array<{ id: string; name: string; description: string; status: string; escalate_after_turn?: number; lands_at_turn?: number }>
     });
 
     let myCharacter = $derived(
@@ -210,7 +214,11 @@
                     plot_summary: raw.plot_summary || "",
                     scene_tags: raw.scene_tags || { biome: "crossroads", weather: "clear", mood: "unsettled" },
                     party: raw.party || {},
-                    inventory: raw.inventory || {}
+                    inventory: raw.inventory || {},
+                    world_clock: raw.world_clock || { turn: 0, day: 1, time_of_day: "morning" },
+                    npcs: raw.npcs || {},
+                    factions: raw.factions || {},
+                    threads: raw.threads || []
                 };
                 if (codexData.scene_tags) currentSceneTags = codexData.scene_tags;
 
@@ -702,7 +710,7 @@
                     </button>
                     <div class="brand">
                         <h1>Round Table</h1>
-                        <span class="version">v2.0</span>
+                        <span class="version">v3.0</span>
                     </div>
                 </div>
 
@@ -808,6 +816,55 @@
                                 {/each}
                             </div>
                         </div>
+
+                        {#if Object.keys(codexData.npcs || {}).length > 0 || (codexData.threads || []).length > 0 || Object.keys(codexData.factions || {}).length > 0}
+                            <div class="codex-section world-section">
+                                <h3>World</h3>
+                                <div class="world-clock-chip">
+                                    <span class="clock-day">Day {codexData.world_clock?.day || 1}</span>
+                                    <span class="clock-sep">·</span>
+                                    <span class="clock-time">{(codexData.world_clock?.time_of_day || 'morning')}</span>
+                                    <span class="clock-sep">·</span>
+                                    <span class="clock-turn">Turn {codexData.world_clock?.turn || 0}</span>
+                                </div>
+
+                                {#if Object.keys(codexData.npcs || {}).length > 0}
+                                    <ul class="world-list npc-list">
+                                        {#each Object.entries(codexData.npcs) as [name, npc]}
+                                            <li class="world-item">
+                                                <span class="world-name">{name}</span>
+                                                {#if (npc as any).role}<span class="world-sub">{(npc as any).role}</span>{/if}
+                                                {#if (npc as any).location}<span class="world-meta">{(npc as any).location}</span>{/if}
+                                                {#if (npc as any).notes}<span class="world-note">{(npc as any).notes}</span>{/if}
+                                            </li>
+                                        {/each}
+                                    </ul>
+                                {/if}
+
+                                {#if Object.keys(codexData.factions || {}).length > 0}
+                                    <ul class="world-list faction-list">
+                                        {#each Object.entries(codexData.factions) as [name, fac]}
+                                            <li class="world-item">
+                                                <span class="world-name">{name}</span>
+                                                {#if (fac as any).type}<span class="world-sub">{(fac as any).type}</span>{/if}
+                                                {#if (fac as any).agenda}<span class="world-note">{(fac as any).agenda}</span>{/if}
+                                            </li>
+                                        {/each}
+                                    </ul>
+                                {/if}
+
+                                {#if (codexData.threads || []).filter((t: any) => t.status === 'active' || t.status === 'landed').length > 0}
+                                    <ul class="world-list thread-list">
+                                        {#each (codexData.threads || []).filter((t: any) => t.status === 'active' || t.status === 'landed') as t}
+                                            <li class="world-item thread-{t.status}">
+                                                <span class="world-name">{t.name}</span>
+                                                {#if t.description}<span class="world-note">{t.description}</span>{/if}
+                                            </li>
+                                        {/each}
+                                    </ul>
+                                {/if}
+                            </div>
+                        {/if}
                     </div>
                 </aside>
 
@@ -1483,6 +1540,32 @@
     }
 
     .inventory-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
+
+    .world-section { border-top: 1px solid var(--line); padding-top: 0.8rem; margin-top: 0.4rem; }
+    .world-clock-chip {
+        display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+        font-size: 0.74rem; color: var(--ink-soft);
+        background: rgba(140, 47, 47, 0.05);
+        padding: 0.35rem 0.55rem; border-radius: var(--radius-pill);
+        margin-bottom: 0.6rem;
+        text-transform: capitalize;
+    }
+    .clock-day { font-weight: 600; color: var(--accent); }
+    .clock-sep { opacity: 0.4; }
+    .clock-turn { opacity: 0.7; font-variant-numeric: tabular-nums; }
+    .world-list { list-style: none; padding: 0; margin: 0.35rem 0 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; }
+    .world-item {
+        display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.5rem;
+        align-items: baseline; padding: 0.3rem 0.4rem;
+        background: var(--surface-2); border-radius: var(--radius-sm);
+        font-size: 0.8rem;
+    }
+    .world-name { font-weight: 600; color: var(--ink); }
+    .world-sub { color: var(--ink-soft); font-size: 0.72rem; font-style: italic; }
+    .world-meta { font-size: 0.72rem; color: var(--ink-soft); grid-column: 2; }
+    .world-note { font-size: 0.74rem; color: var(--ink-soft); grid-column: 1 / -1; line-height: 1.4; }
+    .thread-active .world-name { color: var(--accent); }
+    .thread-landed .world-name { color: var(--hp); }
     .inv-slot {
         height: 62px;
         background: var(--surface-2);

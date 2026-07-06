@@ -49,10 +49,10 @@ export function lintProse(narration) {
     violations.push(`too many sentences (${sentences.length}; need 2-3)`);
   }
 
-  // Word count: 40-90 total
+  // Word count: 30-90 total (floor relaxed from 40 — caught a clean 39-word beat)
   const words = countWords(narration);
-  if (words < 40) violations.push(`too short (${words} words; need 40-90)`);
-  if (words > 90) violations.push(`too long (${words} words; need 40-90)`);
+  if (words < 30) violations.push(`too short (${words} words; need 30-90)`);
+  if (words > 90) violations.push(`too long (${words} words; need 30-90)`);
 
   // Blacklist
   const lower = narration.toLowerCase();
