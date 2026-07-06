@@ -99,6 +99,7 @@
     let showCodexMobile = $state(false);
     let showSettings = $state(false);
     let showChronicle = $state(false);
+    let showAuditLog = $state(false);  // Phase 34: flat pipeline audit view
     let connectionStatus = $state("Connecting");
     let lastAction = $state('');
 
@@ -157,6 +158,16 @@
     // Back-compat alias so existing markup that references chronicleRounds keeps working
     // (typed as any because it's only used in template iteration).
     let chronicleRounds = $derived(chronicleItems.filter((i): i is any => i.kind === 'round'));
+
+    // Phase 34: flat audit log — chronicle rounds that have audit or ruling
+    // data, newest first. Host-only debugging view, separate from prose
+    // chronicle so the host can scan 20 turns of pipeline quality quickly.
+    let auditLogItems = $derived.by(() => {
+        return chronicleItems
+            .filter((i: any) => i.kind === 'round' && (i.audit || i.ruling))
+            .slice()
+            .reverse() as any[];
+    });
 
     // Phase 3: Situation surface — derived views over the live world state so
     // the player can see what the World Engine is simulating before they act.
@@ -1469,6 +1480,9 @@
                     <button class="icon-btn shortcuts-btn" onclick={() => showShortcutsHelp = true} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>
                     </button>
+                    <button class="icon-btn audit-log-btn" onclick={() => showAuditLog = !showAuditLog} class:active={showAuditLog} aria-label="Pipeline audit log" title="Pipeline audit log">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2"/></svg>
+                    </button>
                 </div>
             </header>
 
@@ -2466,6 +2480,71 @@
                         <p>{threadDetailData.description}</p>
                     </div>
                 {/if}
+            </div>
+        </div>
+    {/if}
+
+    <!-- Phase 34: pipeline audit log — flat scan view of every round with
+         audit or ruling data. Host-only debugging surface. -->
+    {#if showAuditLog}
+        <div
+            class="modal-overlay audit-log-overlay"
+            role="button"
+            tabindex="-1"
+            onkeydown={(e) => { if (e.key === 'Escape') showAuditLog = false; }}
+            onclick={(e) => { if (e.target === e.currentTarget) showAuditLog = false; }}
+        >
+            <div class="audit-log-card panel">
+                <header class="audit-log-head">
+                    <h3>Pipeline audit</h3>
+                    <button class="icon-btn" onclick={() => showAuditLog = false} aria-label="Close">✕</button>
+                </header>
+                <div class="audit-log-body scrollable-parchment">
+                    {#if auditLogItems.length === 0}
+                        <p class="audit-log-empty">No turns logged yet. Play a few rounds — every beat's lint/critic status and Director verdict lands here.</p>
+                    {:else}
+                        <table class="audit-log-table">
+                            <thead>
+                                <tr>
+                                    <th>Turn</th>
+                                    <th>Actions</th>
+                                    <th>Director verdict</th>
+                                    <th>Flags</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {#each auditLogItems as item (item.id)}
+                                    <tr>
+                                        <td class="audit-turn">#{item.id}</td>
+                                        <td class="audit-actions">
+                                            {#each item.actions as a}
+                                                <span class="audit-action-row" title={a.text}>
+                                                    <span class="audit-action-author">{a.author}:</span>
+                                                    <span class="audit-action-text">{a.text.length > 60 ? a.text.slice(0, 57) + '…' : a.text}</span>
+                                                </span>
+                                            {/each}
+                                        </td>
+                                        <td class="audit-verdict">
+                                            {#if item.ruling?.verdict}{item.ruling.verdict}{:else if item.ruling?.verdicts}{item.ruling.verdicts}{:else}<span class="audit-empty">—</span>{/if}
+                                        </td>
+                                        <td class="audit-flags">
+                                            {#if !item.audit}
+                                                <span class="audit-empty">—</span>
+                                            {:else}
+                                                {#if item.audit.lint_retried}<span class="audit-flag lint" title="Lint retried">L↻</span>{/if}
+                                                {#if item.audit.critic_retried}<span class="audit-flag critic-retry" title="Critic retried">C↻</span>{/if}
+                                                {#if item.audit.critic_passed === false}<span class="audit-flag critic-fail" title="Critic failed">C✗</span>{/if}
+                                                {#if item.audit.critic_passed === true && !item.audit.lint_retried && !item.audit.critic_retried}
+                                                    <span class="audit-flag ok" title="Clean pass">✓</span>
+                                                {/if}
+                                            {/if}
+                                        </td>
+                                    </tr>
+                                {/each}
+                            </tbody>
+                        </table>
+                    {/if}
+                </div>
             </div>
         </div>
     {/if}
@@ -4529,6 +4608,115 @@
         color: var(--ink-soft);
         line-height: 1.5;
     }
+
+    /* Phase 34: pipeline audit log — flat scan table. */
+    .audit-log-overlay {
+        z-index: 125;
+        display: flex; align-items: center; justify-content: center;
+        padding: 1.5rem;
+    }
+    .audit-log-card {
+        width: 100%;
+        max-width: 720px;
+        max-height: 80vh;
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        box-shadow: var(--shadow-lg);
+        display: flex; flex-direction: column;
+        overflow: hidden;
+        animation: rise 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .audit-log-head {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 0.9rem 1.1rem;
+        border-bottom: 1px solid var(--line);
+    }
+    .audit-log-head h3 {
+        margin: 0;
+        font-family: var(--font-serif);
+        font-size: 1.05rem;
+        color: var(--ink);
+    }
+    .audit-log-body {
+        overflow-y: auto;
+        padding: 0.6rem 0.9rem;
+        flex: 1;
+    }
+    .audit-log-empty {
+        font-size: 0.84rem;
+        color: var(--ink-soft);
+        text-align: center;
+        padding: 2rem 1rem;
+        font-style: italic;
+    }
+    .audit-log-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.78rem;
+    }
+    .audit-log-table thead th {
+        text-align: left;
+        padding: 0.45rem 0.55rem;
+        font-size: 0.66rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-2);
+        position: sticky; top: 0;
+    }
+    .audit-log-table tbody td {
+        padding: 0.5rem 0.55rem;
+        border-bottom: 1px dashed var(--line);
+        vertical-align: top;
+    }
+    .audit-turn {
+        font-family: var(--font-sans);
+        font-variant-numeric: tabular-nums;
+        color: var(--accent);
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .audit-actions {
+        display: flex; flex-direction: column; gap: 0.18rem;
+        max-width: 260px;
+    }
+    .audit-action-row {
+        font-size: 0.74rem;
+        line-height: 1.4;
+        color: var(--ink);
+    }
+    .audit-action-author {
+        color: var(--ink-soft);
+        font-weight: 600;
+        margin-right: 0.2rem;
+    }
+    .audit-verdict {
+        font-size: 0.74rem;
+        line-height: 1.45;
+        color: var(--ink);
+        max-width: 240px;
+    }
+    .audit-flags {
+        display: flex; gap: 0.2rem; flex-wrap: wrap;
+        align-items: center;
+    }
+    .audit-flag {
+        font-size: 0.66rem;
+        font-family: var(--font-sans);
+        padding: 0.12rem 0.35rem;
+        border-radius: 4px;
+        font-weight: 600;
+        border: 1px solid var(--line);
+    }
+    .audit-flag.ok { color: #4a6a4a; background: rgba(120, 180, 110, 0.18); border-color: rgba(80, 130, 70, 0.3); }
+    .audit-flag.lint { color: #8a6a1a; background: rgba(232, 200, 110, 0.18); border-color: rgba(180, 140, 50, 0.35); }
+    .audit-flag.critic-retry { color: #6a4a8a; background: rgba(186, 160, 220, 0.18); border-color: rgba(106, 74, 138, 0.4); }
+    .audit-flag.critic-fail { color: #8a2a2a; background: rgba(220, 160, 160, 0.18); border-color: rgba(138, 42, 42, 0.4); }
+    .audit-empty { color: var(--ink-soft); opacity: 0.6; }
+    .audit-log-btn.active { color: var(--accent); background: var(--surface-3); }
 
     /* ============ Phase 24: Mobile responsive audit ============
        Phone-class refinements (≤540px). The 768px block handles the
