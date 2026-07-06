@@ -1959,7 +1959,16 @@
                                 onblur={() => actionInputFocused = false}
                                 placeholder={whisperMode ? 'Whisper to the DM…' : (isLoading || whisperInFlight ? 'The world responds…' : 'Speak your action…')}
                                 disabled={isLoading || whisperInFlight || !isReady}
+                                maxlength="1000"
                             />
+                            {#if chatInput.length > 200}
+                                <span
+                                    class="char-counter"
+                                    class:warn={chatInput.length > 850}
+                                    aria-live="polite"
+                                    title={chatInput.length > 850 ? 'Approaching the 1000-char server cap.' : 'Character count.'}
+                                >{chatInput.length} / 1000</span>
+                            {/if}
                             <button
                                 class="whisper-toggle"
                                 class:active={whisperMode}
@@ -3667,6 +3676,25 @@
         color: #3a2a1a;
     }
     .wait-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Phase 35: char counter — only shows past 200 chars. */
+    .char-counter {
+        position: absolute;
+        right: 0.55rem;
+        bottom: -1.4rem;
+        font-size: 0.66rem;
+        font-family: var(--font-sans);
+        color: var(--ink-soft);
+        opacity: 0.7;
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
+        transition: color 0.15s, opacity 0.15s;
+    }
+    .char-counter.warn {
+        color: #8a4a1a;
+        opacity: 1;
+        font-weight: 600;
+    }
     .npc-templates { margin-bottom: 0.2rem; }
     .npc-chip {
         background: rgba(140, 47, 47, 0.06);
