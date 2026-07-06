@@ -283,6 +283,36 @@
         nsPremise = ''; nsTone = ''; nsHook = '';
         showNorthStar = false;
     }
+
+    // Phase 9: .weave reader — load an exported .weave.json file and render
+    // the chronicle + world state read-only. Closes the loop with the export
+    // button (Phase 5).
+    let showReader = $state(false);
+    let readerData: any = $state(null);
+    let readerError = $state('');
+    function openReader() {
+        readerData = null;
+        readerError = '';
+        showReader = true;
+    }
+    async function handleWeaveFile(evt: Event) {
+        const input = evt.target as HTMLInputElement;
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const parsed = JSON.parse(text);
+            if (!parsed || typeof parsed !== 'object' || !parsed.format) {
+                readerError = 'Not a Round Table .weave file.';
+                return;
+            }
+            readerData = parsed;
+            readerError = '';
+        } catch (e: any) {
+            readerError = `Could not read file: ${e?.message || e}`;
+            readerData = null;
+        }
+    }
     function applySeed(seed: AdventureSeed) {
         nsPremise = seed.premise;
         nsTone = seed.tone;
@@ -1313,7 +1343,10 @@
                     <button class="btn-ghost wide" onclick={exportWeave} disabled={chronicleItems.length === 0}>
                         Download .weave
                     </button>
-                    <span class="field-help">Snapshot of this world's chronicle + codex as a JSON file you can keep or share.</span>
+                    <button class="btn-ghost wide" onclick={openReader}>
+                        Read a .weave file
+                    </button>
+                    <span class="field-help">Snapshot this world, or read a saved chronicle from disk.</span>
                 </div>
 
                 <div class="field">
@@ -1387,6 +1420,116 @@
                     <button class="btn-ghost" onclick={clearNorthStar}>Clear</button>
                     <button class="btn-primary" onclick={saveNorthStar} disabled={!nsPremise.trim() && !nsTone.trim() && !nsHook.trim()}>Set Premise</button>
                 </div>
+            </div>
+        </div>
+    {/if}
+
+    <!-- Phase 9: .weave reader modal -->
+    {#if showReader}
+        <div class="modal-overlay" onclick={(e) => { if (e.target === e.currentTarget) showReader = false; }}>
+            <div class="reader-modal panel">
+                <div class="drawer-head">
+                    <h2>.weave Reader</h2>
+                    <button class="icon-btn" onclick={() => showReader = false} aria-label="Close">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                    </button>
+                </div>
+
+                {#if !readerData}
+                    <div class="reader-import">
+                        <label class="btn-primary">
+                            Choose .weave.json file
+                            <input type="file" accept=".json,.weave,application/json" onchange={handleWeaveFile} hidden />
+                        </label>
+                        {#if readerError}
+                            <p class="reader-error">{readerError}</p>
+                        {:else}
+                            <p class="reader-help">Pick an exported .weave file to read its chronicle and world state.</p>
+                        {/if}
+                    </div>
+                {:else}
+                    <div class="reader-content scrollable-parchment">
+                        <header class="reader-header">
+                            <h3 class="reader-title">Chronicle of {readerData.world?.room_id || '(unnamed world)'}</h3>
+                            {#if readerData.world?.world_clock}
+                                <p class="reader-meta">
+                                    Day {readerData.world.world_clock.day || 1} · {readerData.world.world_clock.time_of_day || 'morning'} · Turn {readerData.world.world_clock.turn || 0}
+                                </p>
+                            {/if}
+                            {#if readerData.world?.location}
+                                <p class="reader-meta">{readerData.world.location}</p>
+                            {/if}
+                            {#if readerData.world?.scene_tags}
+                                <p class="reader-meta">{[readerData.world.scene_tags.biome, readerData.world.scene_tags.weather, readerData.world.scene_tags.mood].filter(Boolean).join(' · ')}</p>
+                            {/if}
+                        </header>
+
+                        {#if readerData.party && Object.keys(readerData.party).length > 0}
+                            <section class="reader-section">
+                                <h4>Party</h4>
+                                <ul class="reader-list">
+                                    {#each Object.entries(readerData.party) as [name, c]}
+                                        <li><strong>{name}</strong>{(c as any).class_title ? ` · ${(c as any).class_title}` : ''}</li>
+                                    {/each}
+                                </ul>
+                            </section>
+                        {/if}
+
+                        {#if readerData.npcs && Object.keys(readerData.npcs).length > 0}
+                            <section class="reader-section">
+                                <h4>NPCs</h4>
+                                <ul class="reader-list">
+                                    {#each Object.entries(readerData.npcs) as [name, npc]}
+                                        <li><strong>{name}</strong>{(npc as any).role ? ` · ${(npc as any).role}` : ''}{(npc as any).notes ? ` — ${(npc as any).notes}` : ''}</li>
+                                    {/each}
+                                </ul>
+                            </section>
+                        {/if}
+
+                        {#if readerData.factions && Object.keys(readerData.factions).length > 0}
+                            <section class="reader-section">
+                                <h4>Factions</h4>
+                                <ul class="reader-list">
+                                    {#each Object.entries(readerData.factions) as [name, fac]}
+                                        <li><strong>{name}</strong>{(fac as any).type ? ` · ${(fac as any).type}` : ''}{(fac as any).agenda ? ` — ${(fac as any).agenda}` : ''}</li>
+                                    {/each}
+                                </ul>
+                            </section>
+                        {/if}
+
+                        {#if readerData.threads && readerData.threads.length > 0}
+                            <section class="reader-section">
+                                <h4>Threads</h4>
+                                <ul class="reader-list">
+                                    {#each readerData.threads as t}
+                                        <li><strong>{t.name}</strong> <em>({t.status})</em>{t.description ? ` — ${t.description}` : ''}</li>
+                                    {/each}
+                                </ul>
+                            </section>
+                        {/if}
+
+                        <section class="reader-section">
+                            <h4>Chronicle</h4>
+                            <article class="reader-chronicle">
+                                {#if readerData.prose}
+                                    <pre class="reader-prose">{readerData.prose}</pre>
+                                {:else if readerData.chronicle}
+                                    {#each readerData.chronicle as entry}
+                                        {#if entry.type === 'world'}
+                                            <p class="reader-entry reader-world">◍ {entry.text}</p>
+                                        {:else if entry.type === 'player'}
+                                            <p class="reader-entry reader-player">▶ {entry.author}: {entry.text}</p>
+                                        {:else}
+                                            <p class="reader-entry reader-dm">{entry.text}</p>
+                                        {/if}
+                                    {/each}
+                                {:else}
+                                    <p class="reader-empty">No chronicle entries.</p>
+                                {/if}
+                            </article>
+                        </section>
+                    </div>
+                {/if}
             </div>
         </div>
     {/if}
@@ -2381,6 +2524,116 @@
         line-clamp: 3;
         -webkit-box-orient: vertical;
         overflow: hidden;
+    }
+
+    /* Phase 9: .weave reader modal */
+    .reader-modal {
+        width: min(720px, 92vw);
+        max-height: 86vh;
+        overflow-y: auto;
+        padding: 1.4rem 1.5rem 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    .reader-import {
+        padding: 0.8rem 0.9rem;
+        background: rgba(0,0,0,0.03);
+        border: 1px dashed var(--line);
+        border-radius: 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        align-items: flex-start;
+    }
+    .reader-error {
+        font-size: 0.78rem;
+        color: var(--accent);
+        margin: 0;
+    }
+    .reader-help {
+        font-size: 0.78rem;
+        opacity: 0.65;
+        margin: 0;
+        line-height: 1.4;
+    }
+    .reader-content {
+        display: flex;
+        flex-direction: column;
+        gap: 1.1rem;
+    }
+    .reader-header {
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 0.7rem;
+    }
+    .reader-title {
+        margin: 0 0 0.4rem;
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: var(--ink);
+    }
+    .reader-meta {
+        font-size: 0.78rem;
+        line-height: 1.5;
+        opacity: 0.75;
+        margin: 0.15rem 0;
+    }
+    .reader-section h4 {
+        margin: 0 0 0.4rem;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.7px;
+        text-transform: uppercase;
+        opacity: 0.6;
+    }
+    .reader-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+    .reader-list li {
+        font-size: 0.82rem;
+        line-height: 1.45;
+        padding: 0.3rem 0.5rem;
+        background: rgba(0,0,0,0.02);
+        border-left: 2px solid var(--line);
+        border-radius: 3px;
+    }
+    .reader-chronicle {
+        margin-top: 0.3rem;
+        padding: 0.7rem 0.85rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    .reader-prose {
+        margin: 0;
+        font-family: var(--font);
+        font-size: 0.88rem;
+        line-height: 1.6;
+        color: var(--ink);
+        white-space: pre-wrap;
+    }
+    .reader-entry {
+        margin: 0;
+        font-size: 0.85rem;
+        line-height: 1.55;
+        padding: 0.25rem 0;
+    }
+    .reader-world { color: var(--accent); opacity: 0.85; font-style: italic; }
+    .reader-player { color: var(--ink); }
+    .reader-dm { color: var(--ink); opacity: 0.9; border-left: 2px solid var(--accent); padding-left: 0.6rem; }
+    .reader-empty {
+        font-size: 0.82rem;
+        opacity: 0.55;
+        font-style: italic;
+        margin: 0;
     }
 
     /* Phase 8: NPC portrait thumbnails in codex sidebar */
