@@ -612,6 +612,8 @@
     let unsubscribe = subscribeChat();
     let unsubscribeServer = subscribeServerEvents();
     let unsubProvider: any = null;
+    let cleanupShortcuts: (() => void) | null = null;
+    let showShortcutsHelp = $state(false);
     let activePeers = $state(0);
     let tableRoster = $state<string[]>([]);
     let rosterOpen = $state(false);
@@ -654,6 +656,23 @@
                 wsDisconnected = false;
             }
         });
+
+        // Phase 33: global keydown for "?" shortcuts help. Ignore when an
+        // input/textarea is focused (so typing "?" into the action field
+        // doesn't pop the modal).
+        function globalKeydown(e: KeyboardEvent) {
+            if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+                const t = e.target as HTMLElement | null;
+                const tag = t?.tagName;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable) return;
+                e.preventDefault();
+                showShortcutsHelp = !showShortcutsHelp;
+            } else if (e.key === 'Escape' && showShortcutsHelp) {
+                showShortcutsHelp = false;
+            }
+        }
+        window.addEventListener('keydown', globalKeydown);
+        cleanupShortcuts = () => window.removeEventListener('keydown', globalKeydown);
     });
 
     function beginQuest() { wizardStep = 'attune'; }
@@ -1187,6 +1206,7 @@
         unsubscribe();
         unsubscribeServer?.();
         unsubProvider?.();
+        cleanupShortcuts?.();
         if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer);
     });
 </script>
@@ -1445,6 +1465,9 @@
                     </button>
                     <button class="icon-btn settings-btn" onclick={() => showSettings = !showSettings} aria-label="Settings">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9"/><circle cx="16" cy="7" r="2.2"/><path d="M19 7h1"/><path d="M4 17h6"/><circle cx="13" cy="17" r="2.2"/><path d="M17 17h3"/></svg>
+                    </button>
+                    <button class="icon-btn shortcuts-btn" onclick={() => showShortcutsHelp = true} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>
                     </button>
                 </div>
             </header>
@@ -2408,8 +2431,7 @@
     {/if}
 
     <!-- Phase 32: thread detail popover — mirrors NPC/faction. -->
-    {#if threadDetailId && threadDetailData}
-        <div
+    {#if threadDetailId && threadDetailData}        <div
             class="modal-overlay npc-detail-overlay"
             role="button"
             tabindex="-1"
@@ -2444,6 +2466,32 @@
                         <p>{threadDetailData.description}</p>
                     </div>
                 {/if}
+            </div>
+        </div>
+    {/if}
+
+    <!-- Phase 33: keyboard shortcuts help modal. -->
+    {#if showShortcutsHelp}
+        <div
+            class="modal-overlay shortcuts-overlay"
+            role="button"
+            tabindex="-1"
+            onkeydown={(e) => { if (e.key === 'Escape') showShortcutsHelp = false; }}
+            onclick={(e) => { if (e.target === e.currentTarget) showShortcutsHelp = false; }}
+        >
+            <div class="shortcuts-card panel">
+                <header class="shortcuts-head">
+                    <h3>Keyboard</h3>
+                    <button class="icon-btn" onclick={() => showShortcutsHelp = false} aria-label="Close">✕</button>
+                </header>
+                <ul class="shortcuts-list">
+                    <li><kbd>Enter</kbd><span>Send action (respects whisper toggle)</span></li>
+                    <li><kbd>Shift</kbd>+<kbd>Enter</kbd><span>Send as whisper, regardless of toggle</span></li>
+                    <li><kbd>↑</kbd> / <kbd>↓</kbd><span>Cycle session action history (in action field)</span></li>
+                    <li><kbd>Esc</kbd><span>Close any open overlay / popover</span></li>
+                    <li><kbd>?</kbd><span>This help (ignored while typing)</span></li>
+                </ul>
+                <p class="shortcuts-tip">Click NPC / faction / thread names to inspect them. The status orb opens the roster.</p>
             </div>
         </div>
     {/if}
@@ -4423,6 +4471,64 @@
         text-align: left;
     }
     .npc-chip-btn:hover { background: rgba(0,0,0,0.08); }
+
+    /* Phase 33: keyboard shortcuts help modal. */
+    .shortcuts-overlay {
+        z-index: 130;
+        display: flex; align-items: center; justify-content: center;
+        padding: 1.5rem;
+    }
+    .shortcuts-card {
+        width: 100%; max-width: 380px;
+        padding: 1.1rem 1.2rem;
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        box-shadow: var(--shadow-lg);
+        animation: rise 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .shortcuts-head {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 0.8rem;
+        padding-bottom: 0.65rem;
+        border-bottom: 1px solid var(--line);
+    }
+    .shortcuts-head h3 {
+        margin: 0;
+        font-family: var(--font-serif);
+        font-size: 1.1rem;
+        color: var(--ink);
+    }
+    .shortcuts-list {
+        list-style: none; padding: 0; margin: 0;
+        display: flex; flex-direction: column; gap: 0.45rem;
+    }
+    .shortcuts-list li {
+        display: grid; grid-template-columns: 110px 1fr;
+        gap: 0.8rem; align-items: center;
+        font-size: 0.82rem; color: var(--ink);
+    }
+    .shortcuts-list kbd {
+        font-family: var(--font-sans);
+        font-size: 0.7rem;
+        padding: 0.12rem 0.4rem;
+        background: var(--surface-2);
+        border: 1px solid var(--line-strong);
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        color: var(--ink);
+        white-space: nowrap;
+        display: inline-block;
+        margin-right: 0.15rem;
+    }
+    .shortcuts-tip {
+        margin: 0.9rem 0 0;
+        padding-top: 0.7rem;
+        border-top: 1px dashed var(--line);
+        font-size: 0.74rem;
+        color: var(--ink-soft);
+        line-height: 1.5;
+    }
 
     /* ============ Phase 24: Mobile responsive audit ============
        Phone-class refinements (≤540px). The 768px block handles the
