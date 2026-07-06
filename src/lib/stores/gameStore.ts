@@ -119,7 +119,8 @@ export function createGameState(roomId: string) {
                     data.type === 'key-usage' ||
                     data.type === 'whisper-result' ||
                     data.type === 'whisper-error' ||
-                    data.type === 'whisper-status'
+                    data.type === 'whisper-status' ||
+                    data.type === 'engine-status'
                 ) {
                     serverEvents.set(data);
                 }
@@ -207,6 +208,16 @@ export function createGameState(roomId: string) {
         }
     }
 
+    // Phase 23: World Engine host controls. Server applies pause/resume
+    // immediately and broadcasts engine-status so all clients reflect state.
+    // tick-now forces an LLM-backed World Engine pass; step-time advances the
+    // world clock one bucket without spending a key cycle.
+    function engineControl(action: 'pause' | 'resume' | 'tick-now' | 'step-time') {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'engine-control', action }));
+        }
+    }
+
     function destroy() {
         try { provider.destroy(); } catch { /* noop */ }
         try { persistence.destroy(); } catch { /* noop */ }
@@ -217,7 +228,7 @@ export function createGameState(roomId: string) {
         awareness,
         yPendingActions, actionLock,
         serverEvents,
-        sendAction, registerKey, requestKeyUsage,
+        sendAction, registerKey, requestKeyUsage, engineControl,
         reportKeyExhausted, reportKeyHealthy, destroy
     };
 }

@@ -44,6 +44,10 @@ export class SignalingRoom {
     this.keyPool = new KeyPool();
     this.yDoc = new Y.Doc();
     this.alarmScheduled = false;
+    // Phase 23: host can pause/resume the World Engine alarm loop and force
+    // ticks. enginePaused stops runWorldEngine from running on alarm ticks;
+    // alarm is still scheduled so resume picks up cleanly.
+    this.enginePaused = false;
     this.batchWindow = null;     // timer id for the 5s action-flush window
     this.batchTimeoutMs = 5000;
     this.turnInFlight = false;
@@ -123,6 +127,13 @@ export class SignalingRoom {
     // Defer if a DM turn is in flight — the next alarm picks this up.
     if (this.turnInFlight) {
       try { await this.state.storage.setAlarm(Date.now() + 60_000); } catch {}
+      return;
+    }
+
+    // Phase 23: host pause — keep the alarm scheduled but skip the actual
+    // engine work. Resume picks up on the next tick.
+    if (this.enginePaused) {
+      try { await this.state.storage.setAlarm(Date.now() + 180_000); } catch {}
       return;
     }
 
@@ -281,6 +292,9 @@ export class SignalingRoom {
     };
 
     sendPresence();
+    // Phase 23: tell the new client whether the engine is currently paused
+    // so the host controls reflect the actual server state on connect.
+    ws.send(JSON.stringify({ type: 'engine-status', paused: this.enginePaused }));
 
     // First session in a previously-idle world re-arms the World Engine alarm.
     this.ensureAlarm();
@@ -404,6 +418,54 @@ export class SignalingRoom {
             }, this.batchTimeoutMs);
           }
           return;
+        }
+
+        // ----- Phase 23: World Engine host controls -----------------------
+        // Pause/resume the alarm loop, force a tick now, or step the world
+        // clock forward one bucket without invoking the model. All clients
+        // see engine-status so they reflect pause state correctly.
+        if (data.type === "engine-control") {
+          const action = data.action;
+          if (action === 'pause') {
+            this.enginePaused = true;
+            this.broadcast({ type: 'engine-status', paused: true });
+            return;
+          }
+          if (action === 'resume') {
+            this.enginePaused = false;
+            this.broadcast({ type: 'engine-status', paused: false });
+            // Re-arm the alarm so resume takes effect within seconds, not 3min.
+            this.ensureAlarm();
+            return;
+          }
+          if (action === 'tick-now') {
+            // Don't bypass pause from this control surface — host can resume
+            // first if they want a tick. But explicit force-tick while paused
+            // is reasonable as a "step once" tool, so we honor it.
+            this.runWorldEngine().catch(err => {
+              console.error('forced runWorldEngine error:', err);
+            });
+            return;
+          }
+          if (action === 'step-time') {
+            // Advance the world clock one tick without an LLM call. Useful
+            // when the host wants to nudge time forward without spending a
+            // key cycle or producing an ambient beat.
+            try {
+              const yCodex = this.yDoc.getMap('memoryCodex');
+              const cur = yCodex.get('world_clock') || { turn: 0, day: 1, time_of_day: 'morning' };
+              const next = tickWorldClock(cur);
+              this.yDoc.transact(() => {
+                yCodex.set('world_clock', next);
+              });
+              const merged = Y.encodeStateAsUpdate(this.yDoc);
+              await this.state.storage.put("yDocState", merged);
+              this.broadcast({ type: 'engine-status', paused: this.enginePaused, world_clock: next });
+            } catch (e) {
+              console.error('step-time error:', e);
+            }
+            return;
+          }
         }
       } catch (e) {
         console.error("Socket message error:", e);

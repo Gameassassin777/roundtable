@@ -11,7 +11,7 @@
     let roomId = $state("crossroads-1");
     let gameState = createGameState(roomId);
 
-    let { chatStore, addChatEntry, ydoc, provider, serverEvents, sendAction, registerKey, reportKeyExhausted } = gameState;
+    let { chatStore, addChatEntry, ydoc, provider, serverEvents, sendAction, registerKey, reportKeyExhausted, engineControl } = gameState;
 
     type ChatEntry = { author: string; text: string; type: 'player' | 'dm' | 'world' | 'whisper'; timestamp?: number };
     let chatLog = $state<ChatEntry[]>([]);
@@ -40,6 +40,7 @@
     let turnStageLabel = $state('');      // Phase 16: pipeline progress text
     let actionFieldEl = $state<HTMLInputElement | null>(null);  // Phase 11: focus/position cursor after template apply
     let inventoryAddName = $state('');   // Phase 20: bound to the inline inventory add input
+    let enginePaused = $state(false);   // Phase 23: World Engine alarm-loop pause state
     let showQTE = $state(false);
     let qteConfig = $state({ time_limit_ms: 1000, start_time: 0 });
     let currentSceneTags = $state({ biome: "crossroads", weather: "clear", mood: "unsettled" });
@@ -750,6 +751,7 @@
         sendAction = gameState.sendAction;
         registerKey = gameState.registerKey;
         reportKeyExhausted = gameState.reportKeyExhausted;
+        engineControl = gameState.engineControl;
 
         // Rebind live sync to the new room, keeping the handle so onDestroy
         // (and the next switch) can clean it up.
@@ -996,6 +998,9 @@
                 addLocalWhisper({ author: 'System', text: evt.message || 'The DM did not hear you.', type: 'whisper', timestamp: Date.now() });
             } else if (evt.type === 'whisper-status') {
                 // Optional UI hint; no state change required.
+            } else if (evt.type === 'engine-status') {
+                // Phase 23: pause reflects server truth, not local optimism.
+                enginePaused = !!(evt as any).paused;
             }
         });
     }
@@ -1474,6 +1479,32 @@
                                     <span class="clock-time">{(codexData.world_clock?.time_of_day || 'morning')}</span>
                                     <span class="clock-sep">·</span>
                                     <span class="clock-turn">Turn {codexData.world_clock?.turn || 0}</span>
+                                </div>
+
+                                <div class="engine-controls" title="World Engine host controls — pause the alarm loop, force a tick, or step time forward without an LLM call.">
+                                    <button
+                                        type="button"
+                                        class="engine-btn"
+                                        onclick={() => engineControl(enginePaused ? 'resume' : 'pause')}
+                                        aria-label={enginePaused ? 'Resume World Engine' : 'Pause World Engine'}
+                                    >
+                                        {enginePaused ? '▶ Resume' : '⏸ Pause'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="engine-btn"
+                                        onclick={() => engineControl('step-time')}
+                                        disabled={enginePaused}
+                                        aria-label="Step world clock forward one bucket"
+                                        title="Advance world clock one bucket (morning → midday → evening → night) without an LLM call."
+                                    >+Time</button>
+                                    <button
+                                        type="button"
+                                        class="engine-btn"
+                                        onclick={() => engineControl('tick-now')}
+                                        aria-label="Force a World Engine tick now"
+                                        title="Force the World Engine to run now — LLM-backed ambient beat + clock tick."
+                                    >Tick now</button>
                                 </div>
 
                                 {#if Object.keys(codexData.npcs || {}).length > 0}
@@ -2589,6 +2620,35 @@
     .clock-day { font-weight: 600; color: var(--accent); }
     .clock-sep { opacity: 0.4; }
     .clock-turn { opacity: 0.7; font-variant-numeric: tabular-nums; }
+
+    /* Phase 23: World Engine host controls — small, quiet row under the
+       world-clock chip. Anyone at the table can use them; co-op tool. */
+    .engine-controls {
+        display: flex; gap: 0.35rem; flex-wrap: wrap;
+        margin-bottom: 0.6rem;
+    }
+    .engine-btn {
+        font-family: var(--font-sans);
+        font-size: 0.66rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 0.3rem 0.55rem;
+        border-radius: var(--radius-pill);
+        border: 1px solid var(--line);
+        background: var(--surface-2);
+        color: var(--ink-soft);
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .engine-btn:hover:not(:disabled) {
+        background: var(--surface-3);
+        color: var(--ink);
+        border-color: var(--line-strong);
+    }
+    .engine-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
     .world-list { list-style: none; padding: 0; margin: 0.35rem 0 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; }
     .world-item {
         display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.5rem;
