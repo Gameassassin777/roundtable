@@ -58,6 +58,20 @@
     });
     function openNpcDetail(name: string) { npcDetailName = name; }
     function closeNpcDetail() { npcDetailName = null; }
+
+    // Phase 31: faction detail popover — mirrors NPC. Factions carry agenda,
+    // resources, disposition, tension, next_move_turn — buried in codex JSON
+    // without this surface.
+    let factionDetailName = $state<string | null>(null);
+    let factionDetailData = $derived.by(() => {
+        if (!factionDetailName) return null;
+        const facs = (codexData as any).factions || {};
+        const fac = facs[factionDetailName];
+        if (!fac) return null;
+        return { name: factionDetailName, ...(fac as any) };
+    });
+    function openFactionDetail(name: string) { factionDetailName = name; }
+    function closeFactionDetail() { factionDetailName = null; }
     // Phase 25: connection banner — show only after a 1.5s grace so brief
     // hiccups don't flash. Banner is non-blocking and dismisses on reconnect.
     let wsDisconnected = $state(false);
@@ -1467,9 +1481,15 @@
                         <div class="sit-segment sit-factions">
                             <span class="sit-label">In play</span>
                             {#each visibleFactions.slice(0, 3) as fac}
-                                <span class="sit-chip faction-chip">
+                                <button
+                                    type="button"
+                                    class="sit-chip faction-chip npc-chip-btn"
+                                    onclick={() => openFactionDetail(fac.name)}
+                                    aria-label={`Details for ${fac.name}`}
+                                    title="Open faction details"
+                                >
                                     <span class="chip-name">{fac.name}</span>
-                                </span>
+                                </button>
                             {/each}
                         </div>
                     {/if}
@@ -1684,7 +1704,15 @@
                                     <ul class="world-list faction-list">
                                         {#each Object.entries(codexData.factions) as [name, fac]}
                                             <li class="world-item">
-                                                <span class="world-name">{name}</span>
+                                                <span class="world-name">
+                                                    <button
+                                                        type="button"
+                                                        class="npc-detail-trigger"
+                                                        onclick={() => openFactionDetail(name)}
+                                                        aria-label={`Details for ${name}`}
+                                                        title="Open faction details"
+                                                    >{name}</button>
+                                                </span>
                                                 {#if (fac as any).type}<span class="world-sub">{(fac as any).type}</span>{/if}
                                                 {#if (fac as any).agenda}<span class="world-note">{(fac as any).agenda}</span>{/if}
                                             </li>
@@ -2305,6 +2333,47 @@
                     <div class="npc-detail-notes">
                         <h4>Notes</h4>
                         <p>{npcDetailData.notes}</p>
+                    </div>
+                {/if}
+            </div>
+        </div>
+    {/if}
+
+    <!-- Phase 31: faction detail popover — mirrors NPC. -->
+    {#if factionDetailName && factionDetailData}
+        <div
+            class="modal-overlay npc-detail-overlay"
+            role="button"
+            tabindex="-1"
+            onkeydown={(e) => { if (e.key === 'Escape') closeFactionDetail(); }}
+            onclick={(e) => { if (e.target === e.currentTarget) closeFactionDetail(); }}
+        >
+            <div class="npc-detail-card panel">
+                <header class="npc-detail-head">
+                    <div class="npc-detail-id">
+                        <h3>{factionDetailData.name}</h3>
+                        {#if factionDetailData.type}<span class="npc-detail-role">{factionDetailData.type}</span>{/if}
+                    </div>
+                    <button class="icon-btn" onclick={closeFactionDetail} aria-label="Close">✕</button>
+                </header>
+                <dl class="npc-detail-grid">
+                    {#if typeof factionDetailData.resources === 'number'}
+                        <div class="detail-row"><dt>Resources</dt><dd>{factionDetailData.resources}</dd></div>
+                    {/if}
+                    {#if factionDetailData.disposition !== undefined}
+                        <div class="detail-row"><dt>Disposition</dt><dd>{factionDetailData.disposition}</dd></div>
+                    {/if}
+                    {#if typeof factionDetailData.tension === 'number'}
+                        <div class="detail-row"><dt>Tension</dt><dd>{factionDetailData.tension}</dd></div>
+                    {/if}
+                    {#if typeof factionDetailData.next_move_turn === 'number'}
+                        <div class="detail-row"><dt>Next move</dt><dd>Turn {factionDetailData.next_move_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>
+                    {/if}
+                </dl>
+                {#if factionDetailData.agenda}
+                    <div class="npc-detail-notes">
+                        <h4>Agenda</h4>
+                        <p>{factionDetailData.agenda}</p>
                     </div>
                 {/if}
             </div>
