@@ -162,6 +162,76 @@
         return Object.entries(facs).map(([name, v]: any) => ({ name, ...v }));
     });
 
+    // Phase 28: encounter difficulty meter — derived heuristic from present
+    // NPCs' dispositions, party vitals, and imminent threads. NOT authoritative;
+    // just a quick read so the host can calibrate and the player gets a feel
+    // for the situation without prose-dragging.
+    let encounterDifficulty = $derived.by(() => {
+        const npcs = presentNpcs as any[];
+        const party = (codexData as any).party || {};
+        const partyArr = Object.values(party) as any[];
+        if (partyArr.length === 0 && npcs.length === 0) {
+            return { score: null as number | null, band: 'unknown', label: '—', explanation: 'No party and no NPCs in scope.' };
+        }
+
+        let score = 0;
+        const explanation: string[] = [];
+
+        let hostile = 0;
+        let wary = 0;
+        for (const npc of npcs) {
+            const d = String(npc.disposition || '').toLowerCase();
+            if (/(hostile|enemy|vengeful|wrathful)/.test(d)) { hostile += 1; }
+            else if (/(wary|suspicious|cool|uneasy|grim)/.test(d)) { wary += 1; }
+        }
+        if (hostile > 0) { score += hostile; explanation.push(`${hostile} hostile NPC${hostile === 1 ? '' : 's'}`); }
+        if (wary > 0) { score += wary * 0.5; explanation.push(`${wary} wary NPC${wary === 1 ? '' : 's'}`); }
+
+        // Imminent threads push the read up.
+        const imminent = activeThreads.filter((t: any) => t.turnsUntilLands !== null && t.turnsUntilLands <= 3 && t.turnsUntilLands >= 0);
+        if (imminent.length > 0) {
+            score += imminent.length;
+            explanation.push(`${imminent.length} imminent thread${imminent.length === 1 ? '' : 's'}`);
+        }
+
+        // Party vitals adjust the read — beat-up party reads worse.
+        if (partyArr.length > 0) {
+            let hpSum = 0, hpMaxSum = 0, resolveSum = 0;
+            for (const p of partyArr) {
+                const hp = Number(p.hp) || 0;
+                const m = Number(p.max_hp) || 1;
+                const r = Number(p.resolve) || 0;
+                hpSum += hp; hpMaxSum += m; resolveSum += r;
+            }
+            const hpFrac = hpMaxSum > 0 ? hpSum / hpMaxSum : 1;
+            const resolveAvg = partyArr.length > 0 ? resolveSum / partyArr.length : 0;
+            if (hpFrac < 0.3) { score += 2; explanation.push('party badly wounded'); }
+            else if (hpFrac < 0.6) { score += 1; explanation.push('party bruised'); }
+            else if (hpFrac > 0.85) { score -= 1; explanation.push('party fresh'); }
+            if (resolveAvg < 30) { score += 1; explanation.push('resolve brittle'); }
+            else if (resolveAvg > 70) { score -= 1; explanation.push('resolve steady'); }
+        }
+
+        // Numeric party size advantage
+        if (partyArr.length > hostile + wary) { score -= 1; }
+        if (hostile > partyArr.length && partyArr.length > 0) { score += 1; explanation.push('outnumbered'); }
+
+        const rounded = Math.round(score);
+        let band: string, label: string;
+        if (rounded <= 0) { band = 'trivial'; label = 'Trivial'; }
+        else if (rounded <= 2) { band = 'manageable'; label = 'Manageable'; }
+        else if (rounded <= 4) { band = 'risky'; label = 'Risky'; }
+        else if (rounded <= 6) { band = 'dire'; label = 'Dire'; }
+        else { band = 'lethal'; label = 'Lethal'; }
+
+        return {
+            score: rounded,
+            band,
+            label,
+            explanation: explanation.length ? explanation.join(' · ') : 'No pressure signals.'
+        };
+    });
+
     // One-line summary used by the ActionBrief ghost text when the player
     // focuses the action input. Grounds the action in the live scene.
     let situationLine = $derived.by(() => {
@@ -1396,6 +1466,17 @@
                                     {/if}
                                 </span>
                             {/each}
+                        </div>
+                    {/if}
+
+                    {#if encounterDifficulty.score !== null}
+                        <div
+                            class="sit-segment sit-threat threat-{encounterDifficulty.band}"
+                            title={encounterDifficulty.explanation}
+                        >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 6 6 .8-4.5 4.2 1.2 6L12 16l-5.7 3 1.2-6L3 8.8 9 8z"/></svg>
+                            <span class="sit-label">Read</span>
+                            <span class="sit-value threat-value">{encounterDifficulty.label}</span>
                         </div>
                     {/if}
                 </div>
@@ -2954,6 +3035,29 @@
     .npc-chip[data-disp*="neutral"] { background: rgba(0,0,0,0.04); }
 
     .thread-chip { background: rgba(0,0,0,0.04); }
+
+    /* Phase 28: encounter difficulty read — color-coded band chip. */
+    .sit-threat {
+        margin-left: auto;
+        padding: 0.28rem 0.55rem;
+        border-radius: var(--radius-pill);
+        border: 1px solid var(--line);
+        background: var(--surface-2);
+        font-weight: 600;
+    }
+    .sit-threat .threat-value { font-weight: 700; }
+    .sit-threat.trivial { color: #4a6a4a; border-color: rgba(80, 130, 70, 0.3); background: rgba(180, 220, 170, 0.18); }
+    .sit-threat.manageable { color: #5a6a3a; border-color: rgba(120, 140, 70, 0.3); background: rgba(220, 220, 170, 0.18); }
+    .sit-threat.risky { color: #8a6a1a; border-color: rgba(180, 140, 50, 0.35); background: rgba(240, 200, 110, 0.22); }
+    .sit-threat.dire { color: #8a3a1a; border-color: rgba(180, 70, 40, 0.4); background: rgba(240, 140, 90, 0.22); }
+    .sit-threat.lethal {
+        color: #6a1212;
+        border-color: rgba(160, 30, 30, 0.5);
+        background: rgba(220, 90, 90, 0.28);
+        animation: threadPulse 1.6s ease-in-out infinite;
+    }
+    .sit-threat.unknown { color: var(--ink-soft); }
+
     .thread-active {
         background: rgba(140, 47, 47, 0.10);
         border-color: rgba(140, 47, 47, 0.22);
