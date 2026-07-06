@@ -193,6 +193,46 @@
     // action text, action authors, and world-beat text. Reset when the
     // drawer closes. Filters the rendered list; doesn't touch the source.
     let chronicleSearch = $state('');
+    // Phase 40: codex sidebar World-section search — same idea, smaller
+    // surface. Hides non-matching NPC/faction/thread/party entries. Empty
+    // by default so the unfiltered view is what you see first.
+    let worldSearch = $state('');
+    let worldQuery = $derived(worldSearch.trim().toLowerCase());
+    let filteredNpcs = $derived.by(() => {
+        const q = worldQuery;
+        const entries = Object.entries((codexData as any).npcs || {});
+        if (!q) return entries;
+        return entries.filter(([name, val]: [string, any]) =>
+            name.toLowerCase().includes(q)
+            || (val?.role || '').toLowerCase().includes(q)
+            || (val?.location || '').toLowerCase().includes(q)
+        );
+    });
+    let filteredFactions = $derived.by(() => {
+        const q = worldQuery;
+        const entries = Object.entries((codexData as any).factions || {});
+        if (!q) return entries;
+        return entries.filter(([name, val]: [string, any]) =>
+            name.toLowerCase().includes(q)
+            || (val?.type || '').toLowerCase().includes(q)
+            || (val?.agenda || '').toLowerCase().includes(q)
+        );
+    });
+    let filteredThreads = $derived.by(() => {
+        const q = worldQuery;
+        const list = (codexData as any).threads || [];
+        const filtered = list.filter((t: any) => t.status === 'active' || t.status === 'landed');
+        if (!q) return filtered;
+        return filtered.filter((t: any) =>
+            (t.name || '').toLowerCase().includes(q)
+            || (t.description || '').toLowerCase().includes(q)
+        );
+    });
+    let filteredPartyRoster = $derived.by(() => {
+        const q = worldQuery;
+        if (!q) return partyRoster;
+        return partyRoster.filter((n: string) => n.toLowerCase().includes(q));
+    });
     let filteredChronicleItems = $derived.by(() => {
         const q = chronicleSearch.trim().toLowerCase();
         if (!q) return chronicleItems;
@@ -1753,7 +1793,7 @@
                             <div class="codex-section party-roster-section">
                                 <h3>Party</h3>
                                 <ul class="world-list party-list">
-                                    {#each partyRoster as name}
+                                    {#each filteredPartyRoster as name}
                                         {@const member = (codexData as any).party[name] || {}}
                                         {@const hpPct = member.max_hp ? Math.max(0, Math.min(100, (member.hp / member.max_hp) * 100)) : 0}
                                         <li class="world-item party-roster-item">
@@ -1835,9 +1875,24 @@
                                     {/if}
                                 </div>
 
+                                {#if Object.keys(codexData.npcs || {}).length > 0 || Object.keys(codexData.factions || {}).length > 0 || (codexData.threads || []).length > 0 || partyRoster.length > 0}
+                                    <div class="world-search-row">
+                                        <input
+                                            type="text"
+                                            class="world-search"
+                                            bind:value={worldSearch}
+                                            placeholder="Filter NPCs, factions, threads, party…"
+                                            aria-label="Filter world entries"
+                                        />
+                                        {#if worldSearch}
+                                            <button type="button" class="world-search-clear" onclick={() => { worldSearch = ''; }} aria-label="Clear filter">✕</button>
+                                        {/if}
+                                    </div>
+                                {/if}
+
                                 {#if Object.keys(codexData.npcs || {}).length > 0}
                                     <ul class="world-list npc-list">
-                                        {#each Object.entries(codexData.npcs) as [name, npc]}
+                                        {#each filteredNpcs as [name, npc]}
                                             <li class="world-item">
                                                 {#if scenePortraitsEnabled}
                                                     <img class="npc-portrait" src={npcPortraitUrl(name, npc)} alt={name} loading="lazy" />
@@ -1863,7 +1918,7 @@
 
                                 {#if Object.keys(codexData.factions || {}).length > 0}
                                     <ul class="world-list faction-list">
-                                        {#each Object.entries(codexData.factions) as [name, fac]}
+                                        {#each filteredFactions as [name, fac]}
                                             <li class="world-item">
                                                 <span class="world-name">
                                                     <button
@@ -1881,9 +1936,9 @@
                                     </ul>
                                 {/if}
 
-                                {#if (codexData.threads || []).filter((t: any) => t.status === 'active' || t.status === 'landed').length > 0}
+                                {#if filteredThreads.length > 0}
                                     <ul class="world-list thread-list">
-                                        {#each (codexData.threads || []).filter((t: any) => t.status === 'active' || t.status === 'landed') as t}
+                                        {#each filteredThreads as t}
                                             <li class="world-item thread-{t.status}">
                                                 <span class="world-name">
                                                     <button
@@ -3448,6 +3503,46 @@
         border-color: rgba(138, 74, 26, 0.25);
     }
     .world-list { list-style: none; padding: 0; margin: 0.35rem 0 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; }
+
+    /* Phase 40: world-search row — small filter input above the world
+       lists. Sticky inside the codex sidebar's scroll area so the filter
+       stays visible while scrolling a long NPC list. */
+    .world-search-row {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        margin: 0.5rem 0 0.2rem;
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: var(--surface);
+        padding: 0.25rem 0;
+    }
+    .world-search {
+        flex: 1;
+        font: inherit;
+        font-size: 0.78rem;
+        font-family: var(--font-sans);
+        padding: 0.35rem 0.55rem;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        color: var(--ink);
+    }
+    .world-search:focus {
+        outline: none;
+        border-color: var(--accent);
+    }
+    .world-search-clear {
+        background: rgba(0,0,0,0.06);
+        border: none;
+        cursor: pointer;
+        padding: 0.25rem 0.45rem;
+        font-size: 0.7rem;
+        border-radius: 4px;
+        color: var(--ink-soft);
+    }
+    .world-search-clear:hover { background: rgba(0,0,0,0.1); color: var(--ink); }
     .world-item {
         display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.5rem;
         align-items: baseline; padding: 0.3rem 0.4rem;
