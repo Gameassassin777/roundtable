@@ -176,6 +176,61 @@
         if (forged) forged = withPortrait(forged);
     }
 
+    // Phase 4: Scene portraits — Pollinations scene image that reflects the live
+    // scene_tags + world_clock. URL is deterministic from a hash of the scene so
+    // it doesn't re-roll on every state update; only changes when the scene
+    // actually changes. Cached by the browser for the (scene-hash) URL.
+    let scenePortraitsEnabled = $state(localStorage.getItem('rt_scene_portraits') === '1');
+    function hashSceneStr(s: string): number {
+        let h = 2166136261 >>> 0;
+        for (let i = 0; i < s.length; i++) {
+            h ^= s.charCodeAt(i);
+            h = Math.imul(h, 16777619);
+        }
+        return h >>> 0;
+    }
+    let scenePortraitUrl = $derived.by(() => {
+        const tags = (codexData as any).scene_tags || {};
+        const wc = (codexData as any).world_clock || {};
+        const parts: string[] = ['fantasy landscape'];
+        if (tags.biome) parts.push(tags.biome);
+        if (tags.weather && tags.weather !== 'clear') parts.push(tags.weather);
+        if (tags.mood) parts.push(`${tags.mood} mood`);
+        const tod = wc.time_of_day || 'morning';
+        parts.push(`${tod} light`);
+        parts.push('painterly atmospheric cinematic no characters no text');
+        const prompt = parts.join(', ');
+        const key = `${tags.biome || ''}|${tags.weather || ''}|${tags.mood || ''}|${tod}`;
+        const seed = hashSceneStr(key);
+        return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=512&seed=${seed}&nologo=true&model=flux`;
+    });
+    // Track the URL currently shown so we can fade between scene changes without
+    // flashing the previous image. {#key} would unmount/remount; layered <img>
+    // with opacity transitions is smoother.
+    let scenePortraitShown = $state('');
+    let scenePortraitLoading = $state(false);
+    let lastAppliedSceneUrl = '';
+    // Effect: when derived URL changes (and feature is enabled), kick off a load.
+    $effect(() => {
+        const url = scenePortraitUrl;
+        if (!scenePortraitsEnabled) { scenePortraitShown = ''; return; }
+        if (url === lastAppliedSceneUrl) return;
+        lastAppliedSceneUrl = url;
+        scenePortraitLoading = true;
+        const img = new Image();
+        img.onload = () => {
+            scenePortraitShown = url;
+            scenePortraitLoading = false;
+        };
+        img.onerror = () => { scenePortraitLoading = false; };
+        img.src = url;
+    });
+    function toggleScenePortraits() {
+        scenePortraitsEnabled = !scenePortraitsEnabled;
+        localStorage.setItem('rt_scene_portraits', scenePortraitsEnabled ? '1' : '0');
+        if (!scenePortraitsEnabled) scenePortraitShown = '';
+    }
+
     let characterSelected = $state(false);
     let characterName = $state('');
     let selectedArc = $state('warrior');
@@ -598,6 +653,19 @@
     <div class="canvas-container">
         <CinematicDiorama sceneTags={currentSceneTags} />
     </div>
+
+    <!-- Phase 4: Scene portrait backdrop (Pollinations, fades in over diorama) -->
+    {#if scenePortraitsEnabled && scenePortraitShown}
+        <div class="scene-portrait-layer">
+            <img src={scenePortraitShown} alt="" />
+            <div class="scene-portrait-veil"></div>
+        </div>
+    {/if}
+    {#if scenePortraitsEnabled && scenePortraitLoading}
+        <div class="scene-portrait-loading">
+            <span class="mini-spinner"></span>
+        </div>
+    {/if}
 
     {#if !(isReady && characterSelected)}
         <!-- ============ ONBOARDING WIZARD ============ -->
@@ -1079,6 +1147,15 @@
                             <button type="button" class="share-chip" class:selected={keySharePolicy === val} onclick={() => keySharePolicy = val as any} title={title}>{label}</button>
                         {/each}
                     </div>
+                </div>
+
+                <div class="field">
+                    <span class="field-label">Presentation</span>
+                    <label class="toggle-row">
+                        <input type="checkbox" checked={scenePortraitsEnabled} onchange={toggleScenePortraits} />
+                        <span class="toggle-label">Scene portraits</span>
+                        <span class="field-help">AI-generated backdrop that reflects the live scene. Uses free Pollinations images (no key, no account).</span>
+                    </label>
                 </div>
 
                 <button class="btn-primary wide" onclick={saveSettings}>Save</button>
@@ -1903,6 +1980,69 @@
 
     .action-row { display: flex; gap: 0.6rem; }
     .action-field { flex: 1; font-size: 1rem; }
+
+    /* Phase 4: Scene portrait backdrop */
+    .scene-portrait-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        opacity: 0;
+        animation: portraitFade 1.6s ease-out forwards;
+    }
+    .scene-portrait-layer img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        filter: saturate(0.85) brightness(0.92);
+    }
+    .scene-portrait-veil {
+        position: absolute;
+        inset: 0;
+        background:
+            radial-gradient(ellipse at center, rgba(0,0,0,0) 0%, rgba(0,0,0,0.25) 75%, rgba(0,0,0,0.55) 100%),
+            linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.35) 100%);
+    }
+    @keyframes portraitFade {
+        from { opacity: 0; }
+        to { opacity: 0.85; }
+    }
+    .scene-portrait-loading {
+        position: absolute;
+        bottom: 1rem;
+        right: 1rem;
+        z-index: 2;
+        opacity: 0.5;
+        pointer-events: none;
+    }
+
+    /* Phase 4: Settings toggle row */
+    .toggle-row {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        grid-template-rows: auto auto;
+        gap: 0.15rem 0.7rem;
+        align-items: center;
+        cursor: pointer;
+    }
+    .toggle-row input[type="checkbox"] {
+        width: 16px; height: 16px;
+        accent-color: var(--accent);
+        margin: 0;
+    }
+    .toggle-label {
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: var(--ink);
+    }
+    .toggle-row .field-help {
+        grid-column: 2 / 3;
+        font-size: 0.72rem;
+        opacity: 0.65;
+        line-height: 1.35;
+    }
     .act-go {
         width: 52px; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;
