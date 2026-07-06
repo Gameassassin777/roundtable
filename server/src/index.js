@@ -586,7 +586,10 @@ export class SignalingRoom {
       narration: turn.narration,
       scene_tags: turn.scene_tags || null,
       ui_update: turn.ui_update || null,
-      world_clock: newClock
+      world_clock: newClock,
+      pipeline: turn.pipeline || null,
+      lint_passed: turn.lint_passed,
+      lint_retried: turn.lint_retried
     });
 
     // Persist updated doc
