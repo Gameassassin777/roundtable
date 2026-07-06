@@ -792,16 +792,42 @@
         } else {
             next[key] = Math.max(0, Math.min(100, (cur[key] ?? 0) + delta));
         }
+
+        // Phase 19: death's door. Stamp or clear the 'downed' condition as HP
+        // crosses 0. Append/remove from permanent_conditions without dupes.
+        const prevConds: string[] = Array.isArray(cur.permanent_conditions) ? cur.permanent_conditions.slice() : [];
+        const hadDowned = prevConds.includes('downed');
+        const isDowned = key === 'hp' && next.hp === 0;
+        let downedChanged = false;
+        if (isDowned && !hadDowned) {
+            next.permanent_conditions = [...prevConds, 'downed'];
+            downedChanged = true;
+        } else if (!isDowned && key === 'hp' && hadDowned && next.hp > 0) {
+            next.permanent_conditions = prevConds.filter(c => c !== 'downed');
+            downedChanged = true;
+        }
+
         party[name] = next;
         ydoc.transact(() => {
             yCodex.set('party', party);
             const yChat = (ydoc as any).getArray('chatLog');
-            yChat.push([{
-                author: 'System',
-                text: `${name === characterName ? 'You' : name}: ${key === 'hp' ? 'Vitality' : key.charAt(0).toUpperCase() + key.slice(1)} ${delta > 0 ? '+' : ''}${delta} (manual override)`,
-                type: 'world',
-                timestamp: Date.now()
-            }]);
+            const notes: string[] = [];
+            notes.push(`${name === characterName ? 'You' : name}: ${key === 'hp' ? 'Vitality' : key.charAt(0).toUpperCase() + key.slice(1)} ${delta > 0 ? '+' : ''}${delta} (manual override)`);
+            if (downedChanged) {
+                if (isDowned) {
+                    notes.push(`${name === characterName ? 'You have' : `${name} has`} fallen — death's door.`);
+                } else if (key === 'hp' && next.hp > 0) {
+                    notes.push(`${name === characterName ? 'You' : name} steadies — back on ${name === characterName ? 'your' : 'their'} feet.`);
+                }
+            }
+            for (const t of notes) {
+                yChat.push([{
+                    author: 'System',
+                    text: t,
+                    type: 'world',
+                    timestamp: Date.now()
+                }]);
+            }
         });
     }
 
