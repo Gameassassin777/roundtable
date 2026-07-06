@@ -115,7 +115,10 @@ export function createGameState(roomId: string) {
                     data.type === 'turn-result' ||
                     data.type === 'turn-error' ||
                     data.type === 'action-accepted' ||
-                    data.type === 'key-usage'
+                    data.type === 'key-usage' ||
+                    data.type === 'whisper-result' ||
+                    data.type === 'whisper-error' ||
+                    data.type === 'whisper-status'
                 ) {
                     serverEvents.set(data);
                 }
