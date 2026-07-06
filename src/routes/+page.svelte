@@ -774,6 +774,36 @@
         });
     }
 
+    // Phase 15: manual codex override. AI sometimes tracks HP wrong; the host
+    // (or any player editing themselves) needs a way to fix it without writing
+    // an in-character action. Writes through Yjs so all clients sync. The
+    // override is tagged in the chronicle so it's clear this didn't come from
+    // the AI pipeline.
+    function overrideStat(name: string, key: 'hp' | 'resolve' | 'corruption', delta: number) {
+        if (!name) return;
+        const yCodex = (ydoc as any).getMap('memoryCodex');
+        const party = yCodex.get('party') || {};
+        const cur = (party[name] || {}) as any;
+        const next = { ...cur };
+        if (key === 'hp') {
+            const max = cur.max_hp || 15;
+            next.hp = Math.max(0, Math.min(max, (cur.hp ?? max) + delta));
+        } else {
+            next[key] = Math.max(0, Math.min(100, (cur[key] ?? 0) + delta));
+        }
+        party[name] = next;
+        ydoc.transact(() => {
+            yCodex.set('party', party);
+            const yChat = (ydoc as any).getArray('chatLog');
+            yChat.push([{
+                author: 'System',
+                text: `${name === characterName ? 'You' : name}: ${key === 'hp' ? 'Vitality' : key.charAt(0).toUpperCase() + key.slice(1)} ${delta > 0 ? '+' : ''}${delta} (manual override)`,
+                type: 'world',
+                timestamp: Date.now()
+            }]);
+        });
+    }
+
     // Phase 11: drop a verb stem into the action field and focus. Pure UX —
     // no AI hint, no semantic change. Player still has to complete and submit.
     function applyTemplate(tpl: { stem: string; cursor_at_end: boolean }) {
@@ -1219,15 +1249,36 @@
 
                     <div class="sidebar-body">
                         <div class="stat-group">
-                            <div class="stat-label-row"><span>Vitality</span><span class="val hp-val">{myCharacter.hp} / {myCharacter.max_hp}</span></div>
+                            <div class="stat-label-row">
+                                <span>Vitality</span>
+                                <div class="stat-override">
+                                    <button type="button" class="stat-btn" onclick={() => overrideStat(characterName, 'hp', -1)} aria-label="Lose 1 vitality" title="−1 vitality">−1</button>
+                                    <span class="val hp-val">{myCharacter.hp} / {myCharacter.max_hp}</span>
+                                    <button type="button" class="stat-btn" onclick={() => overrideStat(characterName, 'hp', 1)} aria-label="Gain 1 vitality" title="+1 vitality">+1</button>
+                                </div>
+                            </div>
                             <div class="progress-bar"><div class="fill hp" style="width: {(myCharacter.hp / myCharacter.max_hp) * 100}%"></div></div>
                         </div>
                         <div class="stat-group">
-                            <div class="stat-label-row"><span>Resolve</span><span class="val resolve-val">{myCharacter.resolve}%</span></div>
+                            <div class="stat-label-row">
+                                <span>Resolve</span>
+                                <div class="stat-override">
+                                    <button type="button" class="stat-btn" onclick={() => overrideStat(characterName, 'resolve', -5)} aria-label="−5 resolve" title="−5 resolve">−5</button>
+                                    <span class="val resolve-val">{myCharacter.resolve}%</span>
+                                    <button type="button" class="stat-btn" onclick={() => overrideStat(characterName, 'resolve', 5)} aria-label="+5 resolve" title="+5 resolve">+5</button>
+                                </div>
+                            </div>
                             <div class="progress-bar"><div class="fill resolve" style="width: {myCharacter.resolve}%"></div></div>
                         </div>
                         <div class="stat-group">
-                            <div class="stat-label-row"><span>Corruption</span><span class="val corruption-val">{myCharacter.corruption}%</span></div>
+                            <div class="stat-label-row">
+                                <span>Corruption</span>
+                                <div class="stat-override">
+                                    <button type="button" class="stat-btn" onclick={() => overrideStat(characterName, 'corruption', -5)} aria-label="−5 corruption" title="−5 corruption">−5</button>
+                                    <span class="val corruption-val">{myCharacter.corruption}%</span>
+                                    <button type="button" class="stat-btn" onclick={() => overrideStat(characterName, 'corruption', 5)} aria-label="+5 corruption" title="+5 corruption">+5</button>
+                                </div>
+                            </div>
                             <div class="progress-bar"><div class="fill corruption" style="width: {myCharacter.corruption}%"></div></div>
                         </div>
 
@@ -2229,11 +2280,38 @@
     .stat-label-row {
         display: flex;
         justify-content: space-between;
+        align-items: center;
         font-size: 0.76rem;
         font-weight: 500;
         color: var(--ink-soft);
     }
     .stat-label-row .val { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .stat-override {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+    .stat-btn {
+        font-family: var(--font);
+        font-size: 0.66rem;
+        font-weight: 600;
+        padding: 0.1rem 0.4rem;
+        line-height: 1.2;
+        background: var(--surface);
+        color: var(--ink);
+        opacity: 0.6;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        cursor: pointer;
+        transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+        font-variant-numeric: tabular-nums;
+    }
+    .stat-btn:hover {
+        opacity: 1;
+        border-color: var(--accent);
+        background: rgba(140, 47, 47, 0.06);
+    }
+    .stat-btn:active { transform: translateY(1px); }
     .hp-val { color: var(--hp); }
     .resolve-val { color: var(--resolve); }
     .corruption-val { color: var(--corruption); }
