@@ -225,6 +225,7 @@ export function createGameState(roomId: string) {
 
     return {
         chatStore, addChatEntry, ydoc, provider, persistence,
+        providerStore,
         awareness,
         yPendingActions, actionLock,
         serverEvents,

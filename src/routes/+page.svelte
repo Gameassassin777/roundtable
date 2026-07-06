@@ -11,7 +11,7 @@
     let roomId = $state("crossroads-1");
     let gameState = createGameState(roomId);
 
-    let { chatStore, addChatEntry, ydoc, provider, serverEvents, sendAction, registerKey, reportKeyExhausted, engineControl } = gameState;
+    let { chatStore, addChatEntry, ydoc, provider, providerStore, serverEvents, sendAction, registerKey, reportKeyExhausted, engineControl } = gameState;
 
     type ChatEntry = { author: string; text: string; type: 'player' | 'dm' | 'world' | 'whisper'; timestamp?: number };
     let chatLog = $state<ChatEntry[]>([]);
@@ -41,6 +41,10 @@
     let actionFieldEl = $state<HTMLInputElement | null>(null);  // Phase 11: focus/position cursor after template apply
     let inventoryAddName = $state('');   // Phase 20: bound to the inline inventory add input
     let enginePaused = $state(false);   // Phase 23: World Engine alarm-loop pause state
+    // Phase 25: connection banner — show only after a 1.5s grace so brief
+    // hiccups don't flash. Banner is non-blocking and dismisses on reconnect.
+    let wsDisconnected = $state(false);
+    let wsDisconnectTimer: any = null;
     let showQTE = $state(false);
     let qteConfig = $state({ time_limit_ms: 1000, start_time: 0 });
     let currentSceneTags = $state({ biome: "crossroads", weather: "clear", mood: "unsettled" });
@@ -491,6 +495,7 @@
 
     let unsubscribe = subscribeChat();
     let unsubscribeServer = subscribeServerEvents();
+    let unsubProvider: any = null;
     let activePeers = $state(0);
     let tableRoster = $state<string[]>([]);
     let rosterOpen = $state(false);
@@ -519,6 +524,20 @@
 
         // If no peer event fires shortly, settle the badge to "Solo".
         setTimeout(() => { if (connectionStatus === "Connecting") connectionStatus = "Solo"; }, 2500);
+
+        // Phase 25: subscribe to providerStore for connection banner. We
+        // only show the banner after a 1.5s grace so brief blips don't
+        // flash — long disconnects are the ones worth surfacing.
+        unsubProvider = providerStore.subscribe((p: any) => {
+            if (p.status === 'disconnected') {
+                if (!wsDisconnectTimer) {
+                    wsDisconnectTimer = setTimeout(() => { wsDisconnected = true; }, 1500);
+                }
+            } else {
+                if (wsDisconnectTimer) { clearTimeout(wsDisconnectTimer); wsDisconnectTimer = null; }
+                wsDisconnected = false;
+            }
+        });
     });
 
     function beginQuest() { wizardStep = 'attune'; }
@@ -1042,10 +1061,21 @@
         gameState.destroy();
         unsubscribe();
         unsubscribeServer?.();
+        unsubProvider?.();
+        if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer);
     });
 </script>
 
 <main>
+    <!-- Phase 25: Connection banner — non-blocking, appears only after a
+         1.5s grace so brief blips don't flash. Auto-dismisses on reconnect. -->
+    {#if wsDisconnected}
+        <div class="conn-banner" role="status" aria-live="polite">
+            <span class="conn-pulse"></span>
+            <span class="conn-text">Rejoining the world — your actions and the DM's last beat are preserved.</span>
+        </div>
+    {/if}
+
     <!-- Background diorama (in-game atmosphere) -->
     <div class="canvas-container">
         <CinematicDiorama sceneTags={currentSceneTags} />
@@ -3795,6 +3825,49 @@
     .chronicle-btn.active {
         color: var(--accent);
         background: var(--surface-3);
+    }
+
+    /* Phase 25: Connection banner — top-center, non-blocking, quiet. */
+    .conn-banner {
+        position: fixed;
+        top: 0.8rem;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 90;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.5rem 0.9rem;
+        background: rgba(28, 22, 17, 0.88);
+        color: #f5ecda;
+        font-family: var(--font-sans);
+        font-size: 0.78rem;
+        border-radius: var(--radius-pill);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+        max-width: 92vw;
+        animation: connSlide 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes connSlide {
+        from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+        to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    .conn-pulse {
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: #d29a3a;
+        box-shadow: 0 0 0 0 rgba(210, 154, 58, 0.6);
+        animation: connPulse 1.4s infinite;
+        flex-shrink: 0;
+    }
+    @keyframes connPulse {
+        0% { box-shadow: 0 0 0 0 rgba(210, 154, 58, 0.55); }
+        70% { box-shadow: 0 0 0 7px rgba(210, 154, 58, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(210, 154, 58, 0); }
+    }
+    .conn-text { line-height: 1.35; }
+
+    @media (max-width: 540px) {
+        .conn-banner { font-size: 0.72rem; padding: 0.45rem 0.7rem; top: 0.5rem; }
     }
 
     /* ============ Phase 24: Mobile responsive audit ============
