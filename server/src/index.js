@@ -462,7 +462,8 @@ export class SignalingRoom {
             ui_update: ruling.qte ? { qte: ruling.qte } : null,
             new_codex: ruling.codex_writes || {},
             lint_passed: lint.passes,
-            lint_retried: retried
+            lint_retried: retried,
+            pipeline: 'director-dm'
           };
         }
       }
@@ -494,7 +495,8 @@ export class SignalingRoom {
         new_codex: fbParsed.new_codex || {},
         lint_passed: null,
         lint_retried: false,
-        fallback: true
+        fallback: true,
+        pipeline: 'phase0-fallback'
       };
     }
 
