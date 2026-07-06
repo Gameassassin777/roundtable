@@ -7,6 +7,7 @@
     import { forgeCharacter, forgeConverse, type ForgedCharacter, type ForgeMessage } from '$lib/ai/soulForge';
     import { ADVENTURE_SEEDS, type AdventureSeed } from '$lib/adventureSeeds';
     import { ACTION_TEMPLATES } from '$lib/actionTemplates';
+    import * as sfx from '$lib/audio/sfx';
 
     let roomId = $state("crossroads-1");
     let gameState = createGameState(roomId);
@@ -128,6 +129,9 @@
     let keySharePolicy = $state<'table' | 'solo' | 'host'>(
         (localStorage.getItem('rt_share_policy') as any) || 'table'
     );
+    // Phase 44: audio settings. Initialized from localStorage via sfx module.
+    let audioMuted = $state(false);
+    let audioVolume = $state(0.4);
 
     // UI states
     let showCodexMobile = $state(false);
@@ -719,6 +723,7 @@
                     lastQteId = q.id;
                     qteConfig = { time_limit_ms: q.time_limit_ms || 1000, start_time: q.start_time };
                     showQTE = true;
+                    sfx.play('qte-start');
                 }
             }
         });
@@ -737,6 +742,9 @@
     onMount(() => {
         try { recentWorlds = JSON.parse(localStorage.getItem('rt_worlds') || '[]'); } catch { recentWorlds = []; }
         loadSavedCharacters();
+        const sfxSettings = sfx.loadAudioSettings();
+        audioMuted = sfxSettings.muted;
+        audioVolume = sfxSettings.volume;
 
         // Load saved character config
         const savedName = localStorage.getItem('rt_char_name');
@@ -770,6 +778,7 @@
                 }
             } else {
                 if (wsDisconnectTimer) { clearTimeout(wsDisconnectTimer); wsDisconnectTimer = null; }
+                if (wsDisconnected) sfx.play('connect');
                 wsDisconnected = false;
             }
         });
@@ -802,6 +811,9 @@
     // Commit the key from the wizard, then advance to the Soul Forge.
     function attune() {
         if (!apiKey.trim()) return;
+        // Phase 44: unlock Web Audio on the first user gesture in the flow.
+        // Browsers refuse to play anything until a gesture has fired.
+        sfx.resume();
         localStorage.setItem('rt_api_key', apiKey);
         localStorage.setItem('rt_share_policy', keySharePolicy);
         isReady = true;
@@ -1335,22 +1347,19 @@
                 isLoading = false;
                 turnStageLabel = '';
                 if (evt.ui_update?.qte) broadcastQTE(evt.ui_update.qte);
+                sfx.play('turn-result');
             } else if (evt.type === 'turn-error') {
                 isLoading = false;
                 turnStageLabel = '';
                 lastTurnError = evt.message || 'The world hesitates.';
                 addChatEntry({ author: 'System', text: lastTurnError, type: 'dm' });
+                sfx.play('turn-error');
             } else if (evt.type === 'whisper-result') {
                 isLoading = false;
-                if (evt.ui_update?.qte) broadcastQTE(evt.ui_update.qte);
-            } else if (evt.type === 'turn-error') {
-                isLoading = false;
-                lastTurnError = evt.message || 'The world hesitates.';
-                addChatEntry({ author: 'System', text: lastTurnError, type: 'dm' });
-            } else if (evt.type === 'whisper-result') {
                 whisperInFlight = false;
                 if (evt.ui_update?.qte) broadcastQTE(evt.ui_update.qte);
                 addLocalWhisper({ author: 'DM (whisper)', text: evt.narration || '', type: 'whisper', timestamp: Date.now() });
+                sfx.play('whisper');
             } else if (evt.type === 'whisper-error') {
                 whisperInFlight = false;
                 addLocalWhisper({ author: 'System', text: evt.message || 'The DM did not hear you.', type: 'whisper', timestamp: Date.now() });
@@ -1358,9 +1367,18 @@
                 // Optional UI hint; no state change required.
             } else if (evt.type === 'engine-status') {
                 // Phase 23: pause reflects server truth, not local optimism.
+                const wasPaused = enginePaused;
                 enginePaused = !!(evt as any).paused;
                 // Phase 37: mirror next-tick timestamp for the countdown.
-                engineNextTickAt = (evt as any).next_tick_at ?? null;
+                const newTick = (evt as any).next_tick_at ?? null;
+                const oldTick = engineNextTickAt;
+                engineNextTickAt = newTick;
+                // Phase 44: world-tick chime when the alarm fires (next_tick_at
+                // jumps forward after an alarm() pass). Compare >2s forward to
+                // avoid duplicate chimes on step-time broadcasts.
+                if (!enginePaused && newTick && oldTick && newTick > oldTick + 2000) {
+                    sfx.play('world-tick');
+                }
             }
         });
     }
@@ -1372,6 +1390,7 @@
             text: success ? "Dodge successful — you avoided the hazard." : "Dodge failed — you sustain a wound.",
             type: 'dm'
         });
+        sfx.play(success ? 'qte-success' : 'qte-fail');
         if (navigator.vibrate) navigator.vibrate(success ? [40, 40] : 400);
     }
 
@@ -2316,6 +2335,36 @@
                         <span class="toggle-label">Scene portraits</span>
                         <span class="field-help">AI-generated backdrop that reflects the live scene. Uses free Pollinations images (no key, no account).</span>
                     </label>
+                </div>
+
+                <div class="field">
+                    <span class="field-label">Sound</span>
+                    <label class="toggle-row">
+                        <input type="checkbox" checked={!audioMuted} onchange={(e) => {
+                            audioMuted = !(e.currentTarget as HTMLInputElement).checked;
+                            sfx.saveAudioSettings({ muted: audioMuted, volume: audioVolume });
+                            if (!audioMuted) sfx.play('turn-result');
+                        }} />
+                        <span class="toggle-label">{audioMuted ? 'Muted' : 'Sound on'}</span>
+                    </label>
+                    {#if !audioMuted}
+                        <label class="audio-volume-row">
+                            <span class="audio-volume-label">Volume</span>
+                            <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.05"
+                                value={audioVolume}
+                                onchange={(e) => {
+                                    audioVolume = parseFloat((e.currentTarget as HTMLInputElement).value);
+                                    sfx.saveAudioSettings({ muted: audioMuted, volume: audioVolume });
+                                    sfx.play('turn-result');
+                                }}
+                            />
+                        </label>
+                    {/if}
+                    <span class="field-help">Synthesized at runtime — no audio files. Unmute plays a soft chime so you can hear the level.</span>
                 </div>
 
                 <div class="field">
@@ -4345,6 +4394,26 @@
         font-size: 0.72rem;
         opacity: 0.65;
         line-height: 1.35;
+    }
+
+    /* Phase 44: audio volume row — pairs with the mute toggle in settings. */
+    .audio-volume-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-top: 0.5rem;
+        cursor: pointer;
+    }
+    .audio-volume-label {
+        font-size: 0.78rem;
+        color: var(--ink-soft);
+        font-weight: 600;
+        min-width: 3.5rem;
+    }
+    .audio-volume-row input[type="range"] {
+        flex: 1;
+        accent-color: var(--accent);
+        height: 4px;
     }
 
     /* Phase 5: Chronicle modal export button */
