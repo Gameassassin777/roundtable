@@ -2492,6 +2492,14 @@
                         <p>{npcDetailData.notes}</p>
                     </div>
                 {/if}
+                <footer class="popover-actions">
+                    <span class="popover-actions-label">Quick target:</span>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Approach', npcDetailData.name); closeNpcDetail(); }}>Approach</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Ask', npcDetailData.name); closeNpcDetail(); }}>Ask</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Search', npcDetailData.name); closeNpcDetail(); }}>Search</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Persuade', npcDetailData.name); closeNpcDetail(); }}>Persuade</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Hide from', npcDetailData.name); closeNpcDetail(); }}>Hide from</button>
+                </footer>
             </div>
         </div>
     {/if}
@@ -2533,6 +2541,13 @@
                         <p>{factionDetailData.agenda}</p>
                     </div>
                 {/if}
+                <footer class="popover-actions">
+                    <span class="popover-actions-label">Quick target:</span>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Contact', factionDetailData.name); closeFactionDetail(); }}>Contact</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Approach', factionDetailData.name); closeFactionDetail(); }}>Approach</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Persuade', factionDetailData.name); closeFactionDetail(); }}>Persuade</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Investigate', factionDetailData.name); closeFactionDetail(); }}>Investigate</button>
+                </footer>
             </div>
         </div>
     {/if}
@@ -2641,6 +2656,13 @@
                         </ul>
                     </div>
                 {/if}
+                <footer class="popover-actions">
+                    <span class="popover-actions-label">Quick target:</span>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Ask', partyDetailData.name); closePartyDetail(); }}>Ask</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Persuade', partyDetailData.name); closePartyDetail(); }}>Persuade</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Help', partyDetailData.name); closePartyDetail(); }}>Help</button>
+                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Heal', partyDetailData.name); closePartyDetail(); }}>Heal</button>
+                </footer>
             </div>
         </div>
     {/if}
@@ -4692,6 +4714,27 @@
         border-radius: 10px;
         box-shadow: var(--shadow-lg);
         animation: rise 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    /* Phase 38: footer of verb chips on every codex-entity popover.
+       Closes the loop from "inspect entity" → "act on entity" without
+       typing the name. Reuses .action-template-chip for visual parity. */
+    .popover-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        align-items: center;
+        margin-top: 1rem;
+        padding-top: 0.8rem;
+        border-top: 1px solid var(--line);
+    }
+    .popover-actions-label {
+        font-size: 0.65rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--ink-soft);
+        margin-right: 0.2rem;
+        width: 100%;
+        margin-bottom: 0.1rem;
     }
     .npc-detail-head {
         display: flex; justify-content: space-between; align-items: flex-start;
