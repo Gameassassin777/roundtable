@@ -978,7 +978,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 1.5rem;
+        padding: calc(1.5rem + env(safe-area-inset-top)) calc(1.5rem + env(safe-area-inset-right)) calc(1.5rem + env(safe-area-inset-bottom)) calc(1.5rem + env(safe-area-inset-left));
         overflow-y: auto;
         background:
             radial-gradient(1200px 700px at 50% -10%, #fbf6ec 0%, transparent 60%),
@@ -1269,7 +1269,7 @@
         z-index: 10;
         display: flex;
         flex-direction: column;
-        padding: 1rem;
+        padding: calc(1rem + env(safe-area-inset-top)) calc(1rem + env(safe-area-inset-right)) calc(1rem + env(safe-area-inset-bottom)) calc(1rem + env(safe-area-inset-left));
         gap: 1rem;
         pointer-events: none;
     }
@@ -1576,7 +1576,7 @@
         display: flex;
         justify-content: center;
         align-items: center;
-        padding: 1.5rem;
+        padding: calc(1.5rem + env(safe-area-inset-top)) calc(1.5rem + env(safe-area-inset-right)) calc(1.5rem + env(safe-area-inset-bottom)) calc(1.5rem + env(safe-area-inset-left));
         animation: fade-in 0.2s ease-out;
         pointer-events: auto;
     }
@@ -1600,7 +1600,10 @@
 
     /* Responsive */
     @media (max-width: 768px) {
-        .layout-grid { padding: 0.7rem; gap: 0.7rem; }
+        .layout-grid {
+            padding: calc(0.7rem + env(safe-area-inset-top)) calc(0.7rem + env(safe-area-inset-right)) calc(0.7rem + env(safe-area-inset-bottom)) calc(0.7rem + env(safe-area-inset-left));
+            gap: 0.7rem;
+        }
         .menu-toggle { display: flex; }
         .hud-center { display: none; }
         .brand h1 { font-size: 0.95rem; }
