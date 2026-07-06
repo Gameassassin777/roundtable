@@ -5,14 +5,19 @@
 // This is the situation-not-plots adjudication layer. It does not narrate.
 // The DM consumes its ruling and turns it into grounded prose.
 
-export function buildDirectorPrompt(actions, codexJson) {
+import { formatNorthStar } from './northstar.js';
+
+export function buildDirectorPrompt(actions, codexJson, northStar) {
   const rolled = actions.map((action, i) => {
     const d20 = Math.floor(Math.random() * 20) + 1;
     const who = action.author ? ` by ${action.author}` : '';
     return `Action ${i + 1}${who} [d20=${d20}] id=${action.id}:\n<player_input>${action.text}</player_input>`;
   }).join('\n\n');
 
-  return `CURRENT SITUATION (MEMORY CODEX):
+  const ns = formatNorthStar(northStar);
+  const nsBlock = ns ? `${ns}\n\n` : '';
+
+  return `${nsBlock}CURRENT SITUATION (MEMORY CODEX):
 ${codexJson}
 
 PLAYER ACTIONS THIS ROUND:

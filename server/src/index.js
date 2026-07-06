@@ -84,6 +84,17 @@ export class SignalingRoom {
       yCodex.set('npcs', {});
       yCodex.set('factions', {});
       yCodex.set('threads', []);
+      // Phase 6: North Star — host-defined premise + tone. Empty by default;
+      // prompts treat an empty north_star as "improvise neutrally".
+      if (!yCodex.get('north_star')) {
+        yCodex.set('north_star', {
+          premise: '',
+          tone: '',
+          opening_hook: '',
+          set_at: null,
+          set_by: null,
+        });
+      }
     });
   }
 
@@ -133,7 +144,8 @@ export class SignalingRoom {
     if (!keyEntry) return; // No key available this tick; try next alarm.
 
     const yCodex = this.yDoc.getMap('memoryCodex');
-    const codexJson = JSON.stringify(yCodex.toJSON(), null, 2);
+    const codexObj = yCodex.toJSON();
+    const codexJson = JSON.stringify(codexObj, null, 2);
 
     // Pull last ~6 chat entries for context (what the party has been doing).
     const yChat = this.yDoc.getArray('chatLog');
@@ -143,7 +155,7 @@ export class SignalingRoom {
     })), null, 2);
 
     const result = await this.callWithFallback(
-      buildWorldEngineRequestBody(buildWorldEnginePrompt(codexJson, recentChatJson)),
+      buildWorldEngineRequestBody(buildWorldEnginePrompt(codexJson, recentChatJson, codexObj.north_star)),
       keyEntry
     );
     if (!result.ok) return;
@@ -411,11 +423,13 @@ export class SignalingRoom {
     this.turnInFlight = true;
     this.broadcast({ type: 'turn-start', actionIds: actions.map(a => a.id) });
 
-    const codexJson = JSON.stringify(this.yDoc.getMap('memoryCodex').toJSON(), null, 2);
+    const codexObj = this.yDoc.getMap('memoryCodex').toJSON();
+    const codexJson = JSON.stringify(codexObj, null, 2);
+    const northStar = codexObj.north_star || null;
 
     // --- Phase 1: Director → DM → lint, with one retry on lint failure -----
     const directorResult = await this.callWithFallback(
-      buildDirectorRequestBody(buildDirectorPrompt(actions, codexJson)),
+      buildDirectorRequestBody(buildDirectorPrompt(actions, codexJson, northStar)),
       keyEntry
     );
 
@@ -426,7 +440,7 @@ export class SignalingRoom {
       if (ruling) {
         // DM call: render the ruling as prose.
         const dmResult = await this.callWithFallback(
-          buildRequestBody(buildDmPrompt(ruling, codexJson)),
+          buildRequestBody(buildDmPrompt(ruling, codexJson, northStar)),
           keyEntry
         );
         if (dmResult.ok) {
@@ -442,7 +456,7 @@ export class SignalingRoom {
           if (!lint.passes) {
             retried = true;
             const retryResult = await this.callWithFallback(
-              buildRequestBody(buildDmPrompt(ruling, codexJson, lint.feedback)),
+              buildRequestBody(buildDmPrompt(ruling, codexJson, northStar, lint.feedback)),
               keyEntry
             );
             if (retryResult.ok) {
@@ -477,7 +491,7 @@ export class SignalingRoom {
     // nothing usable). Same prompt + codex shape Calvin shipped in Phase 0.
     if (!turn) {
       const fallbackResult = await this.callWithFallback(
-        buildRequestBody(buildBatchPrompt(actions, codexJson)),
+        buildRequestBody(buildBatchPrompt(actions, codexJson, northStar)),
         keyEntry
       );
       if (!fallbackResult.ok) {

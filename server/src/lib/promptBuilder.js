@@ -2,13 +2,22 @@
 // No judgement — that already happened. Just grounded narration, 2-3 sentences,
 // plain tone. Critic lint runs after this; failures retry once with feedback.
 
-export function buildDmPrompt(directorRuling, codexJson, retryFeedback = null) {
+import { formatNorthStar } from './northstar.js';
+
+export function buildDmPrompt(directorRuling, codexJson, northStar, retryFeedback = null) {
   const rulingJson = JSON.stringify(directorRuling, null, 2);
+  const ns = formatNorthStar(northStar);
+  const nsBlock = ns ? `${ns}\n\n` : '';
+  // Back-compat: caller may have passed retryFeedback in the third slot.
+  if (typeof northStar === 'string' && retryFeedback === null) {
+    retryFeedback = northStar;
+    northStar = null;
+  }
   const feedbackBlock = retryFeedback
-    ? `\n\nPREVIOUS ATTEMPT REJECTED BY CRITIC:\n${retryFeedback}\nRewrite the narration to fix every listed violation. Keep it grounded.\n`
+    ? `\n\nPREVIOUS ATTEMPT REJECTED BY CRITIC:\n${retryFeedback}\nRewrite the narration to fix every listed violations. Keep it grounded.\n`
     : '';
 
-  return `CURRENT SITUATION (MEMORY CODEX):
+  return `${nsBlock}CURRENT SITUATION (MEMORY CODEX):
 ${codexJson}
 
 DIRECTOR'S RULING (WHAT HAPPENS — your job is to write the prose, not to decide outcomes):
@@ -43,14 +52,17 @@ export function buildRequestBody(prompt) {
 
 // Phase 0 legacy prompt — kept as fallback if Director fails. Still produces
 // the full single-call shape (narration + scene_tags + ui_update + new_codex).
-export function buildBatchPrompt(actions, codexJson) {
+export function buildBatchPrompt(actions, codexJson, northStar) {
   const rolled = actions.map((action, i) => {
     const d20 = Math.floor(Math.random() * 20) + 1;
     const who = action.author ? ` by ${action.author}` : '';
     return `Action ${i + 1}${who} [d20=${d20}]: <player_input>${action.text}</player_input>`;
   }).join('\n');
 
-  return `CURRENT SITUATION (MEMORY CODEX):
+  const ns = formatNorthStar(northStar);
+  const nsBlock = ns ? `${ns}\n\n` : '';
+
+  return `${nsBlock}CURRENT SITUATION (MEMORY CODEX):
 ${codexJson}
 
 PLAYER ACTIONS THIS ROUND:

@@ -231,6 +231,41 @@
         if (!scenePortraitsEnabled) scenePortraitShown = '';
     }
 
+    // Phase 6: Host North Star — premise + tone + opening hook for the world.
+    // Stored at memoryCodex.north_star and read by Director/DM/World Engine.
+    let showNorthStar = $state(false);
+    let nsPremise = $state('');
+    let nsTone = $state('');
+    let nsHook = $state('');
+    const TONE_OPTIONS = ['Heroic', 'Bright', 'Grim', 'Picaresque', 'Mythic', 'Picaresque'];
+    function openNorthStar() {
+        const ns = (codexData as any).north_star || {};
+        nsPremise = ns.premise || '';
+        nsTone = ns.tone || '';
+        nsHook = ns.opening_hook || '';
+        showNorthStar = true;
+    }
+    function saveNorthStar() {
+        const yMap = (ydoc as any).getMap('memoryCodex');
+        const ns = {
+            premise: nsPremise.trim(),
+            tone: nsTone.trim(),
+            opening_hook: nsHook.trim(),
+            set_at: Date.now(),
+            set_by: characterName || 'Host',
+        };
+        yMap.set('north_star', ns);
+        // If premise implies a different starting location and none is set yet,
+        // we leave location alone — host can set it from the world field.
+        showNorthStar = false;
+    }
+    function clearNorthStar() {
+        const yMap = (ydoc as any).getMap('memoryCodex');
+        yMap.set('north_star', { premise: '', tone: '', opening_hook: '', set_at: null, set_by: null });
+        nsPremise = ''; nsTone = ''; nsHook = '';
+        showNorthStar = false;
+    }
+
     let characterSelected = $state(false);
     let characterName = $state('');
     let selectedArc = $state('warrior');
@@ -266,7 +301,8 @@
         world_clock: { turn: 0, day: 1, time_of_day: "morning" } as { turn: number; day: number; time_of_day: string },
         npcs: {} as Record<string, { role?: string; location?: string; goal?: string; disposition?: number; status?: string; last_seen_turn?: number; notes?: string }>,
         factions: {} as Record<string, { type?: string; resources?: number; disposition?: number; agenda?: string; tension?: number; next_move_turn?: number }>,
-        threads: [] as Array<{ id: string; name: string; description: string; status: string; escalate_after_turn?: number; lands_at_turn?: number }>
+        threads: [] as Array<{ id: string; name: string; description: string; status: string; escalate_after_turn?: number; lands_at_turn?: number }>,
+        north_star: null as { premise: string; tone: string; opening_hook: string; set_at: number | null; set_by: string | null } | null
     });
 
     let myCharacter = $derived(
@@ -332,7 +368,8 @@
                     world_clock: raw.world_clock || { turn: 0, day: 1, time_of_day: "morning" },
                     npcs: raw.npcs || {},
                     factions: raw.factions || {},
-                    threads: raw.threads || []
+                    threads: raw.threads || [],
+                    north_star: raw.north_star || null
                 };
                 if (codexData.scene_tags) currentSceneTags = codexData.scene_tags;
 
@@ -1080,9 +1117,17 @@
                             </div>
                         </div>
 
-                        {#if Object.keys(codexData.npcs || {}).length > 0 || (codexData.threads || []).length > 0 || Object.keys(codexData.factions || {}).length > 0}
+                        {#if Object.keys(codexData.npcs || {}).length > 0 || (codexData.threads || []).length > 0 || Object.keys(codexData.factions || {}).length > 0 || (codexData as any).north_star?.premise}
                             <div class="codex-section world-section">
                                 <h3>World</h3>
+                                {#if (codexData as any).north_star?.premise}
+                                    <div class="north-star-display">
+                                        {#if (codexData as any).north_star.tone}
+                                            <span class="ns-tone-chip">{(codexData as any).north_star.tone}</span>
+                                        {/if}
+                                        <p class="ns-premise-text">{(codexData as any).north_star.premise}</p>
+                                    </div>
+                                {/if}
                                 <div class="world-clock-chip">
                                     <span class="clock-day">Day {codexData.world_clock?.day || 1}</span>
                                     <span class="clock-sep">·</span>
@@ -1242,7 +1287,58 @@
                     <span class="field-help">Snapshot of this world's chronicle + codex as a JSON file you can keep or share.</span>
                 </div>
 
+                <div class="field">
+                    <span class="field-label">World premise</span>
+                    <button class="btn-ghost wide" onclick={openNorthStar}>
+                        {(codexData as any).north_star?.premise ? 'Edit North Star' : 'Set North Star'}
+                    </button>
+                    <span class="field-help">{(codexData as any).north_star?.premise ? 'Premise is set — Director, DM, and World Engine all honor it.' : 'Define the world\'s premise, tone, and opening hook so the AI has a coherent foundation.'}</span>
+                </div>
+
                 <button class="btn-primary wide" onclick={saveSettings}>Save</button>
+            </div>
+        </div>
+    {/if}
+
+    <!-- Phase 6: Host North Star modal -->
+    {#if showNorthStar && isReady && characterSelected}
+        <div class="modal-overlay" onclick={(e) => { if (e.target === e.currentTarget) showNorthStar = false; }}>
+            <div class="north-star-modal panel">
+                <div class="drawer-head">
+                    <h2>North Star</h2>
+                    <button class="icon-btn" onclick={() => showNorthStar = false} aria-label="Close">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                    </button>
+                </div>
+
+                <p class="ns-intro">The foundational premise of this world. The Director, DM, and World Engine all read this — keep it short and load-bearing. Empty fields mean "improvise neutrally."</p>
+
+                <label class="field">
+                    <span class="field-label">Premise</span>
+                    <textarea class="ns-textarea" bind:value={nsPremise} rows="4" placeholder="A borderland village on the edge of a forest that has started growing back overnight, swallowing farms that have stood for generations…"></textarea>
+                    <span class="field-help">2-4 sentences. The central situation the party is walking into.</span>
+                </label>
+
+                <div class="field">
+                    <span class="field-label">Tone</span>
+                    <div class="share-policy-row">
+                        {#each ['Heroic', 'Bright', 'Grim', 'Mythic', 'Picaresque'] as tone}
+                            <button type="button" class="share-chip" class:selected={nsTone === tone} onclick={() => nsTone = nsTone === tone ? '' : tone}>{tone}</button>
+                        {/each}
+                    </div>
+                    <span class="field-help">One word. Guides adjective choices and consequence severity.</span>
+                </div>
+
+                <label class="field">
+                    <span class="field-label">Opening hook</span>
+                    <input class="ns-input" type="text" bind:value={nsHook} placeholder="The party arrives as the third farm disappears in a single night." />
+                    <span class="field-help">The situation already in motion when turn 1 begins. Do not rewind past this.</span>
+                </label>
+
+                <div class="ns-actions">
+                    <button class="btn-ghost" onclick={clearNorthStar}>Clear</button>
+                    <button class="btn-primary" onclick={saveNorthStar} disabled={!nsPremise.trim() && !nsTone.trim() && !nsHook.trim()}>Set Premise</button>
+                </div>
             </div>
         </div>
     {/if}
@@ -2142,6 +2238,84 @@
     }
     .weave-export-btn svg { width: 14px; height: 14px; }
     .weave-export-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Phase 6: North Star modal */
+    .north-star-modal {
+        width: min(540px, 92vw);
+        max-height: 86vh;
+        overflow-y: auto;
+        padding: 1.4rem 1.5rem 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    .ns-intro {
+        font-size: 0.82rem;
+        line-height: 1.45;
+        opacity: 0.75;
+        margin: 0;
+        padding: 0.7rem 0.85rem;
+        background: rgba(0,0,0,0.03);
+        border-left: 2px solid var(--accent);
+        border-radius: 4px;
+    }
+    .ns-textarea {
+        width: 100%;
+        font-family: var(--font);
+        font-size: 0.92rem;
+        line-height: 1.5;
+        padding: 0.6rem 0.7rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        resize: vertical;
+        color: var(--ink);
+    }
+    .ns-input {
+        width: 100%;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        padding: 0.5rem 0.7rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--ink);
+    }
+    .ns-actions {
+        display: flex;
+        gap: 0.6rem;
+        justify-content: flex-end;
+        margin-top: 0.3rem;
+    }
+
+    /* Codex sidebar North Star display */
+    .north-star-display {
+        padding: 0.55rem 0.7rem;
+        margin-bottom: 0.5rem;
+        background: rgba(140, 47, 47, 0.05);
+        border-left: 2px solid var(--accent);
+        border-radius: 4px;
+    }
+    .ns-tone-chip {
+        display: inline-block;
+        padding: 0.1rem 0.45rem;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.6rem;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        border-radius: 3px;
+        margin-bottom: 0.35rem;
+    }
+    .ns-premise-text {
+        font-size: 0.78rem;
+        line-height: 1.4;
+        color: var(--ink);
+        margin: 0;
+        font-style: italic;
+        opacity: 0.85;
+    }
     .act-go {
         width: 52px; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;

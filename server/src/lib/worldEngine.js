@@ -8,8 +8,12 @@
 // it reads the codex the World Engine just advanced — and finds NPCs already
 // mid-move, factions already mid-agenda, threads already on a clock.
 
-export function buildWorldEnginePrompt(codexJson, recentChatJson) {
-  return `CURRENT WORLD STATE (MEMORY CODEX):
+import { formatNorthStar } from './northstar.js';
+
+export function buildWorldEnginePrompt(codexJson, recentChatJson, northStar) {
+  const ns = formatNorthStar(northStar);
+  const nsBlock = ns ? `${ns}\n\n` : '';
+  return `${nsBlock}CURRENT WORLD STATE (MEMORY CODEX):
 ${codexJson}
 
 RECENT PARTY ACTIVITY (LAST FEW BEATS):
