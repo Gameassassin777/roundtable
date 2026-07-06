@@ -4,16 +4,15 @@
     import CinematicDiorama from '$lib/components/CinematicDiorama.svelte';
     import QTE_Overlay from '$lib/components/QTE_Overlay.svelte';
     import { createGameState } from '$lib/stores/gameStore';
-    import { callAI } from '$lib/ai/dmEngine';
-    import { buildBatchPrompt } from '$lib/ai/promptBuilder';
     import { forgeCharacter, forgeConverse, type ForgedCharacter, type ForgeMessage } from '$lib/ai/soulForge';
 
-    let roomId = $state("crypt-99");
+    let roomId = $state("crossroads-1");
     let gameState = createGameState(roomId);
 
-    let { chatStore, addChatEntry, ydoc, provider, yPendingActions, actionLock, reportKeyExhausted } = gameState;
+    let { chatStore, addChatEntry, ydoc, provider, serverEvents, sendAction, registerKey, reportKeyExhausted } = gameState;
 
-    let chatLog = $state([]);
+    type ChatEntry = { author: string; text: string; type: 'player' | 'dm'; timestamp?: number };
+    let chatLog = $state<ChatEntry[]>([]);
     let apiKey = $state(localStorage.getItem('rt_api_key') || '');
     // Committed-key gate (NOT derived from apiKey — see saveSettings).
     let isReady = $state(!!localStorage.getItem('rt_api_key'));
@@ -21,7 +20,10 @@
     let isLoading = $state(false);
     let showQTE = $state(false);
     let qteConfig = $state({ time_limit_ms: 1000, start_time: 0 });
-    let currentSceneTags = $state({ biome: "crypt", weather: "none", mood: "oppressive" });
+    let currentSceneTags = $state({ biome: "crossroads", weather: "clear", mood: "unsettled" });
+    let keySharePolicy = $state<'table' | 'solo' | 'host'>(
+        (localStorage.getItem('rt_share_policy') as any) || 'table'
+    );
 
     // UI states
     let showCodexMobile = $state(false);
@@ -32,8 +34,9 @@
 
     // Dynamically group raw chatLog entries into structured rounds for the Chronicle
     let chronicleRounds = $derived.by(() => {
-        const rounds = [];
-        let currentRound = { id: 1, actions: [], narration: '' };
+        type Round = { id: number; actions: ChatEntry[]; narration: string };
+        const rounds: Round[] = [];
+        let currentRound: Round = { id: 1, actions: [], narration: '' };
 
         for (const entry of chatLog) {
             if (entry.type === 'player') {
@@ -120,11 +123,7 @@
         'A silver-tongued swindler fleeing a debt to a fey lord'
     ];
 
-    // --- Multiplayer sync tuning ---
-    const LOCK_STALE_MS = 14000;   // a processor that hasn't heartbeat in this long is presumed dropped
-    let lockBeatTimer: any = null;
-    let lastLockBeat = 0;
-    let lastLockBeatChange = $state(Date.now());
+    // --- Multiplayer sync state ---
     let lastQteId = '';
     let recentWorlds = $state<string[]>([]);
 
@@ -192,9 +191,9 @@
             const raw = yCodex.toJSON();
             if (raw) {
                 codexData = {
-                    location: raw.location || "The Black Crypt",
+                    location: raw.location || "a quiet crossroads at the edge of an unfinished map",
                     plot_summary: raw.plot_summary || "",
-                    scene_tags: raw.scene_tags || { biome: "crypt", weather: "none", mood: "oppressive" },
+                    scene_tags: raw.scene_tags || { biome: "crossroads", weather: "clear", mood: "unsettled" },
                     party: raw.party || {},
                     inventory: raw.inventory || {}
                 };
@@ -218,22 +217,10 @@
                 }
             }
         });
-        bindLock();
-    }
-
-    function bindLock() {
-        actionLock.observe((event) => {
-            const currentBeat = actionLock.get('beat') as number || 0;
-            if (currentBeat !== lastLockBeat) {
-                lastLockBeat = currentBeat;
-                lastLockBeatChange = Date.now();
-            }
-        });
-        lastLockBeat = actionLock.get('beat') as number || 0;
-        lastLockBeatChange = Date.now();
     }
 
     let unsubscribe = subscribeChat();
+    let unsubscribeServer = subscribeServerEvents();
     let activePeers = $state(0);
 
     onMount(() => {
@@ -268,7 +255,10 @@
     function attune() {
         if (!apiKey.trim()) return;
         localStorage.setItem('rt_api_key', apiKey);
+        localStorage.setItem('rt_share_policy', keySharePolicy);
         isReady = true;
+        // Register with the world's key pool so the server can use it for AI turns.
+        registerKey(apiKey, characterName || 'Wanderer', keySharePolicy);
         wizardStep = 'forge';
     }
 
@@ -276,7 +266,10 @@
     function saveSettings() {
         if (apiKey) {
             localStorage.setItem('rt_api_key', apiKey);
+            localStorage.setItem('rt_share_policy', keySharePolicy);
             isReady = true;
+            // Re-register in case the key or sharing policy changed.
+            registerKey(apiKey, characterName || 'Wanderer', keySharePolicy);
             showSettings = false;
         }
     }
@@ -403,15 +396,22 @@
         addChatEntry = gameState.addChatEntry;
         ydoc = gameState.ydoc;
         provider = gameState.provider;
-        yPendingActions = gameState.yPendingActions;
-        actionLock = gameState.actionLock;
+        serverEvents = gameState.serverEvents;
+        sendAction = gameState.sendAction;
+        registerKey = gameState.registerKey;
         reportKeyExhausted = gameState.reportKeyExhausted;
 
         // Rebind live sync to the new room, keeping the handle so onDestroy
         // (and the next switch) can clean it up.
         unsubscribe = subscribeChat();
+        unsubscribeServer?.();
+        unsubscribeServer = subscribeServerEvents();
         bindPeers();
         bindCodex();
+
+        // Re-register this client's API key with the new world's pool (the key
+        // is bound to a single WS connection — every switch needs a fresh register).
+        if (apiKey) registerKey(apiKey, characterName || 'Wanderer', keySharePolicy);
 
         // Carry the hero into the new/joined world once local state has loaded.
         gameState.persistence.whenSynced.then(() => registerCurrentCharacter());
@@ -429,19 +429,10 @@
         });
     }
 
-    // Non-processor: drop our spinner as soon as the processor frees the lock — capped so we never hang.
-    function awaitResolution() {
-        const start = Date.now();
-        const iv = setInterval(() => {
-            const isStale = actionLock.get('locked') && (Date.now() - lastLockBeatChange > LOCK_STALE_MS);
-            if (!actionLock.get('locked') || isStale || Date.now() - start > 12000) {
-                clearInterval(iv);
-                isLoading = false;
-            }
-        }, 400);
-    }
-
-    async function submitAction() {
+    // Submit a free-text action to the server. Server batches for ~5s, calls the
+    // AI with a pooled key, and writes the DM beat to Yjs (arrives here as a
+    // chatLog update via sync). turn-result / turn-error clear isLoading.
+    function submitAction() {
         if (!chatInput.trim() || isLoading) return;
         const userAction = chatInput.trim();
         const author = characterName || 'You';
@@ -449,58 +440,35 @@
         chatInput = '';
         isLoading = true;
 
-        // Echo + enqueue — both sync to every peer via Yjs.
+        // Echo our own action locally for instant feedback (peers see it via Yjs sync).
         addChatEntry({ author, text: userAction, type: 'player' });
-        yPendingActions.push([{ text: userAction, author }]);
 
-        // Claim the processing lock, with stale-lock takeover so a dropped processor
-        // can never freeze the table for everyone else.
-        let isProcessor = false;
-        ydoc.transact(() => {
-            const isStale = actionLock.get('locked') && (Date.now() - lastLockBeatChange > LOCK_STALE_MS);
-            if (!actionLock.get('locked') || isStale) {
-                actionLock.set('locked', true);
-                actionLock.set('processor', ydoc.clientID);
-                actionLock.set('beat', (actionLock.get('beat') as number || 0) + 1);
-                isProcessor = true;
-            }
-        });
-
-        if (!isProcessor) { awaitResolution(); return; }
-
-        // Heartbeat so peers can detect a mid-resolve crash and take over.
-        lockBeatTimer = setInterval(() => {
-            actionLock.set('beat', (actionLock.get('beat') as number || 0) + 1);
-        }, 3000);
-
-        try {
-            if (activePeers > 0) addChatEntry({ author: 'System', text: 'Gathering party actions…', type: 'dm' });
-            const windowMs = activePeers > 0 ? 5000 : 700;   // batch for multiplayer, snappy for solo
-            await new Promise(r => setTimeout(r, windowMs));
-
-            // Retrieve and delete in a single synchronous transaction to prevent dropping concurrent items
-            let actionsToProcess: any[] = [];
-            ydoc.transact(() => {
-                actionsToProcess = yPendingActions.toArray();
-                yPendingActions.delete(0, actionsToProcess.length);
-            });
-            if (actionsToProcess.length === 0) return;
-
-            const prompt = buildBatchPrompt(actionsToProcess, ydoc);
-            const response = await callAI(prompt, apiKey, ydoc, ydoc.clientID);
-            addChatEntry({ author: 'Dungeon Master', text: response.narration, type: 'dm' });
-            if (response.scene_tags) ydoc.getMap('memoryCodex').set('scene_tags', response.scene_tags);
-            if (response.ui_update?.qte) broadcastQTE(response.ui_update.qte);
-        } catch (e) {
-            addChatEntry({ author: 'System', text: 'The vision faltered — check your key or usage limits.', type: 'dm' });
-        } finally {
-            clearInterval(lockBeatTimer); lockBeatTimer = null;
-            ydoc.transact(() => {
-                actionLock.set('locked', false);
-                actionLock.set('processor', null);
-            });
+        // Send to server — the Worker owns batching, AI calls, and beat delivery.
+        const sent = sendAction(userAction, author);
+        if (!sent) {
+            addChatEntry({ author: 'System', text: 'Not connected to the world — retrying…', type: 'dm' });
             isLoading = false;
         }
+    }
+
+    // Server-event subscription: turn-start confirms batch received, turn-result
+    // fires when the AI's beat has been written to Yjs (so the chat log already
+    // has it by the time this fires), turn-error surfaces AI/key failures.
+    let lastTurnError = $state('');
+    function subscribeServerEvents() {
+        return serverEvents.subscribe(evt => {
+            if (!evt) return;
+            if (evt.type === 'turn-start') {
+                // Beat is in flight; keep isLoading = true.
+            } else if (evt.type === 'turn-result') {
+                isLoading = false;
+                if (evt.ui_update?.qte) broadcastQTE(evt.ui_update.qte);
+            } else if (evt.type === 'turn-error') {
+                isLoading = false;
+                lastTurnError = evt.message || 'The world hesitates.';
+                addChatEntry({ author: 'System', text: lastTurnError, type: 'dm' });
+            }
+        });
     }
 
     function handleQTEResult(success: boolean) {
@@ -537,9 +505,9 @@
     }
 
     onDestroy(() => {
-        if (lockBeatTimer) clearInterval(lockBeatTimer);
         gameState.destroy();
         unsubscribe();
+        unsubscribeServer?.();
     });
 </script>
 
@@ -584,10 +552,28 @@
                         <span class="field-label">Google AI Studio key</span>
                         <input type="password" bind:value={apiKey} placeholder="AIza…" />
                         <span class="field-help">
-                            Stored only in this browser — it never leaves your device.
+                            Used by the world server to power AI turns for the whole table.
                             <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free key →</a>
                         </span>
                     </label>
+
+                    <div class="field">
+                        <span class="field-label">Key sharing</span>
+                        <div class="share-policy-row">
+                            {#each [['table', 'Table', "Pool with the table — round-robins across all contributed keys so no one's quota burns first."], ['solo', 'Solo', 'Only used for your own turns. Never pooled.'], ['host', 'Host', 'Pooled, but only the host needs to contribute.']] as [val, label, title]}
+                                <button type="button" class="share-chip" class:selected={keySharePolicy === val} onclick={() => keySharePolicy = val as any} title={title}>{label}</button>
+                            {/each}
+                        </div>
+                        <span class="field-help">
+                            {#if keySharePolicy === 'table'}
+                                Pooled round-robin — fairest for even quota burn.
+                            {:else if keySharePolicy === 'solo'}
+                                Yours only — the table uses everyone else's keys but not yours.
+                            {:else}
+                                Host mode — only the host's key is pooled for the table.
+                            {/if}
+                        </span>
+                    </div>
 
                     <label class="field">
                         <span class="field-label">Table code</span>
@@ -887,6 +873,15 @@
                     <span class="field-help">Stored only in this browser.</span>
                 </label>
 
+                <div class="field">
+                    <span class="field-label">Key sharing</span>
+                    <div class="share-policy-row">
+                        {#each [['table', 'Table', 'Pool with the table — round-robins across all contributed keys.'], ['solo', 'Solo', 'Only used for your own turns. Never pooled.'], ['host', 'Host', 'Pooled, but only the host contributes.']] as [val, label, title]}
+                            <button type="button" class="share-chip" class:selected={keySharePolicy === val} onclick={() => keySharePolicy = val as any} title={title}>{label}</button>
+                        {/each}
+                    </div>
+                </div>
+
                 <button class="btn-primary wide" onclick={saveSettings}>Save</button>
             </div>
         </div>
@@ -1092,6 +1087,25 @@
         text-align: left;
     }
     .chip-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+    .share-policy-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .share-chip {
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        color: var(--ink-soft);
+        border-radius: var(--radius-pill);
+        padding: 0.35rem 0.85rem;
+        font-size: 0.78rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .share-chip:hover { border-color: var(--accent); color: var(--accent); }
+    .share-chip.selected {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: var(--accent);
+    }
 
     .forge-error { color: var(--hp); font-size: 0.82rem; }
 

@@ -10,10 +10,20 @@ export function createGameState(roomId: string) {
     // even the last peer leaving (it lives in every device's IndexedDB).
     const persistence = new IndexeddbPersistence(room, ydoc);
 
-    // Custom WebSocket provider to sync document state and presence with the server
-    const wsUrl = `wss://roundtable-signaling.gameassassin777.workers.dev?room=${roomId}`;
+    // Allow local dev to point at a Worker on localhost (set rt_worker_host in localStorage)
+    const workerHost = (typeof localStorage !== 'undefined' && localStorage.getItem('rt_worker_host'))
+        || 'roundtable-signaling.gameassassin777.workers.dev';
+    const wsUrl = `wss://${workerHost}?room=${roomId}`;
     let ws: WebSocket | null = null;
     const providerStore = writable({ status: 'connecting', peersCount: 0 });
+
+    // Server-event store — UI subscribes to this for turn-start / turn-result /
+    // turn-error / action-accepted / key-usage messages (AI pipeline status).
+    const serverEvents = writable<{ type: string, [k: string]: any } | null>(null);
+
+    // Pending key registration — held until the socket is open, then flushed.
+    // Set by registerKey() before the WS is connected; consumed in ws.onopen.
+    let pendingKeyReg: { key: string, label: string, sharePolicy: string } | null = null;
 
     const awareness = {
         _states: new Map(),
@@ -63,7 +73,7 @@ export function createGameState(roomId: string) {
         ws.onopen = () => {
             console.log('Connected to server-hosted world:', roomId);
             providerStore.set({ status: 'connected', peersCount: 0 });
-            
+
             // Handshake step 1: Upload current local state to merge with server
             const localState = Y.encodeStateAsUpdate(ydoc);
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -74,6 +84,13 @@ export function createGameState(roomId: string) {
             const myName = localStorage.getItem('rt_char_name') || 'Wanderer';
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'presence-update', name: myName }));
+            }
+
+            // Handshake step 3: Re-register API key on every reconnect (server
+            // drops the key when the socket closes). pendingKeyReg is set by
+            // registerKey() and persisted across WS reconnects.
+            if (pendingKeyReg && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'register-key', ...pendingKeyReg }));
             }
         };
 
@@ -93,6 +110,14 @@ export function createGameState(roomId: string) {
                     });
                     providerStore.set({ status: 'connected', peersCount: Math.max(0, data.players.length - 1) });
                     awareness.trigger();
+                } else if (
+                    data.type === 'turn-start' ||
+                    data.type === 'turn-result' ||
+                    data.type === 'turn-error' ||
+                    data.type === 'action-accepted' ||
+                    data.type === 'key-usage'
+                ) {
+                    serverEvents.set(data);
                 }
             } catch (e) {
                 console.error('Error handling WebSocket message:', e);
@@ -150,6 +175,32 @@ export function createGameState(roomId: string) {
     function reportKeyExhausted(clientId: number) { yKeyHealth.set(clientId.toString(), 'exhausted'); }
     function reportKeyHealthy(clientId: number) { yKeyHealth.set(clientId.toString(), 'healthy'); }
 
+    // Server-side AI path: send an action to the Worker. The Worker batches,
+    // calls Gemini with a pooled key, and writes the DM beat to Yjs (which
+    // arrives here as a sync update). UI clears the input on action-accepted.
+    function sendAction(text: string, author: string) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        ws.send(JSON.stringify({ type: 'submit-action', text, author }));
+        return true;
+    }
+
+    // Register an API key with the Worker's pool. Held until WS is open and
+    // re-sent on every reconnect (server drops keys when sockets close).
+    // sharePolicy: 'table' (default, pooled round-robin) | 'solo' (own calls only) | 'host'.
+    function registerKey(key: string, label: string, sharePolicy: 'table' | 'solo' | 'host' = 'table') {
+        if (!key) return;
+        pendingKeyReg = { key, label, sharePolicy };
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'register-key', key, label, sharePolicy }));
+        }
+    }
+
+    function requestKeyUsage() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'get-key-usage' }));
+        }
+    }
+
     function destroy() {
         try { provider.destroy(); } catch { /* noop */ }
         try { persistence.destroy(); } catch { /* noop */ }
@@ -159,6 +210,8 @@ export function createGameState(roomId: string) {
         chatStore, addChatEntry, ydoc, provider, persistence,
         awareness,
         yPendingActions, actionLock,
+        serverEvents,
+        sendAction, registerKey, requestKeyUsage,
         reportKeyExhausted, reportKeyHealthy, destroy
     };
 }
