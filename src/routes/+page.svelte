@@ -736,6 +736,7 @@
 
     onMount(() => {
         try { recentWorlds = JSON.parse(localStorage.getItem('rt_worlds') || '[]'); } catch { recentWorlds = []; }
+        loadSavedCharacters();
 
         // Load saved character config
         const savedName = localStorage.getItem('rt_char_name');
@@ -893,6 +894,79 @@
     function rememberWorld(code: string) {
         recentWorlds = [code, ...recentWorlds.filter((c) => c !== code)].slice(0, 6);
         localStorage.setItem('rt_worlds', JSON.stringify(recentWorlds));
+    }
+
+    // --- Phase 43: Character save slots (LocalStorage roster) -------------
+    // Lets a player save their forged hero to LocalStorage and bring the same
+    // hero into different rooms. Each slot is a snapshot of the ForgedCharacter
+    // payload — no live HP/resolve state, just the soul-forge output. Live
+    // state stays per-room in the codex.
+    type SavedCharacter = {
+        name: string;
+        archetype: string;
+        class_title: string;
+        portrait_url: string;
+        backstory: string;
+        traits: { name: string; desc: string }[];
+        hp: number;
+        resolve: number;
+        corruption: number;
+        saved_at: number;
+    };
+    let savedCharacters = $state<SavedCharacter[]>([]);
+    function loadSavedCharacters() {
+        try {
+            const raw = localStorage.getItem('rt_saved_characters');
+            savedCharacters = raw ? JSON.parse(raw) : [];
+        } catch { savedCharacters = []; }
+    }
+    function persistSavedCharacters() {
+        localStorage.setItem('rt_saved_characters', JSON.stringify(savedCharacters));
+    }
+    function saveCurrentCharacter() {
+        if (!forged || !characterName) return;
+        const slot: SavedCharacter = {
+            name: characterName,
+            archetype: forged.archetype,
+            class_title: forged.class_title,
+            portrait_url: forged.portrait_url || '',
+            backstory: forged.backstory || '',
+            traits: forged.traits.map(t => ({ name: t.name, desc: t.desc || '' })),
+            hp: forged.hp,
+            resolve: forged.resolve,
+            corruption: forged.corruption,
+            saved_at: Date.now()
+        };
+        // Replace if same name exists; otherwise prepend.
+        const filtered = savedCharacters.filter(s => s.name !== slot.name);
+        savedCharacters = [slot, ...filtered].slice(0, 12);
+        persistSavedCharacters();
+    }
+    function deleteSavedCharacter(name: string) {
+        savedCharacters = savedCharacters.filter(s => s.name !== name);
+        persistSavedCharacters();
+    }
+    // Load a saved slot into the live forge state. Returns true on success.
+    function loadSavedCharacter(slot: SavedCharacter): boolean {
+        // Reconstruct a ForgedCharacter from the slot. The soul-forge output
+        // shape is preserved so registerCurrentCharacter works unchanged.
+        forged = {
+            name: slot.name,
+            archetype: slot.archetype,
+            class_title: slot.class_title,
+            portrait_url: slot.portrait_url,
+            portrait: slot.portrait_url || slot.name,
+            backstory: slot.backstory,
+            traits: slot.traits,
+            hp: slot.hp,
+            resolve: slot.resolve,
+            corruption: slot.corruption,
+            starting_item: { name: 'Heirloom', note: '' }
+        } as ForgedCharacter;
+        characterName = slot.name;
+        selectedArc = slot.archetype;
+        classTitle = slot.class_title;
+        return true;
     }
 
     // Ensure the current hero exists in the current room's party (used when creating/joining a world).
@@ -1383,6 +1457,35 @@
                         you make.
                     </p>
                     <button class="btn-primary wide" onclick={beginQuest}>Begin Your Quest</button>
+                    {#if savedCharacters.length > 0}
+                        <div class="saved-roster-welcome">
+                            <p class="saved-roster-label">Or continue with a saved hero:</p>
+                            <div class="saved-roster-list">
+                                {#each savedCharacters as slot}
+                                    <button
+                                        type="button"
+                                        class="saved-slot-chip"
+                                        onclick={() => {
+                                            if (loadSavedCharacter(slot)) {
+                                                wizardStep = 'attune';
+                                            }
+                                        }}
+                                        title={`Continue as ${slot.name} — ${slot.class_title}`}
+                                    >
+                                        {#if slot.portrait_url}
+                                            <img src={slot.portrait_url} alt={slot.name} class="saved-slot-portrait" />
+                                        {:else}
+                                            <span class="saved-slot-glyph">{@html iconFor(slot.archetype)}</span>
+                                        {/if}
+                                        <span class="saved-slot-text">
+                                            <span class="saved-slot-name">{slot.name}</span>
+                                            <span class="saved-slot-class">{slot.class_title}</span>
+                                        </span>
+                                    </button>
+                                {/each}
+                            </div>
+                        </div>
+                    {/if}
                     <p class="fineprint">Play solo or invite friends with a shared table code.</p>
                 </div>
 
@@ -2216,6 +2319,25 @@
                 </div>
 
                 <div class="field">
+                    <span class="field-label">Character</span>
+                    <button class="btn-ghost wide" onclick={saveCurrentCharacter} disabled={!forged}>
+                        Save “{characterName}” to roster
+                    </button>
+                    <span class="field-help">Saves this hero to your device so you can bring them into other worlds. Live HP/resolve state stays per-world; only the soul-forge snapshot is saved.</span>
+                    {#if savedCharacters.length > 0}
+                        <div class="settings-saved-roster">
+                            {#each savedCharacters as slot}
+                                <div class="settings-saved-slot" class:is-current={slot.name === characterName}>
+                                    <span class="settings-saved-name">{slot.name}</span>
+                                    <span class="settings-saved-class">{slot.class_title}</span>
+                                    <button type="button" class="settings-saved-delete" onclick={() => deleteSavedCharacter(slot.name)} aria-label={`Delete ${slot.name} from roster`} title="Remove from roster">✕</button>
+                                </div>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
+
+                <div class="field">
                     <span class="field-label">Export</span>
                     <button class="btn-ghost wide" onclick={exportWeave} disabled={chronicleItems.length === 0}>
                         Download .weave
@@ -2957,6 +3079,107 @@
 
     .wide { width: 100%; }
     .welcome-card .btn-primary { padding: 0.9rem 1.25rem; font-size: 1rem; }
+
+    /* Phase 43: saved-character roster on the welcome screen + settings. */
+    .saved-roster-welcome {
+        margin-top: 1.2rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.6rem;
+        width: 100%;
+    }
+    .saved-roster-label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+    }
+    .saved-roster-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        justify-content: center;
+        max-width: 360px;
+    }
+    .saved-slot-chip {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.4rem 0.7rem 0.4rem 0.4rem;
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: 999px;
+        cursor: pointer;
+        box-shadow: var(--shadow-sm);
+        transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .saved-slot-chip:hover {
+        transform: translateY(-1px);
+        border-color: var(--accent);
+        box-shadow: var(--shadow-md);
+    }
+    .saved-slot-portrait {
+        width: 32px; height: 32px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 1px solid var(--line);
+    }
+    .saved-slot-glyph {
+        width: 32px; height: 32px;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--surface-2);
+        border-radius: 50%;
+        font-size: 1.1rem;
+    }
+    .saved-slot-text {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        line-height: 1.15;
+    }
+    .saved-slot-name {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--ink);
+    }
+    .saved-slot-class {
+        font-size: 0.66rem;
+        font-style: italic;
+        color: var(--ink-soft);
+    }
+    .settings-saved-roster {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        margin-top: 0.5rem;
+    }
+    .settings-saved-slot {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 0.6rem;
+        align-items: baseline;
+        padding: 0.45rem 0.6rem;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+    }
+    .settings-saved-slot.is-current {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+    }
+    .settings-saved-name { font-weight: 600; color: var(--ink); font-size: 0.88rem; }
+    .settings-saved-class { font-size: 0.74rem; font-style: italic; color: var(--ink-soft); }
+    .settings-saved-delete {
+        background: rgba(0,0,0,0.06);
+        border: none;
+        padding: 0.2rem 0.45rem;
+        font-size: 0.7rem;
+        cursor: pointer;
+        border-radius: 4px;
+        color: var(--ink-soft);
+    }
+    .settings-saved-delete:hover { background: rgba(181, 67, 60, 0.15); color: var(--hp); }
 
     /* Wizard steps */
     .wizard-head { display: flex; flex-direction: column; gap: 0.35rem; }
