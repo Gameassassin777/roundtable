@@ -35,7 +35,11 @@ For each action:
 
 Also decide at the round level:
 - scene_advance: ONE line — what physically changes in the scene after all actions resolve
-- codex_writes: shallow-merge patch over the codex for whatever actually changed (hp loss, item gained/lost, location change, party stat change). Omit fields that did not change. Party keyed by character name with shallow-merge per character.
+- codex_writes: shallow-merge patch over the codex for whatever actually changed (hp loss, item gained/lost, location change, party stat change). Omit fields that did not change. Party keyed by character name with shallow-merge per character. DO NOT write top-level "npcs", "factions", or "threads" here — use npc_changes / new_npcs / faction_changes / thread_changes instead.
+- npc_changes: partial merge over existing NPCs by name — only fields that shifted this round (e.g. disposition, location, status). null if none.
+- new_npcs: full NPC objects for NPCs appearing for the first time — name, role, location, disposition, goal, notes. null if none. Use this the FIRST time an NPC is named in a scene.
+- faction_changes: partial merge by faction name — null if none.
+- thread_changes: array of { id, ...partial fields } for active/landed thread state shifts — null if none.
 - qte: only if a sudden reflex is demanded (trap springs, something lunges) — null otherwise
 - scene_tags_change: only if biome/weather/mood actually shift — null otherwise
 
@@ -51,7 +55,11 @@ OUTPUT (STRICT JSON, no markdown, no prose narration):
     }
   ],
   "scene_advance": "<one line, max 18 words>",
-  "codex_writes": { partial codex patch — omit unchanged fields },
+  "codex_writes": { partial codex patch — omit unchanged fields. No top-level npcs/factions/threads. }",
+  "npc_changes": null | { "<name>": { partial fields to merge } },
+  "new_npcs": null | { "<name>": { role, location, disposition, goal, notes } },
+  "faction_changes": null | { "<name>": { partial fields to merge } },
+  "thread_changes": null | [ { "id": "<id>", ...partial fields to merge } ],
   "qte": null | { "type": "dodge"|"block"|"counter"|"grab", "time_limit_ms": 1200 },
   "scene_tags_change": null | { "biome"?, "weather"?, "mood"? }
 }`;

@@ -461,6 +461,10 @@ export class SignalingRoom {
             scene_tags: ruling.scene_tags_change || null,
             ui_update: ruling.qte ? { qte: ruling.qte } : null,
             new_codex: ruling.codex_writes || {},
+            npc_changes: ruling.npc_changes || null,
+            new_npcs: ruling.new_npcs || null,
+            faction_changes: ruling.faction_changes || null,
+            thread_changes: ruling.thread_changes || null,
             lint_passed: lint.passes,
             lint_retried: retried,
             pipeline: 'director-dm'
@@ -573,9 +577,49 @@ export class SignalingRoom {
           // Already handled above from turn.scene_tags; skip duplicate writes.
         } else if (key === 'world_clock') {
           // Already advanced above; ignore Director's clock (we own it).
+        } else if (key === 'npcs' || key === 'factions' || key === 'threads') {
+          // Director should use npc_changes/new_npcs/etc., not raw overwrites.
+          // Ignore raw overwrites here to prevent wiping accumulated state.
         } else {
           yCodex.set(key, writes[key]);
         }
+      }
+
+      // Phase 1 structured NPC/faction/thread writes from the Director.
+      // Merge by name/id so we accumulate state across turns instead of
+      // each Director call inventing throwaway NPCs the World Engine can
+      // never advance.
+      const npcChanges = turn.npc_changes;
+      const newNpcs = turn.new_npcs;
+      if (npcChanges || newNpcs) {
+        const npcs = { ...(yCodex.get('npcs') || {}) };
+        for (const name in (npcChanges || {})) {
+          npcs[name] = { ...(npcs[name] || {}), ...npcChanges[name] };
+        }
+        for (const name in (newNpcs || {})) {
+          npcs[name] = { ...(npcs[name] || {}), ...newNpcs[name] };
+        }
+        yCodex.set('npcs', npcs);
+      }
+      if (turn.faction_changes) {
+        const facs = { ...(yCodex.get('factions') || {}) };
+        for (const name in turn.faction_changes) {
+          facs[name] = { ...(facs[name] || {}), ...turn.faction_changes[name] };
+        }
+        yCodex.set('factions', facs);
+      }
+      if (turn.thread_changes) {
+        const threads = (yCodex.get('threads') || []).slice();
+        for (const change of turn.thread_changes) {
+          if (!change?.id) continue;
+          const idx = threads.findIndex(t => t?.id === change.id);
+          if (idx >= 0) {
+            threads[idx] = { ...threads[idx], ...change };
+          } else {
+            threads.push(change);
+          }
+        }
+        yCodex.set('threads', threads);
       }
     });
 
