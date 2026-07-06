@@ -226,10 +226,27 @@
         img.onerror = () => { scenePortraitLoading = false; };
         img.src = url;
     });
+    // Phase 4 + Phase 8: Scene + NPC portraits via Pollinations
     function toggleScenePortraits() {
         scenePortraitsEnabled = !scenePortraitsEnabled;
         localStorage.setItem('rt_scene_portraits', scenePortraitsEnabled ? '1' : '0');
         if (!scenePortraitsEnabled) scenePortraitShown = '';
+    }
+    // NPC portraits share the same toggle. Deterministic from name+role so the
+    // same NPC renders the same portrait across sessions, devices, and players.
+    function npcPortraitUrl(name: string, npc: any): string {
+        const role = (npc?.role || '').trim();
+        const notes = (npc?.notes || '').trim();
+        const desc = [role, notes].filter(Boolean).join(', ') || 'a fantasy character';
+        const prompt = `fantasy character portrait, ${name}${role ? `, ${role}` : ''}, ${desc}, head and shoulders, painterly, neutral expression, plain background`;
+        const seedBase = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        // Hash the seed string to a 32-bit uint for Pollinations.
+        let h = 2166136261 >>> 0;
+        for (let i = 0; i < seedBase.length; i++) {
+            h ^= seedBase.charCodeAt(i);
+            h = Math.imul(h, 16777619);
+        }
+        return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=256&height=256&seed=${h >>> 0}&nologo=true&model=flux`;
     }
 
     // Phase 6: Host North Star — premise + tone + opening hook for the world.
@@ -1147,10 +1164,15 @@
                                     <ul class="world-list npc-list">
                                         {#each Object.entries(codexData.npcs) as [name, npc]}
                                             <li class="world-item">
-                                                <span class="world-name">{name}</span>
-                                                {#if (npc as any).role}<span class="world-sub">{(npc as any).role}</span>{/if}
-                                                {#if (npc as any).location}<span class="world-meta">{(npc as any).location}</span>{/if}
-                                                {#if (npc as any).notes}<span class="world-note">{(npc as any).notes}</span>{/if}
+                                                {#if scenePortraitsEnabled}
+                                                    <img class="npc-portrait" src={npcPortraitUrl(name, npc)} alt={name} loading="lazy" />
+                                                {/if}
+                                                <div class="world-item-text">
+                                                    <span class="world-name">{name}</span>
+                                                    {#if (npc as any).role}<span class="world-sub">{(npc as any).role}</span>{/if}
+                                                    {#if (npc as any).location}<span class="world-meta">{(npc as any).location}</span>{/if}
+                                                    {#if (npc as any).notes}<span class="world-note">{(npc as any).notes}</span>{/if}
+                                                </div>
                                             </li>
                                         {/each}
                                     </ul>
@@ -2359,6 +2381,28 @@
         line-clamp: 3;
         -webkit-box-orient: vertical;
         overflow: hidden;
+    }
+
+    /* Phase 8: NPC portrait thumbnails in codex sidebar */
+    .world-list.npc-list .world-item {
+        display: grid;
+        grid-template-columns: 36px 1fr;
+        gap: 0.5rem;
+        align-items: start;
+    }
+    .world-item-text {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+        min-width: 0;
+    }
+    .npc-portrait {
+        width: 36px;
+        height: 36px;
+        border-radius: 4px;
+        object-fit: cover;
+        border: 1px solid var(--line);
+        background: rgba(0,0,0,0.05);
     }
 
     /* Codex sidebar North Star display */
