@@ -11,7 +11,7 @@
 
     let { chatStore, addChatEntry, ydoc, provider, serverEvents, sendAction, registerKey, reportKeyExhausted } = gameState;
 
-    type ChatEntry = { author: string; text: string; type: 'player' | 'dm'; timestamp?: number };
+    type ChatEntry = { author: string; text: string; type: 'player' | 'dm' | 'world'; timestamp?: number };
     let chatLog = $state<ChatEntry[]>([]);
     let apiKey = $state(localStorage.getItem('rt_api_key') || '');
     // Committed-key gate (NOT derived from apiKey — see saveSettings).
@@ -517,6 +517,82 @@
     function joinWorld(code: string) {
         roomId = code;
         switchRoom();
+    }
+
+    // Phase 5: .weave export — full snapshot of the chronicle stream + world
+    // state as a downloadable JSON artifact. Format is structured for replay
+    // tools; a `prose` field gives a human-readable plaintext rendition so the
+    // file is openable without tooling.
+    function exportWeave() {
+        const wc = (codexData as any).world_clock || {};
+        const scene = (codexData as any).scene_tags || {};
+        const party = (codexData as any).party || {};
+        const npcs = (codexData as any).npcs || {};
+        const factions = (codexData as any).factions || {};
+        const threads = (codexData as any).threads || [];
+        const location = (codexData as any).location || '';
+
+        // Build the chronicle stream. Order matters — chatLog is append-only
+        // so timestamps preserve order even across late-arriving syncs.
+        const chronicle = chatLog
+            .filter(e => e.type === 'player' || e.type === 'dm' || e.type === 'world')
+            .map(e => ({
+                type: e.type,
+                author: e.author || '',
+                text: e.text || '',
+                timestamp: e.timestamp || null,
+            }));
+
+        // Plaintext rendition for the `prose` field.
+        const proseLines: string[] = [];
+        proseLines.push(`# Chronicle of ${roomId}`);
+        proseLines.push(`# Day ${wc.day || 1} · ${wc.time_of_day || 'morning'} · Turn ${wc.turn || 0}`);
+        if (location) proseLines.push(`# Location: ${location}`);
+        if (scene.biome || scene.weather || scene.mood) {
+            const bits = [scene.biome, scene.weather, scene.mood].filter(Boolean).join(' · ');
+            proseLines.push(`# Scene: ${bits}`);
+        }
+        proseLines.push('');
+        for (const entry of chronicle) {
+            if (entry.type === 'world') {
+                proseLines.push(`◍ ${entry.text}`);
+            } else if (entry.type === 'player') {
+                proseLines.push(`▶ ${entry.author}: ${entry.text}`);
+            } else {
+                proseLines.push(`${entry.text}`);
+                proseLines.push('');
+            }
+        }
+
+        const snapshot = {
+            format: 'round-table.weave',
+            version: 1,
+            exported_at: new Date().toISOString(),
+            world: {
+                room_id: roomId,
+                location,
+                world_clock: wc,
+                scene_tags: scene,
+            },
+            party,
+            npcs,
+            factions,
+            threads,
+            chronicle,
+            prose: proseLines.join('\n'),
+        };
+
+        const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const safeId = roomId.replace(/[^a-z0-9_-]/gi, '_');
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${safeId}-${stamp}.weave.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     function switchRoom() {
@@ -1158,6 +1234,14 @@
                     </label>
                 </div>
 
+                <div class="field">
+                    <span class="field-label">Export</span>
+                    <button class="btn-ghost wide" onclick={exportWeave} disabled={chronicleItems.length === 0}>
+                        Download .weave
+                    </button>
+                    <span class="field-help">Snapshot of this world's chronicle + codex as a JSON file you can keep or share.</span>
+                </div>
+
                 <button class="btn-primary wide" onclick={saveSettings}>Save</button>
             </div>
         </div>
@@ -1177,6 +1261,10 @@
                         </span>
                         <h2>Chronicle of {roomId}</h2>
                     </div>
+                    <button class="btn-ghost weave-export-btn" onclick={exportWeave} disabled={chronicleItems.length === 0} title="Download .weave file">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+                        <span>.weave</span>
+                    </button>
                     <button class="icon-btn close-book-btn" onclick={() => showChronicle = false} aria-label="Close Chronicle">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
                     </button>
@@ -2043,6 +2131,17 @@
         opacity: 0.65;
         line-height: 1.35;
     }
+
+    /* Phase 5: Chronicle modal export button */
+    .weave-export-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.7rem;
+        font-size: 0.78rem;
+    }
+    .weave-export-btn svg { width: 14px; height: 14px; }
+    .weave-export-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .act-go {
         width: 52px; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;
