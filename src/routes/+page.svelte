@@ -84,6 +84,30 @@
     });
     function openThreadDetail(id: string) { threadDetailId = id; }
     function closeThreadDetail() { threadDetailId = null; }
+
+    // Phase 36: party member detail popover — mirrors NPC/faction/thread.
+    // The active player's own sheet renders inline in the codex sidebar; this
+    // popover is for OTHER party members (those who joined the room or were
+    // registered by their own clients and persist in the codex). Without this,
+    // there's no way to inspect a fellow player's vitals/traits/scars.
+    let partyDetailName = $state<string | null>(null);
+    let partyDetailData = $derived.by(() => {
+        if (!partyDetailName) return null;
+        const party = (codexData as any).party || {};
+        const member = party[partyDetailName];
+        if (!member) return null;
+        return { name: partyDetailName, ...(member as any) };
+    });
+    function openPartyDetail(name: string) { partyDetailName = name; }
+    function closePartyDetail() { partyDetailName = null; }
+    // Party roster — everyone except the active player. Used to render a small
+    // roster in the codex sidebar so fellow players are inspectable.
+    let partyRoster = $derived.by(() => {
+        const party = (codexData as any).party || {};
+        return Object.keys(party)
+            .filter((n: string) => n !== characterName)
+            .sort((a: string, b: string) => a.localeCompare(b));
+    });
     // Phase 25: connection banner — show only after a 1.5s grace so brief
     // hiccups don't flash. Banner is non-blocking and dismisses on reconnect.
     let wsDisconnected = $state(false);
@@ -1685,6 +1709,42 @@
                             </form>
                         </div>
 
+                        {#if partyRoster.length > 0}
+                            <div class="codex-section party-roster-section">
+                                <h3>Party</h3>
+                                <ul class="world-list party-list">
+                                    {#each partyRoster as name}
+                                        {@const member = (codexData as any).party[name] || {}}
+                                        {@const hpPct = member.max_hp ? Math.max(0, Math.min(100, (member.hp / member.max_hp) * 100)) : 0}
+                                        <li class="world-item party-roster-item">
+                                            <div class="world-item-text">
+                                                <span class="world-name">
+                                                    <button
+                                                        type="button"
+                                                        class="npc-detail-trigger"
+                                                        onclick={() => openPartyDetail(name)}
+                                                        aria-label={`Sheet for ${name}`}
+                                                        title="Open party member sheet"
+                                                    >{name}</button>
+                                                </span>
+                                                <span class="party-roster-vitals">
+                                                    <span class="party-vital-bar" title={`Vitality ${member.hp || 0} / ${member.max_hp || '?'}`}>
+                                                        <span class="party-vital-fill hp" style="width: {hpPct}%"></span>
+                                                    </span>
+                                                    {#if typeof member.resolve === 'number'}
+                                                        <span class="party-roster-resolve" title={`Resolve ${member.resolve}%`}>◈{member.resolve}</span>
+                                                    {/if}
+                                                    {#if member.corruption > 0}
+                                                        <span class="party-roster-corruption" title={`Corruption ${member.corruption}%`}>☠{member.corruption}</span>
+                                                    {/if}
+                                                </span>
+                                            </div>
+                                        </li>
+                                    {/each}
+                                </ul>
+                            </div>
+                        {/if}
+
                         {#if Object.keys(codexData.npcs || {}).length > 0 || (codexData.threads || []).length > 0 || Object.keys(codexData.factions || {}).length > 0 || (codexData as any).north_star?.premise}
                             <div class="codex-section world-section">
                                 <h3>World</h3>
@@ -2487,6 +2547,74 @@
                     <div class="npc-detail-notes">
                         <h4>Description</h4>
                         <p>{threadDetailData.description}</p>
+                    </div>
+                {/if}
+            </div>
+        </div>
+    {/if}
+
+    <!-- Phase 36: party member detail popover — mirrors NPC/faction/thread.
+         Surfaces HP/resolve/corruption/traits/scars for fellow party members
+         who would otherwise be invisible (their sheet renders on their own
+         client, not yours). -->
+    {#if partyDetailName && partyDetailData}
+        <div
+            class="modal-overlay npc-detail-overlay"
+            role="button"
+            tabindex="-1"
+            onkeydown={(e) => { if (e.key === 'Escape') closePartyDetail(); }}
+            onclick={(e) => { if (e.target === e.currentTarget) closePartyDetail(); }}
+        >
+            <div class="npc-detail-card panel">
+                <header class="npc-detail-head">
+                    <div class="npc-detail-id">
+                        <h3>{partyDetailData.name}</h3>
+                        <span class="npc-detail-role">Party member</span>
+                    </div>
+                    <button class="icon-btn" onclick={closePartyDetail} aria-label="Close">✕</button>
+                </header>
+                <dl class="npc-detail-grid">
+                    {#if typeof partyDetailData.hp === 'number' && typeof partyDetailData.max_hp === 'number'}
+                        <div class="detail-row">
+                            <dt>Vitality</dt>
+                            <dd>{partyDetailData.hp} / {partyDetailData.max_hp}</dd>
+                        </div>
+                    {/if}
+                    {#if typeof partyDetailData.resolve === 'number'}
+                        <div class="detail-row"><dt>Resolve</dt><dd>{partyDetailData.resolve}%</dd></div>
+                    {/if}
+                    {#if typeof partyDetailData.corruption === 'number' && partyDetailData.corruption > 0}
+                        <div class="detail-row"><dt>Corruption</dt><dd>{partyDetailData.corruption}%</dd></div>
+                    {/if}
+                </dl>
+                {#if partyDetailData.active_traits && partyDetailData.active_traits.length > 0}
+                    <div class="npc-detail-notes">
+                        <h4>Traits</h4>
+                        <ul class="trait-list">
+                            {#each partyDetailData.active_traits as trait}
+                                <li class="trait-tag">{trait}</li>
+                            {/each}
+                        </ul>
+                    </div>
+                {/if}
+                {#if partyDetailData.permanent_conditions && partyDetailData.permanent_conditions.length > 0}
+                    <div class="npc-detail-notes">
+                        <h4>Permanent scars</h4>
+                        <ul class="scar-list">
+                            {#each partyDetailData.permanent_conditions as scar}
+                                <li class="scar-item">{scar}</li>
+                            {/each}
+                        </ul>
+                    </div>
+                {/if}
+                {#if partyDetailData.echo_tags && partyDetailData.echo_tags.length > 0}
+                    <div class="npc-detail-notes">
+                        <h4>Echo tags</h4>
+                        <ul class="trait-list">
+                            {#each partyDetailData.echo_tags as tag}
+                                <li class="trait-tag">{tag}</li>
+                            {/each}
+                        </ul>
                     </div>
                 {/if}
             </div>
@@ -4570,6 +4698,59 @@
         text-underline-offset: 2px;
     }
     .npc-detail-trigger:hover { color: var(--accent); }
+
+    /* Phase 36: party roster + detail popover. Roster lives in the codex
+       sidebar; the popover reuses .npc-detail-card. The roster item shows
+       a thin vitals strip so you can scan the party's state at a glance. */
+    .party-roster-section { margin-top: 0.75rem; }
+    .party-roster-section h3 {
+        font-size: 0.7rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+        margin: 0 0 0.5rem 0;
+    }
+    .party-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+    }
+    .party-roster-item {
+        display: flex;
+        align-items: center;
+        padding: 0.35rem 0.5rem;
+        background: rgba(0,0,0,0.025);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+    }
+    .party-roster-vitals {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        margin-top: 0.2rem;
+        font-size: 0.7rem;
+        color: var(--ink-soft);
+        font-variant-numeric: tabular-nums;
+    }
+    .party-vital-bar {
+        display: inline-block;
+        width: 60px;
+        height: 5px;
+        background: rgba(0,0,0,0.1);
+        border-radius: 3px;
+        overflow: hidden;
+    }
+    .party-vital-fill.hp {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, #b5524a, #d97a73);
+        transition: width 0.3s ease;
+    }
+    .party-roster-resolve { color: #6b5d9b; }
+    .party-roster-corruption { color: #6b3b8a; }
     .npc-chip-btn {
         background: rgba(0,0,0,0.04);
         border: 1px solid var(--line);
