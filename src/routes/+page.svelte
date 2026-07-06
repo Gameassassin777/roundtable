@@ -193,6 +193,10 @@
     // action text, action authors, and world-beat text. Reset when the
     // drawer closes. Filters the rendered list; doesn't touch the source.
     let chronicleSearch = $state('');
+    // Phase 41: whisper-only filter toggle in the chronicle. Lets the host
+    // pull up just their private DM whispers without scrolling through the
+    // public stream. Independent of chronicleSearch (text filter).
+    let chronicleWhisperOnly = $state(false);
     // Phase 40: codex sidebar World-section search — same idea, smaller
     // surface. Hides non-matching NPC/faction/thread/party entries. Empty
     // by default so the unfiltered view is what you see first.
@@ -234,9 +238,14 @@
         return partyRoster.filter((n: string) => n.toLowerCase().includes(q));
     });
     let filteredChronicleItems = $derived.by(() => {
+        // Phase 41: whisper-only filter applied before text search.
+        let pool = chronicleItems;
+        if (chronicleWhisperOnly) {
+            pool = pool.filter((item: any) => item.kind === 'world' && typeof item.id === 'string' && item.id.startsWith('whisper-'));
+        }
         const q = chronicleSearch.trim().toLowerCase();
-        if (!q) return chronicleItems;
-        return chronicleItems.filter((item: any) => {
+        if (!q) return pool;
+        return pool.filter((item: any) => {
             if (item.kind === 'round') {
                 if (item.narration && item.narration.toLowerCase().includes(q)) return true;
                 for (const a of item.actions as any[]) {
@@ -2404,7 +2413,7 @@
 
     <!-- Chronicle (Session History) modal -->
     {#if showChronicle && isReady && characterSelected}
-        <div transition:overlayTransition class="modal-overlay chronicle-overlay-container" role="button" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') { showChronicle = false; chronicleSearch = ''; } }} onclick={(e) => { if (e.target === e.currentTarget) { showChronicle = false; chronicleSearch = ''; } }}>
+        <div transition:overlayTransition class="modal-overlay chronicle-overlay-container" role="button" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') { showChronicle = false; chronicleSearch = ''; chronicleWhisperOnly = false; } }} onclick={(e) => { if (e.target === e.currentTarget) { showChronicle = false; chronicleSearch = ''; chronicleWhisperOnly = false; } }}>
             <div transition:chronicleTransition class="chronicle-book panel">
                 <div class="book-header">
                     <div class="book-title-group">
@@ -2420,7 +2429,7 @@
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
                         <span>.weave</span>
                     </button>
-                    <button class="icon-btn close-book-btn" onclick={() => { showChronicle = false; chronicleSearch = ''; }} aria-label="Close Chronicle">
+                    <button class="icon-btn close-book-btn" onclick={() => { showChronicle = false; chronicleSearch = ''; chronicleWhisperOnly = false; }} aria-label="Close Chronicle">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
                     </button>
                 </div>
@@ -2438,7 +2447,15 @@
                             {#if chronicleSearch}
                                 <button type="button" class="chronicle-search-clear" onclick={() => { chronicleSearch = ''; }} aria-label="Clear search">✕</button>
                             {/if}
-                            {#if chronicleSearch && filteredChronicleItems.length !== chronicleItems.length}
+                            <button
+                                type="button"
+                                class="chronicle-toggle-whisper"
+                                class:active={chronicleWhisperOnly}
+                                onclick={() => { chronicleWhisperOnly = !chronicleWhisperOnly; }}
+                                title="Show only your DM whispers (private intel)"
+                                aria-pressed={chronicleWhisperOnly}
+                            >ฅ Whisper</button>
+                            {#if (chronicleSearch || chronicleWhisperOnly) && filteredChronicleItems.length !== chronicleItems.length}
                                 <span class="chronicle-search-count">{filteredChronicleItems.length} / {chronicleItems.length}</span>
                             {/if}
                         </div>
@@ -3191,7 +3208,11 @@
         z-index: 10;
         display: flex;
         flex-direction: column;
-        padding: 1rem;
+        /* Phase 42: iOS safe-area inset — viewport-fit=cover in app.html means
+           we draw under the notch/battery bar. Use max() so we keep the 1rem
+           aesthetic on devices without a notch, but push content clear of the
+           status bar / home indicator on modern iPhones. */
+        padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom)) 1rem;
         gap: 1rem;
         pointer-events: none;
     }
@@ -4445,7 +4466,10 @@
 
     /* Responsive */
     @media (max-width: 768px) {
-        .layout-grid { padding: 0.7rem; gap: 0.7rem; }
+        /* Phase 42: safe-area top padding preserved on mobile, scaled down
+           horizontal gutters. Top padding still uses max() so iOS notch /
+           battery bar doesn't cut the header off. */
+        .layout-grid { padding: max(0.7rem, env(safe-area-inset-top)) 0.7rem max(0.7rem, env(safe-area-inset-bottom)) 0.7rem; gap: 0.7rem; }
         .menu-toggle { display: flex; }
         .hud-center { display: none; }
         .brand h1 { font-size: 0.95rem; }
@@ -4613,6 +4637,24 @@
         color: var(--ink-soft);
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
+    }
+    .chronicle-toggle-whisper {
+        font: inherit;
+        font-size: 0.72rem;
+        padding: 0.35rem 0.6rem;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        color: var(--ink-soft);
+        border-radius: 5px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 0.15s, color 0.15s;
+    }
+    .chronicle-toggle-whisper:hover { color: var(--ink); border-color: var(--line-strong); }
+    .chronicle-toggle-whisper.active {
+        background: rgba(107, 59, 138, 0.12);
+        border-color: rgba(107, 59, 138, 0.35);
+        color: #5a2f73;
     }
 
     .chronicle-empty .empty-text {
@@ -4841,7 +4883,9 @@
     /* Phase 25: Connection banner — top-center, non-blocking, quiet. */
     .conn-banner {
         position: fixed;
-        top: 0.8rem;
+        /* Phase 42: top offset must clear the iOS status bar / notch.
+           max() keeps the 0.8rem aesthetic on desktops. */
+        top: calc(0.8rem + env(safe-area-inset-top));
         left: 50%;
         transform: translateX(-50%);
         z-index: 90;
@@ -4878,7 +4922,9 @@
     .conn-text { line-height: 1.35; }
 
     @media (max-width: 540px) {
-        .conn-banner { font-size: 0.72rem; padding: 0.45rem 0.7rem; top: 0.5rem; }
+        /* Phase 42: keep safe-area top offset even at small breakpoints so
+           the banner stays below the iOS status bar. */
+        .conn-banner { font-size: 0.72rem; padding: 0.45rem 0.7rem; top: calc(0.5rem + env(safe-area-inset-top)); }
     }
 
     /* Phase 30: NPC detail popover — small card overlay. */
@@ -5218,7 +5264,7 @@
         }
 
         /* Layout-grid tighter gutters so the stage gets more room. */
-        .layout-grid { padding: 0.5rem; gap: 0.5rem; }
+        .layout-grid { padding: max(0.5rem, env(safe-area-inset-top)) 0.5rem max(0.5rem, env(safe-area-inset-bottom)) 0.5rem; gap: 0.5rem; }
 
         /* Situation bar — allow wrap, slightly smaller text. */
         .situation-bar {
