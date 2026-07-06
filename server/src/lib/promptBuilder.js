@@ -1,7 +1,48 @@
-// Server-side prompt builder. Phase 0 keeps the existing single-call prompt
-// (ported from src/lib/ai/promptBuilder.ts). Phase 1 will replace this with
-// the Director / DM / Critic split — the file shape stays the same.
+// Phase 1 DM: writes prose from the Director's structural ruling.
+// No judgement — that already happened. Just grounded narration, 2-3 sentences,
+// plain tone. Critic lint runs after this; failures retry once with feedback.
 
+export function buildDmPrompt(directorRuling, codexJson, retryFeedback = null) {
+  const rulingJson = JSON.stringify(directorRuling, null, 2);
+  const feedbackBlock = retryFeedback
+    ? `\n\nPREVIOUS ATTEMPT REJECTED BY CRITIC:\n${retryFeedback}\nRewrite the narration to fix every listed violation. Keep it grounded.\n`
+    : '';
+
+  return `CURRENT SITUATION (MEMORY CODEX):
+${codexJson}
+
+DIRECTOR'S RULING (WHAT HAPPENS — your job is to write the prose, not to decide outcomes):
+${rulingJson}${feedbackBlock}
+
+YOU ARE THE DUNGEON MASTER — narrate what happens in plain grounded prose.
+You do NOT decide outcomes. The Director's ruling is canon. Your job is to render it.
+
+CONSTRAINTS (the Critic will check these — do not violate):
+- Exactly 2 to 3 sentences. Combined length 40 to 90 words.
+- Each sentence does one of: advance the scene, deliver a consequence, or stage the next beat. Pure description forbidden.
+- Max 2 descriptive adjectives per sentence.
+- Normal fantasy tone. No purple prose, no grimdark maximalism, no gratuitous gore.
+- FORBIDDEN WORDS: visceral, eldritch, dread, sickly, oozing, twisted, suffocating, malevolent, grotesque, writhing, noxious, tenebrous, abyssal, foul, wretched.
+- End on a beat that invites the next action without listing options.
+- Do NOT address the player directly. Do NOT offer choices. Do NOT ask what they do next.
+- Stay inside the Director's ruling: same verdicts, same consequences, same touches.
+
+OUTPUT (STRICT JSON, no markdown):
+{
+  "narration": "2-3 sentences of plain prose rendering the ruling"
+}`;
+}
+
+export function buildRequestBody(prompt) {
+  return {
+    system_instruction: { parts: [{ text: 'You are the Dungeon Master for a fantasy adventure. Output ONLY valid JSON. No markdown.' }] },
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { response_mime_type: 'application/json' }
+  };
+}
+
+// Phase 0 legacy prompt — kept as fallback if Director fails. Still produces
+// the full single-call shape (narration + scene_tags + ui_update + new_codex).
 export function buildBatchPrompt(actions, codexJson) {
   const rolled = actions.map((action, i) => {
     const d20 = Math.floor(Math.random() * 20) + 1;
@@ -34,13 +75,4 @@ OUTPUT (STRICT JSON, no markdown):
   "ui_update": {"qte": {"type": "dodge", "time_limit_ms": 1200} | null},
   "new_codex": { }
 }`;
-}
-
-// Build the Gemini request body for a single prompt.
-export function buildRequestBody(prompt) {
-  return {
-    system_instruction: { parts: [{ text: 'You are the Dungeon Master for a fantasy adventure. Output ONLY valid JSON. No markdown.' }] },
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { response_mime_type: 'application/json' }
-  };
 }

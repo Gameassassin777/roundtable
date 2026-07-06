@@ -32,34 +32,49 @@
     let connectionStatus = $state("Connecting");
     let lastAction = $state('');
 
-    // Dynamically group raw chatLog entries into structured rounds for the Chronicle
-    let chronicleRounds = $derived.by(() => {
-        type Round = { id: number; actions: ChatEntry[]; narration: string };
-        const rounds: Round[] = [];
-        let currentRound: Round = { id: 1, actions: [], narration: '' };
+    // Chronicle stream — flat list so world beats (Phase 2 World Engine) can
+    // interleave between rounds without belonging to any single round.
+    type ChronicleItem =
+        | { kind: 'round'; id: number; actions: ChatEntry[]; narration: string }
+        | { kind: 'world'; id: string; text: string; timestamp?: number };
+
+    let chronicleItems = $derived.by(() => {
+        const items: ChronicleItem[] = [];
+        let currentRound: { kind: 'round'; id: number; actions: ChatEntry[]; narration: string } | null = null;
+        let nextRoundId = 1;
+
+        const flush = () => {
+            if (currentRound && (currentRound.actions.length > 0 || currentRound.narration)) {
+                items.push(currentRound);
+            }
+            currentRound = null;
+        };
 
         for (const entry of chatLog) {
             if (entry.type === 'player') {
+                if (!currentRound) currentRound = { kind: 'round', id: nextRoundId++, actions: [], narration: '' };
                 if (currentRound.narration) {
-                    rounds.push(currentRound);
-                    currentRound = { id: rounds.length + 1, actions: [], narration: '' };
+                    flush();
+                    currentRound = { kind: 'round', id: nextRoundId++, actions: [], narration: '' };
                 }
                 currentRound.actions.push(entry);
             } else if (entry.type === 'dm') {
-                if (entry.author === 'System' || entry.author === 'Warning') {
-                    continue;
-                }
+                if (entry.author === 'System' || entry.author === 'Warning') continue;
+                if (!currentRound) currentRound = { kind: 'round', id: nextRoundId++, actions: [], narration: '' };
                 currentRound.narration = entry.text;
-                rounds.push(currentRound);
-                currentRound = { id: rounds.length + 1, actions: [], narration: '' };
+                flush();
+            } else if (entry.type === 'world') {
+                flush();
+                items.push({ kind: 'world', id: `world-${entry.timestamp || Math.random()}`, text: entry.text, timestamp: entry.timestamp });
             }
         }
-        
-        if (currentRound.actions.length > 0) {
-            rounds.push(currentRound);
-        }
-        return rounds;
+        flush();
+        return items;
     });
+
+    // Back-compat alias so existing markup that references chronicleRounds keeps working
+    // (typed as any because it's only used in template iteration).
+    let chronicleRounds = $derived(chronicleItems.filter((i): i is any => i.kind === 'round'));
 
     // Onboarding wizard step: 'welcome' | 'attune' | 'forge'
     let wizardStep = $state('welcome');
@@ -907,34 +922,41 @@
                 </div>
 
                 <div class="book-body scrollable-parchment">
-                    {#if chronicleRounds.length === 0}
+                    {#if chronicleItems.length === 0}
                         <div class="chronicle-empty">
                             <p class="empty-text">No deeds have been recorded in this realm yet. Begin your actions to write the chronicle.</p>
                         </div>
                     {:else}
                         <div class="rounds-list">
-                            {#each chronicleRounds as round}
-                                <article class="round-entry">
-                                    <header class="round-header-row">
-                                        <h3 class="round-number">Round {round.id}</h3>
-                                        <div class="round-divider-line"></div>
-                                    </header>
-                                    
-                                    <div class="round-actions">
-                                        {#each round.actions as action}
-                                            <div class="action-bubble-row">
-                                                <span class="action-author">{action.author}:</span>
-                                                <span class="action-text">“{action.text}”</span>
-                                            </div>
-                                        {/each}
-                                    </div>
+                            {#each chronicleItems as item (item.id)}
+                                {#if item.kind === 'round'}
+                                    <article class="round-entry">
+                                        <header class="round-header-row">
+                                            <h3 class="round-number">Round {item.id}</h3>
+                                            <div class="round-divider-line"></div>
+                                        </header>
 
-                                    {#if round.narration}
-                                        <div class="round-narration">
-                                            <p class="narration-text">{@html round.narration}</p>
+                                        <div class="round-actions">
+                                            {#each item.actions as action}
+                                                <div class="action-bubble-row">
+                                                    <span class="action-author">{action.author}:</span>
+                                                    <span class="action-text">“{action.text}”</span>
+                                                </div>
+                                            {/each}
                                         </div>
-                                    {/if}
-                                </article>
+
+                                        {#if item.narration}
+                                            <div class="round-narration">
+                                                <p class="narration-text">{@html item.narration}</p>
+                                            </div>
+                                        {/if}
+                                    </article>
+                                {:else}
+                                    <article class="world-entry">
+                                        <span class="world-marker" aria-hidden="true">◍</span>
+                                        <p class="world-text">{item.text}</p>
+                                    </article>
+                                {/if}
                             {/each}
                         </div>
                     {/if}
@@ -1836,6 +1858,32 @@
         line-height: 1.6;
         color: var(--ink);
         text-align: justify;
+    }
+
+    .world-entry {
+        display: flex;
+        gap: 0.6rem;
+        align-items: flex-start;
+        padding: 0.55rem 0.9rem;
+        margin: 0.35rem 0;
+        background: rgba(140, 47, 47, 0.04);
+        border-left: 1px dashed var(--line);
+        border-radius: 3px;
+    }
+    .world-marker {
+        color: var(--accent);
+        opacity: 0.55;
+        font-size: 0.9rem;
+        line-height: 1.4;
+        flex-shrink: 0;
+    }
+    .world-text {
+        font-family: var(--font-serif);
+        font-style: italic;
+        font-size: 0.82rem;
+        line-height: 1.55;
+        color: var(--ink-soft);
+        margin: 0;
     }
 
     .narration-text::first-letter {

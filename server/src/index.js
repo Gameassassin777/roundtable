@@ -1,6 +1,9 @@
 import * as Y from 'yjs';
 import { callGemini, extractText, parseJsonLoose, KeyPool, SYSTEM_PROMPT } from './lib/ai.js';
-import { buildBatchPrompt, buildRequestBody } from './lib/promptBuilder.js';
+import { buildDmPrompt, buildBatchPrompt, buildRequestBody } from './lib/promptBuilder.js';
+import { buildDirectorPrompt, buildDirectorRequestBody } from './lib/director.js';
+import { lintProse } from './lib/proseLint.js';
+import { buildWorldEnginePrompt, buildWorldEngineRequestBody, tickWorldClock } from './lib/worldEngine.js';
 
 // ---------------------------------------------------------------------------
 // Worker entrypoint: route WebSocket upgrades to the per-world Durable Object.
@@ -67,6 +70,8 @@ export class SignalingRoom {
 
   // Neutral default world. No hardcoded grimdark — tone seed is open so the
   // Soul Forge and the DM find their own register from the player's concept.
+  // Phase 2: includes world-clock + empty NPC/faction/thread scaffolds so the
+  // World Engine has structure to write into from the first turn.
   seedDefaultWorld() {
     const yCodex = this.yDoc.getMap('memoryCodex');
     this.yDoc.transact(() => {
@@ -75,6 +80,10 @@ export class SignalingRoom {
       yCodex.set('scene_tags', { biome: 'crossroads', weather: 'clear', mood: 'unsettled' });
       yCodex.set('party', {});
       yCodex.set('inventory', {});
+      yCodex.set('world_clock', { turn: 0, day: 1, time_of_day: 'morning' });
+      yCodex.set('npcs', {});
+      yCodex.set('factions', {});
+      yCodex.set('threads', []);
     });
   }
 
@@ -85,9 +94,140 @@ export class SignalingRoom {
   }
 
   async alarm() {
-    // Phase 0: scaffold only. Phase 2 will run the World Engine here.
-    // Reschedule so the alarm stays armed once World Engine lands.
-    await this.state.storage.setAlarm(Date.now() + 60_000);
+    // Phase 2 World Engine tick. Advance NPCs/factions/threads off-screen,
+    // surface 0-1 ambient world beat, advance the world clock.
+
+    // Idle: no sessions means no one's playing. Don't run, don't reschedule.
+    // Next session's handleSession re-arms via ensureAlarm().
+    if (this.sessions.length === 0) {
+      this.alarmScheduled = false;
+      return;
+    }
+
+    // Defer if a DM turn is in flight — the next alarm picks this up.
+    if (this.turnInFlight) {
+      try { await this.state.storage.setAlarm(Date.now() + 60_000); } catch {}
+      return;
+    }
+
+    try {
+      await this.runWorldEngine();
+    } catch (e) {
+      console.error('World Engine error:', e);
+    }
+
+    // Reschedule (every 3 min — long enough to feel ambient, short enough to matter)
+    try {
+      await this.state.storage.setAlarm(Date.now() + 180_000);
+    } catch {}
+  }
+
+  ensureAlarm() {
+    if (this.alarmScheduled) return;
+    this.alarmScheduled = true;
+    this.state.storage.setAlarm(Date.now() + 180_000).catch(() => {});
+  }
+
+  async runWorldEngine() {
+    const keyEntry = this.keyPool.next();
+    if (!keyEntry) return; // No key available this tick; try next alarm.
+
+    const yCodex = this.yDoc.getMap('memoryCodex');
+    const codexJson = JSON.stringify(yCodex.toJSON(), null, 2);
+
+    // Pull last ~6 chat entries for context (what the party has been doing).
+    const yChat = this.yDoc.getArray('chatLog');
+    const recent = (yChat.toArray() || []).slice(-6);
+    const recentChatJson = JSON.stringify(recent.map(e => ({
+      author: e.author, text: e.text, type: e.type
+    })), null, 2);
+
+    const result = await this.callWithFallback(
+      buildWorldEngineRequestBody(buildWorldEnginePrompt(codexJson, recentChatJson)),
+      keyEntry
+    );
+    if (!result.ok) return;
+
+    const text = extractText(result.data);
+    const parsed = parseJsonLoose(text);
+    if (!parsed) return;
+
+    // Apply the world-clock tick we computed locally (the model's version
+    // is a suggestion; we own the canonical tick to avoid double-advancing).
+    const currentClock = yCodex.get('world_clock') || { turn: 0, day: 1, time_of_day: 'morning' };
+    const newClock = tickWorldClock(currentClock);
+
+    // Lint the world_beat with the same prose rules as the DM call.
+    let beat = parsed.world_beat || null;
+    if (beat) {
+      // Quick 1-2 sentence check. Don't retry — just truncate hard if needed.
+      const sentences = (beat.match(/[.!?]+\s/g) || []).length;
+      if (sentences > 2) {
+        // Cut to first two sentence-end positions.
+        const m = beat.match(/^.+?[.!?]+\s.+?[.!?]+/);
+        beat = m ? m[0] : beat;
+      }
+    }
+
+    this.yDoc.transact(() => {
+      yCodex.set('world_clock', newClock);
+
+      // NPCs: merge changes + add new ones.
+      if (parsed.npc_changes || parsed.new_npcs) {
+        const npcs = { ...(yCodex.get('npcs') || {}) };
+        for (const name in (parsed.npc_changes || {})) {
+          npcs[name] = { ...(npcs[name] || {}), ...parsed.npc_changes[name] };
+        }
+        for (const name in (parsed.new_npcs || {})) {
+          npcs[name] = parsed.new_npcs[name];
+        }
+        yCodex.set('npcs', npcs);
+      }
+
+      // Factions: merge.
+      if (parsed.faction_changes) {
+        const facs = { ...(yCodex.get('factions') || {}) };
+        for (const name in parsed.faction_changes) {
+          facs[name] = { ...(facs[name] || {}), ...parsed.faction_changes[name] };
+        }
+        yCodex.set('factions', facs);
+      }
+
+      // Threads: merge by id + append new ones.
+      if (parsed.thread_changes || parsed.new_threads) {
+        const threads = (yCodex.get('threads') || []).slice();
+        const byId = new Map(threads.map(t => [t.id, t]));
+        for (const change of (parsed.thread_changes || [])) {
+          if (!change.id) continue;
+          const cur = byId.get(change.id) || {};
+          byId.set(change.id, { ...cur, ...change });
+        }
+        for (const t of (parsed.new_threads || [])) {
+          if (t.id && !byId.has(t.id)) byId.set(t.id, t);
+        }
+        yCodex.set('threads', Array.from(byId.values()));
+      }
+
+      // Optional world_beat goes to chat as type 'world' (distinct from DM 'dm').
+      if (beat) {
+        yChat.push([{
+          author: 'World',
+          text: beat,
+          type: 'world',
+          timestamp: Date.now()
+        }]);
+      }
+    });
+
+    // Broadcast so clients without 'world' styling still render it.
+    this.broadcast({
+      type: 'world-beat',
+      beat,
+      world_clock: newClock
+    });
+
+    const merged = Y.encodeStateAsUpdate(this.yDoc);
+    await this.state.storage.put("yDocState", merged);
   }
 
   // -------------------------------------------------------------------------
@@ -124,6 +264,9 @@ export class SignalingRoom {
     };
 
     sendPresence();
+
+    // First session in a previously-idle world re-arms the World Engine alarm.
+    this.ensureAlarm();
 
     ws.addEventListener("message", async (event) => {
       try {
@@ -237,7 +380,8 @@ export class SignalingRoom {
   }
 
   // -------------------------------------------------------------------------
-  // Turn pipeline (Phase 0: single AI call. Phase 1: Director + DM + Critic)
+  // Turn pipeline (Phase 1: Director → DM → prose lint, with single-call
+  // Phase 0 path as fallback if the Director call fails).
   // -------------------------------------------------------------------------
   async flushBatch() {
     if (this.turnInFlight) return;
@@ -245,11 +389,8 @@ export class SignalingRoom {
     this.pendingActions = [];
     if (actions.length === 0) return;
 
-    // Make sure alarm is armed (idempotent — alarm() reschedules itself)
-    if (!this.alarmScheduled) {
-      this.alarmScheduled = true;
-      try { await this.state.storage.setAlarm(Date.now() + 60_000); } catch {}
-    }
+    // Make sure alarm is armed for the World Engine (Phase 2).
+    this.ensureAlarm();
 
     const keyEntry = this.keyPool.next();
     if (!keyEntry) {
@@ -271,42 +412,114 @@ export class SignalingRoom {
     this.broadcast({ type: 'turn-start', actionIds: actions.map(a => a.id) });
 
     const codexJson = JSON.stringify(this.yDoc.getMap('memoryCodex').toJSON(), null, 2);
-    const prompt = buildBatchPrompt(actions, codexJson);
-    const body = buildRequestBody(prompt);
 
-    const result = await callGemini(body, keyEntry.value);
+    // --- Phase 1: Director → DM → lint, with one retry on lint failure -----
+    const directorResult = await this.callWithFallback(
+      buildDirectorRequestBody(buildDirectorPrompt(actions, codexJson)),
+      keyEntry
+    );
 
-    if (!result.ok) {
-      if (result.status === 429) {
-        this.keyPool.markThrottled(keyEntry.value, result.retryAfterMs || 60_000);
-      }
-      // Try once more with a different key from the pool
-      const altKey = this.keyPool.next();
-      if (altKey && altKey.value !== keyEntry.value) {
-        const retry = await callGemini(body, altKey.value);
-        if (retry.ok) {
-          await this.commitTurn(retry, actions);
-          this.turnInFlight = false;
-          return;
+    let turn;
+    if (directorResult.ok) {
+      const directorText = extractText(directorResult.data);
+      const ruling = parseJsonLoose(directorText);
+      if (ruling) {
+        // DM call: render the ruling as prose.
+        const dmResult = await this.callWithFallback(
+          buildRequestBody(buildDmPrompt(ruling, codexJson)),
+          keyEntry
+        );
+        if (dmResult.ok) {
+          const dmText = extractText(dmResult.data);
+          const dmParsed = parseJsonLoose(dmText) || { narration: dmText };
+
+          // Lint pass 1
+          let lint = lintProse(dmParsed.narration);
+          let finalNarration = dmParsed.narration;
+          let retried = false;
+
+          // Lint retry: rewrite once with feedback
+          if (!lint.passes) {
+            retried = true;
+            const retryResult = await this.callWithFallback(
+              buildRequestBody(buildDmPrompt(ruling, codexJson, lint.feedback)),
+              keyEntry
+            );
+            if (retryResult.ok) {
+              const retryText = extractText(retryResult.data);
+              const retryParsed = parseJsonLoose(retryText) || { narration: retryText };
+              const lint2 = lintProse(retryParsed.narration);
+              // Only adopt the retry if it actually improved
+              if (lint2.passes || (!lint.passes && retryParsed.narration?.length > finalNarration.length)) {
+                finalNarration = retryParsed.narration;
+              }
+            }
+          }
+
+          turn = {
+            narration: finalNarration,
+            scene_tags: ruling.scene_tags_change || null,
+            ui_update: ruling.qte ? { qte: ruling.qte } : null,
+            new_codex: ruling.codex_writes || {},
+            lint_passed: lint.passes,
+            lint_retried: retried
+          };
         }
       }
-      this.broadcast({
-        type: 'turn-error',
-        kind: 'ai-failed',
-        message: 'The world hesitates — the AI could not respond. Try again in a moment.',
-        error: result.error || `status ${result.status}`
-      });
-      this.turnInFlight = false;
-      return;
     }
 
-    await this.commitTurn(result, actions);
+    // Fallback: Phase 0 single-call path (Director call failed or produced
+    // nothing usable). Same prompt + codex shape Calvin shipped in Phase 0.
+    if (!turn) {
+      const fallbackResult = await this.callWithFallback(
+        buildRequestBody(buildBatchPrompt(actions, codexJson)),
+        keyEntry
+      );
+      if (!fallbackResult.ok) {
+        this.broadcast({
+          type: 'turn-error',
+          kind: 'ai-failed',
+          message: 'The world hesitates — the AI could not respond. Try again in a moment.',
+          error: fallbackResult.error || `status ${fallbackResult.status}`
+        });
+        this.turnInFlight = false;
+        return;
+      }
+      const fbText = extractText(fallbackResult.data);
+      const fbParsed = parseJsonLoose(fbText) || { narration: fbText };
+      turn = {
+        narration: fbParsed.narration,
+        scene_tags: fbParsed.scene_tags || null,
+        ui_update: fbParsed.ui_update || null,
+        new_codex: fbParsed.new_codex || {},
+        lint_passed: null,
+        lint_retried: false,
+        fallback: true
+      };
+    }
+
+    await this.commitTurn(turn, actions);
     this.turnInFlight = false;
   }
 
-  async commitTurn(result, actions) {
-    const rawText = extractText(result.data);
-    if (!rawText) {
+  // Call Gemini with one key, retry once on a different key on 429/503.
+  // Returns the same { ok, data, status, ... } shape as callGemini.
+  async callWithFallback(body, primaryKey) {
+    const r1 = await callGemini(body, primaryKey.value);
+    if (r1.ok) return r1;
+    if (r1.status === 429) {
+      this.keyPool.markThrottled(primaryKey.value, r1.retryAfterMs || 60_000);
+    }
+    const alt = this.keyPool.next();
+    if (alt && alt.value !== primaryKey.value) {
+      const r2 = await callGemini(body, alt.value);
+      if (r2.ok) return r2;
+    }
+    return r1;
+  }
+
+  async commitTurn(turn, actions) {
+    if (!turn?.narration) {
       this.broadcast({
         type: 'turn-error',
         kind: 'empty',
@@ -314,7 +527,11 @@ export class SignalingRoom {
       });
       return;
     }
-    const parsed = parseJsonLoose(rawText) || { narration: rawText };
+
+    // Advance the world clock one tick (Phase 2 — every DM turn is a tick).
+    const yCodex = this.yDoc.getMap('memoryCodex');
+    const currentClock = yCodex.get('world_clock') || { turn: 0, day: 1, time_of_day: 'morning' };
+    const newClock = tickWorldClock(currentClock);
 
     // Write the beat to the chat log AND apply codex updates atomically.
     // Both go through Yjs so all clients (and persistence) see them together.
@@ -322,25 +539,40 @@ export class SignalingRoom {
       const yChat = this.yDoc.getArray('chatLog');
       yChat.push([{
         author: 'Dungeon Master',
-        text: parsed.narration,
+        text: turn.narration,
         type: 'dm',
         timestamp: Date.now()
       }]);
 
-      // Deep-merge codex updates (party is keyed by character name)
-      if (parsed.new_codex) {
-        const yCodex = this.yDoc.getMap('memoryCodex');
-        for (const key in parsed.new_codex) {
-          if (key === 'party' && typeof parsed.new_codex[key] === 'object') {
-            const current = yCodex.get('party') || {};
-            const updated = { ...current };
-            for (const name in parsed.new_codex.party) {
-              updated[name] = { ...(updated[name] || {}), ...parsed.new_codex.party[name] };
-            }
-            yCodex.set('party', updated);
-          } else {
-            yCodex.set(key, parsed.new_codex[key]);
+      yCodex.set('world_clock', newClock);
+
+      // Apply scene_tags_change (Director) if present, else fall through.
+      if (turn.scene_tags) {
+        const cur = yCodex.get('scene_tags') || {};
+        const merged = { ...cur };
+        for (const k of ['biome', 'weather', 'mood']) {
+          if (turn.scene_tags[k]) merged[k] = turn.scene_tags[k];
+        }
+        yCodex.set('scene_tags', merged);
+      }
+
+      // Deep-merge codex writes (party is keyed by character name).
+      // Director output uses codex_writes; Phase 0 fallback uses new_codex.
+      const writes = turn.new_codex || {};
+      for (const key in writes) {
+        if (key === 'party' && typeof writes[key] === 'object') {
+          const current = yCodex.get('party') || {};
+          const updated = { ...current };
+          for (const name in writes.party) {
+            updated[name] = { ...(updated[name] || {}), ...writes.party[name] };
           }
+          yCodex.set('party', updated);
+        } else if (key === 'scene_tags') {
+          // Already handled above from turn.scene_tags; skip duplicate writes.
+        } else if (key === 'world_clock') {
+          // Already advanced above; ignore Director's clock (we own it).
+        } else {
+          yCodex.set(key, writes[key]);
         }
       }
     });
@@ -349,9 +581,10 @@ export class SignalingRoom {
     // scene_tags, etc.). The chat/codex already arrived via Yjs sync.
     this.broadcast({
       type: 'turn-result',
-      narration: parsed.narration,
-      scene_tags: parsed.scene_tags || null,
-      ui_update: parsed.ui_update || null
+      narration: turn.narration,
+      scene_tags: turn.scene_tags || null,
+      ui_update: turn.ui_update || null,
+      world_clock: newClock
     });
 
     // Persist updated doc
