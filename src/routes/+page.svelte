@@ -6,6 +6,7 @@
     import { createGameState } from '$lib/stores/gameStore';
     import { forgeCharacter, forgeConverse, type ForgedCharacter, type ForgeMessage } from '$lib/ai/soulForge';
     import { ADVENTURE_SEEDS, type AdventureSeed } from '$lib/adventureSeeds';
+    import { ACTION_TEMPLATES } from '$lib/actionTemplates';
 
     let roomId = $state("crossroads-1");
     let gameState = createGameState(roomId);
@@ -36,6 +37,7 @@
     let isLoading = $state(false);
     let whisperMode = $state(false);  // Phase 10: route submit through the whisper track
     let whisperInFlight = $state(false);  // separate spinner for the private track
+    let actionFieldEl = $state<HTMLInputElement | null>(null);  // Phase 11: focus/position cursor after template apply
     let showQTE = $state(false);
     let qteConfig = $state({ time_limit_ms: 1000, start_time: 0 });
     let currentSceneTags = $state({ biome: "crossroads", weather: "clear", mood: "unsettled" });
@@ -762,6 +764,21 @@
         });
     }
 
+    // Phase 11: drop a verb stem into the action field and focus. Pure UX —
+    // no AI hint, no semantic change. Player still has to complete and submit.
+    function applyTemplate(tpl: { stem: string; cursor_at_end: boolean }) {
+        chatInput = tpl.stem;
+        setTimeout(() => {
+            const el = actionFieldEl;
+            if (!el) return;
+            el.focus();
+            if (tpl.cursor_at_end) {
+                const pos = tpl.stem.length;
+                el.setSelectionRange(pos, pos);
+            }
+        }, 0);
+    }
+
     // Submit a free-text action to the server. Server batches for ~5s, calls the
     // AI with a pooled key, and writes the DM beat to Yjs (arrives here as a
     // chatLog update via sync). turn-result / turn-error clear isLoading.
@@ -1312,11 +1329,24 @@
                                 <span>{situationLine}</span>
                             </div>
                         {/if}
+                        {#if !isLoading && !whisperInFlight && chatInput.length === 0}
+                            <div class="action-templates" role="group" aria-label="Action templates">
+                                {#each ACTION_TEMPLATES as tpl (tpl.id)}
+                                    <button
+                                        type="button"
+                                        class="action-template-chip"
+                                        onclick={() => applyTemplate(tpl)}
+                                        title={`Pre-fill: ${tpl.stem.trim()}`}
+                                    >{tpl.label}</button>
+                                {/each}
+                            </div>
+                        {/if}
                         <div class="action-row">
                             <input
                                 class="action-field"
                                 type="text"
                                 bind:value={chatInput}
+                                bind:this={actionFieldEl}
                                 onkeydown={(e) => e.key === 'Enter' && submitAction()}
                                 onfocus={() => actionInputFocused = true}
                                 onblur={() => actionInputFocused = false}
@@ -2416,6 +2446,33 @@
     }
 
     .action-row { display: flex; gap: 0.6rem; }
+
+    /* Phase 11: action-templates palette — small chips above the input */
+    .action-templates {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+        margin-bottom: 0.4rem;
+    }
+    .action-template-chip {
+        font-family: var(--font);
+        font-size: 0.74rem;
+        font-weight: 500;
+        padding: 0.25rem 0.55rem;
+        background: var(--surface);
+        color: var(--ink);
+        opacity: 0.7;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        cursor: pointer;
+        transition: opacity 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    }
+    .action-template-chip:hover {
+        opacity: 1;
+        border-color: var(--accent);
+        transform: translateY(-1px);
+    }
+    .action-template-chip:active { transform: translateY(0); }
     .action-field { flex: 1; font-size: 1rem; }
 
     /* Phase 4: Scene portrait backdrop */
