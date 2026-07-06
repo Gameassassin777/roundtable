@@ -637,11 +637,19 @@ export class SignalingRoom {
     // Both go through Yjs so all clients (and persistence) see them together.
     this.yDoc.transact(() => {
       const yChat = this.yDoc.getArray('chatLog');
+      // Phase 22: embed pipeline telemetry on the beat so the host can later
+      // see which narrations were retried (lint or critic) or critic-flagged.
+      // Older clients ignore the extra fields; nothing to migrate.
       yChat.push([{
         author: 'Dungeon Master',
         text: turn.narration,
         type: 'dm',
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        audit: {
+          lint_retried: !!turn.lint_retried,
+          critic_passed: turn.critic_passed ?? null,
+          critic_retried: !!turn.critic_retried
+        }
       }]);
 
       yCodex.set('world_clock', newClock);

@@ -57,12 +57,12 @@
     // Chronicle stream — flat list so world beats (Phase 2 World Engine) can
     // interleave between rounds without belonging to any single round.
     type ChronicleItem =
-        | { kind: 'round'; id: number; actions: ChatEntry[]; narration: string }
+        | { kind: 'round'; id: number; actions: ChatEntry[]; narration: string; audit?: { lint_retried: boolean; critic_passed: boolean | null; critic_retried: boolean } }
         | { kind: 'world'; id: string; text: string; timestamp?: number };
 
     let chronicleItems = $derived.by(() => {
         const items: ChronicleItem[] = [];
-        let currentRound: { kind: 'round'; id: number; actions: ChatEntry[]; narration: string } | null = null;
+        let currentRound: { kind: 'round'; id: number; actions: ChatEntry[]; narration: string; audit?: any } | null = null;
         let nextRoundId = 1;
 
         const flush = () => {
@@ -90,6 +90,9 @@
                 if (entry.author === 'System' || entry.author === 'Warning') continue;
                 if (!currentRound) currentRound = { kind: 'round', id: nextRoundId++, actions: [], narration: '' };
                 currentRound.narration = entry.text;
+                // Phase 22: carry the audit forward so the host can see pipeline
+                // quality (lint/critic retries, critic verdict) per beat.
+                currentRound.audit = (entry as any).audit;
                 flush();
             } else if (entry.type === 'world') {
                 flush();
@@ -1954,6 +1957,19 @@
                                         {#if item.narration}
                                             <div class="round-narration">
                                                 <p class="narration-text">{@html item.narration}</p>
+                                                {#if item.audit && (item.audit.lint_retried || item.audit.critic_retried || item.audit.critic_passed === false)}
+                                                    <div class="audit-marks" title="Pipeline telemetry — host-only quality signal.">
+                                                        {#if item.audit.lint_retried}
+                                                            <span class="audit-mark lint" title="Cheap prose lint failed once and retried before passing.">lint↻</span>
+                                                        {/if}
+                                                        {#if item.audit.critic_retried}
+                                                            <span class="audit-mark critic-retry" title="LLM Critic flagged the prose; the DM rewrote it once.">critic↻</span>
+                                                        {/if}
+                                                        {#if item.audit.critic_passed === false}
+                                                            <span class="audit-mark critic-fail" title="LLM Critic flagged this beat and the retry did not pass — narration may drift from the ruling.">critic✗</span>
+                                                        {/if}
+                                                    </div>
+                                                {/if}
                                             </div>
                                         {/if}
                                     </article>
@@ -3640,6 +3656,42 @@
         line-height: 1.6;
         color: var(--ink);
         text-align: justify;
+    }
+
+    /* Phase 22: pipeline audit marks — small, host-only quality signals
+       shown on retried or critic-flagged beats. Quiet by design. */
+    .audit-marks {
+        display: flex;
+        gap: 0.4rem;
+        margin-top: 0.55rem;
+        flex-wrap: wrap;
+    }
+    .audit-mark {
+        font-size: 0.62rem;
+        font-family: var(--font-sans);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 0.12rem 0.45rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--ink-soft);
+        background: rgba(255, 255, 255, 0.55);
+        cursor: help;
+    }
+    .audit-mark.lint {
+        color: #8a6a1a;
+        border-color: rgba(138, 106, 26, 0.4);
+        background: rgba(232, 200, 110, 0.18);
+    }
+    .audit-mark.critic-retry {
+        color: #6a4a8a;
+        border-color: rgba(106, 74, 138, 0.4);
+        background: rgba(186, 160, 220, 0.18);
+    }
+    .audit-mark.critic-fail {
+        color: #8a2a2a;
+        border-color: rgba(138, 42, 42, 0.4);
+        background: rgba(220, 160, 160, 0.18);
     }
 
     .world-entry {
