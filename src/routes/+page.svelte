@@ -67,12 +67,12 @@
     // Chronicle stream — flat list so world beats (Phase 2 World Engine) can
     // interleave between rounds without belonging to any single round.
     type ChronicleItem =
-        | { kind: 'round'; id: number; actions: ChatEntry[]; narration: string; audit?: { lint_retried: boolean; critic_passed: boolean | null; critic_retried: boolean } }
+        | { kind: 'round'; id: number; actions: ChatEntry[]; narration: string; audit?: { lint_retried: boolean; critic_passed: boolean | null; critic_retried: boolean }; ruling?: any }
         | { kind: 'world'; id: string; text: string; timestamp?: number };
 
     let chronicleItems = $derived.by(() => {
         const items: ChronicleItem[] = [];
-        let currentRound: { kind: 'round'; id: number; actions: ChatEntry[]; narration: string; audit?: any } | null = null;
+        let currentRound: { kind: 'round'; id: number; actions: ChatEntry[]; narration: string; audit?: any; ruling?: any } | null = null;
         let nextRoundId = 1;
 
         const flush = () => {
@@ -103,6 +103,9 @@
                 // Phase 22: carry the audit forward so the host can see pipeline
                 // quality (lint/critic retries, critic verdict) per beat.
                 currentRound.audit = (entry as any).audit;
+                // Phase 27: carry the Director's ruling summary so the chronicle
+                // can surface what was decided (collapsible under the narration).
+                currentRound.ruling = (entry as any).ruling_summary;
                 flush();
             } else if (entry.type === 'world') {
                 flush();
@@ -2078,6 +2081,47 @@
                                                         {/if}
                                                     </div>
                                                 {/if}
+                                                {#if item.ruling}
+                                                    <details class="ruling-details">
+                                                        <summary class="ruling-summary">Director's ruling</summary>
+                                                        <div class="ruling-body">
+                                                            {#if item.ruling.verdict}
+                                                                <p class="ruling-line"><span class="ruling-key">Verdict:</span> {item.ruling.verdict}</p>
+                                                            {/if}
+                                                            {#if item.ruling.verdicts}
+                                                                <p class="ruling-line"><span class="ruling-key">Verdicts:</span> {item.ruling.verdicts}</p>
+                                                            {/if}
+                                                            {#if item.ruling.consequences && item.ruling.consequences.length}
+                                                                <ul class="ruling-consequences">
+                                                                    {#each item.ruling.consequences as c}
+                                                                        <li>{c}</li>
+                                                                    {/each}
+                                                                </ul>
+                                                            {/if}
+                                                            {#if item.ruling.qte}
+                                                                <p class="ruling-line ruling-flag">Triggered a quick-time event.</p>
+                                                            {/if}
+                                                            {#if item.ruling.codex_write_keys && item.ruling.codex_write_keys.length}
+                                                                <p class="ruling-line"><span class="ruling-key">Codex writes:</span> {item.ruling.codex_write_keys.join(', ')}</p>
+                                                            {/if}
+                                                            {#if item.ruling.npc_change_keys && item.ruling.npc_change_keys.length}
+                                                                <p class="ruling-line"><span class="ruling-key">NPC changes:</span> {item.ruling.npc_change_keys.join(', ')}</p>
+                                                            {/if}
+                                                            {#if item.ruling.new_npc_keys && item.ruling.new_npc_keys.length}
+                                                                <p class="ruling-line"><span class="ruling-key">New NPCs:</span> {item.ruling.new_npc_keys.join(', ')}</p>
+                                                            {/if}
+                                                            {#if item.ruling.faction_change_keys && item.ruling.faction_change_keys.length}
+                                                                <p class="ruling-line"><span class="ruling-key">Faction changes:</span> {item.ruling.faction_change_keys.join(', ')}</p>
+                                                            {/if}
+                                                            {#if item.ruling.thread_change_ids && item.ruling.thread_change_ids.length}
+                                                                <p class="ruling-line"><span class="ruling-key">Thread changes:</span> {item.ruling.thread_change_ids.join(', ')}</p>
+                                                            {/if}
+                                                            {#if item.ruling.scene_tags_change}
+                                                                <p class="ruling-line"><span class="ruling-key">Scene:</span> {JSON.stringify(item.ruling.scene_tags_change)}</p>
+                                                            {/if}
+                                                        </div>
+                                                    </details>
+                                                {/if}
                                             </div>
                                         {/if}
                                     </article>
@@ -3830,6 +3874,49 @@
         border-color: rgba(138, 42, 42, 0.4);
         background: rgba(220, 160, 160, 0.18);
     }
+
+    /* Phase 27: Director ruling transparency — collapsible under narration. */
+    .ruling-details {
+        margin-top: 0.6rem;
+        font-family: var(--font-sans);
+        font-size: 0.76rem;
+        border-top: 1px dashed var(--line);
+        padding-top: 0.45rem;
+        color: var(--ink-soft);
+    }
+    .ruling-summary {
+        cursor: pointer;
+        font-weight: 600;
+        color: var(--accent);
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        font-size: 0.66rem;
+        outline: none;
+        user-select: none;
+    }
+    .ruling-summary::-webkit-details-marker { color: var(--accent); }
+    .ruling-body {
+        margin-top: 0.45rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+    .ruling-line { margin: 0; line-height: 1.5; }
+    .ruling-key {
+        font-weight: 600;
+        color: var(--ink);
+        letter-spacing: 0.02em;
+    }
+    .ruling-flag {
+        font-style: italic;
+        color: #8a4a1a;
+    }
+    .ruling-consequences {
+        margin: 0;
+        padding-left: 1.1rem;
+        line-height: 1.55;
+    }
+    .ruling-consequences li { font-size: 0.74rem; }
 
     .world-entry {
         display: flex;

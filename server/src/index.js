@@ -623,6 +623,10 @@ export class SignalingRoom {
             lint_retried: retried,
             critic_passed: criticPassed,
             critic_retried: criticRetried,
+            // Phase 27: slim summary of the Director's structured ruling so
+            // the chronicle can surface what was decided (not just rendered).
+            // Keep it small — only the keys, not the values, for codex writes.
+            ruling_summary: buildRulingSummary(ruling),
             pipeline: 'director-dm'
           };
         }
@@ -711,7 +715,8 @@ export class SignalingRoom {
           lint_retried: !!turn.lint_retried,
           critic_passed: turn.critic_passed ?? null,
           critic_retried: !!turn.critic_retried
-        }
+        },
+        ruling_summary: turn.ruling_summary || null
       }]);
 
       yCodex.set('world_clock', newClock);
@@ -1005,3 +1010,35 @@ export class SignalingRoom {
     }
   }
 }
+
+// Phase 27: slim summary of the Director's ruling for chronicle display.
+// Keep payload small and stable — only what a host/curious player would
+// want to see to verify what the Director decided (not the full codex writes).
+function buildRulingSummary(ruling) {
+  if (!ruling || typeof ruling !== 'object') return null;
+  try {
+    const summary = {};
+    if (ruling.verdict) summary.verdict = String(ruling.verdict).slice(0, 240);
+    if (ruling.verdicts) summary.verdicts = String(ruling.verdicts).slice(0, 240);
+    if (Array.isArray(ruling.consequences)) {
+      summary.consequences = ruling.consequences
+        .filter(c => typeof c === 'string')
+        .slice(0, 6)
+        .map(c => c.slice(0, 180));
+    }
+    if (ruling.qte) summary.qte = true;
+    if (ruling.codex_writes && typeof ruling.codex_writes === 'object') {
+      summary.codex_write_keys = Object.keys(ruling.codex_writes).slice(0, 12);
+    }
+    if (ruling.npc_changes) summary.npc_change_keys = Object.keys(ruling.npc_changes).slice(0, 8);
+    if (ruling.new_npcs) summary.new_npc_keys = Object.keys(ruling.new_npcs).slice(0, 8);
+    if (ruling.faction_changes) summary.faction_change_keys = Object.keys(ruling.faction_changes).slice(0, 6);
+    if (ruling.thread_changes) summary.thread_change_ids = ruling.thread_changes.map(t => t?.id).filter(Boolean).slice(0, 6);
+    if (ruling.scene_tags_change) summary.scene_tags_change = ruling.scene_tags_change;
+    if (Object.keys(summary).length === 0) return null;
+    return summary;
+  } catch {
+    return null;
+  }
+}
+
