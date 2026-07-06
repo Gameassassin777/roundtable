@@ -925,14 +925,14 @@
     // chatLog update via sync). turn-result / turn-error clear isLoading.
     // Phase 10: when whisperMode is on, route through the whisper track — the
     // action is hidden from the table and the result returns as whisper-result.
-    function submitAction() {
+    function submitAction(forceWhisper: boolean = false) {
         if (!chatInput.trim() || isLoading || whisperInFlight) return;
         const userAction = chatInput.trim();
         const author = characterName || 'You';
         lastAction = userAction;
         chatInput = '';
 
-        if (whisperMode) {
+        if (whisperMode || forceWhisper) {
             whisperInFlight = true;
             addLocalWhisper({ author, text: userAction, type: 'whisper', timestamp: Date.now() });
             const sent = sendAction(userAction, author, true);
@@ -1621,7 +1621,11 @@
                                 type="text"
                                 bind:value={chatInput}
                                 bind:this={actionFieldEl}
-                                onkeydown={(e) => e.key === 'Enter' && submitAction()}
+                                onkeydown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        submitAction(e.shiftKey);
+                                    }
+                                }}
                                 onfocus={() => actionInputFocused = true}
                                 onblur={() => actionInputFocused = false}
                                 placeholder={whisperMode ? 'Whisper to the DM…' : (isLoading || whisperInFlight ? 'The world responds…' : 'Speak your action…')}
@@ -1638,7 +1642,7 @@
                             >
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l4-2v9l-4-2v-5z"/><path d="M7 9l5-3v12l-5-3"/><path d="M12 6l5 0a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2l-5 0"/><path d="M19 9l2 0v6l-2 0"/></svg>
                             </button>
-                            <button class="btn-primary act-go" onclick={submitAction} disabled={isLoading || whisperInFlight || !isReady || !chatInput.trim()} aria-label="Act">
+                            <button class="btn-primary act-go" onclick={() => submitAction()} disabled={isLoading || whisperInFlight || !isReady || !chatInput.trim()} aria-label="Act">
                                 {#if isLoading || whisperInFlight}
                                     <span class="mini-spinner"></span>
                                 {:else}
