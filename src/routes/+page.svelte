@@ -1323,6 +1323,28 @@
 
                     <div class="stage-action">
                         <span class="turn-cue">{characterName || 'You'} — what do you do?</span>
+                        {#if myCharacter}
+                            <div class="vitals-chip" aria-label="Your vitals">
+                                <div class="vital vital-hp" title={`Vitality ${myCharacter.hp} / ${myCharacter.max_hp}`}>
+                                    <span class="vital-icon">♥</span>
+                                    <div class="vital-bar"><div class="vital-fill" style="width: {Math.max(0, Math.min(100, (myCharacter.hp / myCharacter.max_hp) * 100))}%"></div></div>
+                                    <span class="vital-num">{myCharacter.hp}</span>
+                                </div>
+                                <div class="vital vital-resolve" title={`Resolve ${myCharacter.resolve}%`}>
+                                    <span class="vital-icon">◈</span>
+                                    <div class="vital-bar"><div class="vital-fill" style="width: {Math.max(0, Math.min(100, myCharacter.resolve))}%"></div></div>
+                                </div>
+                                {#if myCharacter.corruption > 0}
+                                    <div class="vital vital-corruption" title={`Corruption ${myCharacter.corruption}%`}>
+                                        <span class="vital-icon">☠</span>
+                                        <div class="vital-bar"><div class="vital-fill" style="width: {Math.max(0, Math.min(100, myCharacter.corruption))}%"></div></div>
+                                    </div>
+                                {/if}
+                                {#if myCharacter.permanent_conditions && myCharacter.permanent_conditions.length > 0}
+                                    <span class="vital-scars" title="Permanent conditions">{myCharacter.permanent_conditions.length} scar{myCharacter.permanent_conditions.length === 1 ? '' : 's'}</span>
+                                {/if}
+                            </div>
+                        {/if}
                         {#if actionInputFocused && situationLine && !isLoading}
                             <div class="action-brief">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
@@ -2453,6 +2475,49 @@
         flex-wrap: wrap;
         gap: 0.3rem;
         margin-bottom: 0.4rem;
+    }
+
+    /* Phase 13: persistent vitals chip — always-visible HP/Resolve/Corruption */
+    .vitals-chip {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        margin: 0.3rem 0 0.5rem;
+        flex-wrap: wrap;
+    }
+    .vital {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.72rem;
+        color: var(--ink);
+        opacity: 0.85;
+    }
+    .vital-icon { width: 12px; text-align: center; opacity: 0.7; line-height: 1; }
+    .vital-bar {
+        width: 54px;
+        height: 5px;
+        background: rgba(0,0,0,0.08);
+        border-radius: 3px;
+        overflow: hidden;
+    }
+    .vital-fill {
+        height: 100%;
+        transition: width 0.4s ease;
+        border-radius: 3px;
+    }
+    .vital-hp .vital-fill { background: #b03a3a; }
+    .vital-resolve .vital-fill { background: #4a7d6c; }
+    .vital-corruption .vital-fill { background: #6b4a8a; }
+    .vital-num { font-weight: 600; min-width: 1.4rem; text-align: right; opacity: 0.9; }
+    .vital-scars {
+        font-size: 0.68rem;
+        padding: 0.1rem 0.4rem;
+        background: rgba(107, 74, 138, 0.15);
+        color: #6b4a8a;
+        border-radius: 999px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
     }
     .action-template-chip {
         font-family: var(--font);
