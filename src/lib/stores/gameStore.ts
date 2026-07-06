@@ -17,6 +17,14 @@ export function createGameState(roomId: string) {
     let ws: WebSocket | null = null;
     const providerStore = writable({ status: 'connecting', peersCount: 0 });
 
+    // Phase 37: World Engine countdown — ticks every second locally; the
+    // server broadcasts the canonical next-tick timestamp via engine-status.
+    // 180s default so the UI shows something before the first server message.
+    const engineCountdown = writable<{ next_tick_at: number | null, paused: boolean }>({
+        next_tick_at: null,
+        paused: false
+    });
+
     // Server-event store — UI subscribes to this for turn-start / turn-result /
     // turn-error / action-accepted / key-usage messages (AI pipeline status).
     const serverEvents = writable<{ type: string, [k: string]: any } | null>(null);
@@ -123,6 +131,15 @@ export function createGameState(roomId: string) {
                     data.type === 'engine-status'
                 ) {
                     serverEvents.set(data);
+                    // Phase 37: mirror engine-status into the countdown store
+                    // so the UI can render a live ticker independent of the
+                    // event-stream subscription.
+                    if (data.type === 'engine-status') {
+                        engineCountdown.set({
+                            next_tick_at: data.next_tick_at ?? null,
+                            paused: !!data.paused
+                        });
+                    }
                 }
             } catch (e) {
                 console.error('Error handling WebSocket message:', e);
@@ -226,6 +243,7 @@ export function createGameState(roomId: string) {
     return {
         chatStore, addChatEntry, ydoc, provider, persistence,
         providerStore,
+        engineCountdown,
         awareness,
         yPendingActions, actionLock,
         serverEvents,

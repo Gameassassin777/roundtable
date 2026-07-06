@@ -127,6 +127,7 @@ export class SignalingRoom {
     // Defer if a DM turn is in flight — the next alarm picks this up.
     if (this.turnInFlight) {
       try { await this.state.storage.setAlarm(Date.now() + 60_000); } catch {}
+      this.broadcastEngineStatus();
       return;
     }
 
@@ -134,6 +135,7 @@ export class SignalingRoom {
     // engine work. Resume picks up on the next tick.
     if (this.enginePaused) {
       try { await this.state.storage.setAlarm(Date.now() + 180_000); } catch {}
+      this.broadcastEngineStatus();
       return;
     }
 
@@ -147,6 +149,8 @@ export class SignalingRoom {
     try {
       await this.state.storage.setAlarm(Date.now() + 180_000);
     } catch {}
+    // Phase 37: clients reset their countdown to the new alarm time.
+    this.broadcastEngineStatus();
   }
 
   ensureAlarm() {
@@ -154,6 +158,29 @@ export class SignalingRoom {
     this.alarmScheduled = true;
     this.state.storage.setAlarm(Date.now() + 180_000).catch(() => {});
   }
+
+  // Phase 37: broadcast engine-status with the next-tick timestamp so
+  // clients can render a live countdown. Optional extra fields merge in
+  // (e.g. world_clock on step-time). Target one socket by passing ws; omit
+  // to broadcast to all sessions. Reads getAlarm() so it tracks the actual
+  // scheduled time rather than guessing 180s from now.
+  async broadcastEngineStatus(extra = {}, ws = null) {
+    let next_tick_at = null;
+    try {
+      next_tick_at = await this.state.storage.getAlarm();
+    } catch { /* noop */ }
+    const payload = { type: 'engine-status', paused: this.enginePaused, next_tick_at, ...extra };
+    const text = JSON.stringify(payload);
+    if (ws) {
+      try { ws.send(text); } catch { /* noop */ }
+    } else {
+      this.broadcast(text);
+    }
+  }
+
+  // Phase 37: backwards-compat shim — original connect path passed the raw
+  // socket. broadcastEngineStatus now handles ws-or-broadcast.
+  sendEngineStatus(ws) { this.broadcastEngineStatus({}, ws); }
 
   async runWorldEngine() {
     const keyEntry = this.keyPool.next();
@@ -294,7 +321,8 @@ export class SignalingRoom {
     sendPresence();
     // Phase 23: tell the new client whether the engine is currently paused
     // so the host controls reflect the actual server state on connect.
-    ws.send(JSON.stringify({ type: 'engine-status', paused: this.enginePaused }));
+    // Phase 37: include next_tick_at so the client can render a countdown.
+    this.sendEngineStatus(ws);
 
     // First session in a previously-idle world re-arms the World Engine alarm.
     this.ensureAlarm();
@@ -428,21 +456,21 @@ export class SignalingRoom {
           const action = data.action;
           if (action === 'pause') {
             this.enginePaused = true;
-            this.broadcast({ type: 'engine-status', paused: true });
+            this.broadcastEngineStatus();
             return;
           }
           if (action === 'resume') {
             this.enginePaused = false;
-            this.broadcast({ type: 'engine-status', paused: false });
             // Re-arm the alarm so resume takes effect within seconds, not 3min.
             this.ensureAlarm();
+            this.broadcastEngineStatus();
             return;
           }
           if (action === 'tick-now') {
             // Don't bypass pause from this control surface — host can resume
             // first if they want a tick. But explicit force-tick while paused
             // is reasonable as a "step once" tool, so we honor it.
-            this.runWorldEngine().catch(err => {
+            this.runWorldEngine().then(() => this.broadcastEngineStatus()).catch(err => {
               console.error('forced runWorldEngine error:', err);
             });
             return;
@@ -460,7 +488,7 @@ export class SignalingRoom {
               });
               const merged = Y.encodeStateAsUpdate(this.yDoc);
               await this.state.storage.put("yDocState", merged);
-              this.broadcast({ type: 'engine-status', paused: this.enginePaused, world_clock: next });
+              this.broadcastEngineStatus({ world_clock: next });
             } catch (e) {
               console.error('step-time error:', e);
             }

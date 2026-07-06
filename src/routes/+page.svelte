@@ -11,7 +11,7 @@
     let roomId = $state("crossroads-1");
     let gameState = createGameState(roomId);
 
-    let { chatStore, addChatEntry, ydoc, provider, providerStore, serverEvents, sendAction, registerKey, reportKeyExhausted, engineControl } = gameState;
+    let { chatStore, addChatEntry, ydoc, provider, providerStore, engineCountdown, serverEvents, sendAction, registerKey, reportKeyExhausted, engineControl } = gameState;
 
     type ChatEntry = { author: string; text: string; type: 'player' | 'dm' | 'world' | 'whisper'; timestamp?: number };
     let chatLog = $state<ChatEntry[]>([]);
@@ -46,6 +46,16 @@
     let actionFieldEl = $state<HTMLInputElement | null>(null);  // Phase 11: focus/position cursor after template apply
     let inventoryAddName = $state('');   // Phase 20: bound to the inline inventory add input
     let enginePaused = $state(false);   // Phase 23: World Engine alarm-loop pause state
+    // Phase 37: countdown ticker — server broadcasts next_tick_at; this 1s
+    // tick drives the rendered remaining-seconds. Lives outside serverEvents
+    // so it ticks even when nothing else is happening.
+    let engineNextTickAt = $state<number | null>(null);
+    let nowTick = $state(Date.now());
+    let engineSecondsLeft = $derived.by(() => {
+        if (enginePaused || !engineNextTickAt) return null;
+        const ms = engineNextTickAt - nowTick;
+        return Math.max(0, Math.ceil(ms / 1000));
+    });
     // Phase 30: NPC detail popover — opens when clicking an NPC name. Reads
     // from the live codex, so it tracks World Engine drift without re-opening.
     let npcDetailName = $state<string | null>(null);
@@ -648,6 +658,7 @@
     let unsubscribeServer = subscribeServerEvents();
     let unsubProvider: any = null;
     let cleanupShortcuts: (() => void) | null = null;
+    let cleanupTick: (() => void) | null = null;
     let showShortcutsHelp = $state(false);
     let activePeers = $state(0);
     let tableRoster = $state<string[]>([]);
@@ -708,6 +719,11 @@
         }
         window.addEventListener('keydown', globalKeydown);
         cleanupShortcuts = () => window.removeEventListener('keydown', globalKeydown);
+
+        // Phase 37: 1s ticker drives the World Engine countdown render. Cheap
+        // and unbatched because at most one element depends on it.
+        const tickInterval = setInterval(() => { nowTick = Date.now(); }, 1000);
+        cleanupTick = () => { clearInterval(tickInterval); };
     });
 
     function beginQuest() { wizardStep = 'attune'; }
@@ -1199,6 +1215,8 @@
             } else if (evt.type === 'engine-status') {
                 // Phase 23: pause reflects server truth, not local optimism.
                 enginePaused = !!(evt as any).paused;
+                // Phase 37: mirror next-tick timestamp for the countdown.
+                engineNextTickAt = (evt as any).next_tick_at ?? null;
             }
         });
     }
@@ -1242,6 +1260,7 @@
         unsubscribeServer?.();
         unsubProvider?.();
         cleanupShortcuts?.();
+        cleanupTick?.();
         if (wsDisconnectTimer) clearTimeout(wsDisconnectTimer);
     });
 </script>
@@ -1788,6 +1807,11 @@
                                         aria-label="Force a World Engine tick now"
                                         title="Force the World Engine to run now — LLM-backed ambient beat + clock tick."
                                     >Tick now</button>
+                                    {#if enginePaused}
+                                        <span class="engine-countdown paused" title="World Engine is paused — ambient ticks are not firing.">paused</span>
+                                    {:else if engineSecondsLeft !== null}
+                                        <span class="engine-countdown" title="Time until the next ambient World Engine tick.">⌛ {engineSecondsLeft}s</span>
+                                    {/if}
                                 </div>
 
                                 {#if Object.keys(codexData.npcs || {}).length > 0}
@@ -3338,6 +3362,26 @@
     .engine-btn:disabled {
         opacity: 0.4;
         cursor: not-allowed;
+    }
+    /* Phase 37: countdown chip beside the engine controls. Live but
+       unobtrusive — pauses when paused, ticks when armed. */
+    .engine-countdown {
+        font-size: 0.7rem;
+        font-family: var(--font-sans);
+        color: var(--ink-soft);
+        font-variant-numeric: tabular-nums;
+        padding: 0.15rem 0.4rem;
+        border-radius: var(--radius-sm);
+        background: rgba(0,0,0,0.04);
+        border: 1px solid var(--line);
+        margin-left: 0.25rem;
+        align-self: center;
+        white-space: nowrap;
+    }
+    .engine-countdown.paused {
+        color: #8a4a1a;
+        background: rgba(138, 74, 26, 0.08);
+        border-color: rgba(138, 74, 26, 0.25);
     }
     .world-list { list-style: none; padding: 0; margin: 0.35rem 0 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; }
     .world-item {
