@@ -72,6 +72,18 @@
     });
     function openFactionDetail(name: string) { factionDetailName = name; }
     function closeFactionDetail() { factionDetailName = null; }
+
+    // Phase 32: thread detail popover — mirrors NPC/faction.
+    let threadDetailId = $state<string | null>(null);
+    let threadDetailData = $derived.by(() => {
+        if (!threadDetailId) return null;
+        const threads = (codexData as any).threads || [];
+        const t = threads.find((x: any) => x?.id === threadDetailId);
+        if (!t) return null;
+        return { ...(t as any) };
+    });
+    function openThreadDetail(id: string) { threadDetailId = id; }
+    function closeThreadDetail() { threadDetailId = null; }
     // Phase 25: connection banner — show only after a 1.5s grace so brief
     // hiccups don't flash. Banner is non-blocking and dismisses on reconnect.
     let wsDisconnected = $state(false);
@@ -1498,12 +1510,19 @@
                         <div class="sit-segment sit-threads">
                             <span class="sit-label">Tension</span>
                             {#each activeThreads.slice(0, 3) as t}
-                                <span class="sit-chip thread-chip thread-{t.status}" class:thread-imminent={t.turnsUntilLands !== null && t.turnsUntilLands <= 3 && t.turnsUntilLands >= 0}>
+                                <button
+                                    type="button"
+                                    class="sit-chip thread-chip npc-chip-btn thread-{t.status}"
+                                    class:thread-imminent={t.turnsUntilLands !== null && t.turnsUntilLands <= 3 && t.turnsUntilLands >= 0}
+                                    onclick={() => openThreadDetail(t.id)}
+                                    aria-label={`Details for ${t.name}`}
+                                    title="Open thread details"
+                                >
                                     <span class="chip-name">{t.name}</span>
                                     {#if t.turnsUntilLands !== null && t.turnsUntilLands >= 0}
                                         <span class="chip-count">{t.turnsUntilLands === 0 ? 'lands now' : `${t.turnsUntilLands}t`}</span>
                                     {/if}
-                                </span>
+                                </button>
                             {/each}
                         </div>
                     {/if}
@@ -1724,7 +1743,15 @@
                                     <ul class="world-list thread-list">
                                         {#each (codexData.threads || []).filter((t: any) => t.status === 'active' || t.status === 'landed') as t}
                                             <li class="world-item thread-{t.status}">
-                                                <span class="world-name">{t.name}</span>
+                                                <span class="world-name">
+                                                    <button
+                                                        type="button"
+                                                        class="npc-detail-trigger"
+                                                        onclick={() => openThreadDetail(t.id)}
+                                                        aria-label={`Details for ${t.name}`}
+                                                        title="Open thread details"
+                                                    >{t.name}</button>
+                                                </span>
                                                 {#if t.description}<span class="world-note">{t.description}</span>{/if}
                                             </li>
                                         {/each}
@@ -2374,6 +2401,47 @@
                     <div class="npc-detail-notes">
                         <h4>Agenda</h4>
                         <p>{factionDetailData.agenda}</p>
+                    </div>
+                {/if}
+            </div>
+        </div>
+    {/if}
+
+    <!-- Phase 32: thread detail popover — mirrors NPC/faction. -->
+    {#if threadDetailId && threadDetailData}
+        <div
+            class="modal-overlay npc-detail-overlay"
+            role="button"
+            tabindex="-1"
+            onkeydown={(e) => { if (e.key === 'Escape') closeThreadDetail(); }}
+            onclick={(e) => { if (e.target === e.currentTarget) closeThreadDetail(); }}
+        >
+            <div class="npc-detail-card panel">
+                <header class="npc-detail-head">
+                    <div class="npc-detail-id">
+                        <h3>{threadDetailData.name || threadDetailData.id}</h3>
+                        {#if threadDetailData.status}<span class="npc-detail-role">{threadDetailData.status}</span>{/if}
+                    </div>
+                    <button class="icon-btn" onclick={closeThreadDetail} aria-label="Close">✕</button>
+                </header>
+                <dl class="npc-detail-grid">
+                    {#if typeof threadDetailData.lands_at_turn === 'number'}
+                        <div class="detail-row"><dt>Lands at</dt><dd>Turn {threadDetailData.lands_at_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>
+                    {/if}
+                    {#if threadDetailData.faction}
+                        <div class="detail-row"><dt>Faction</dt><dd>{threadDetailData.faction}</dd></div>
+                    {/if}
+                    {#if threadDetailData.scope}
+                        <div class="detail-row"><dt>Scope</dt><dd>{threadDetailData.scope}</dd></div>
+                    {/if}
+                    {#if threadDetailData.intensity !== undefined}
+                        <div class="detail-row"><dt>Intensity</dt><dd>{threadDetailData.intensity}</dd></div>
+                    {/if}
+                </dl>
+                {#if threadDetailData.description}
+                    <div class="npc-detail-notes">
+                        <h4>Description</h4>
+                        <p>{threadDetailData.description}</p>
                     </div>
                 {/if}
             </div>
