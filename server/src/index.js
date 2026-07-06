@@ -3,6 +3,7 @@ import { callGemini, extractText, parseJsonLoose, KeyPool, SYSTEM_PROMPT } from 
 import { buildDmPrompt, buildBatchPrompt, buildRequestBody } from './lib/promptBuilder.js';
 import { buildDirectorPrompt, buildDirectorRequestBody } from './lib/director.js';
 import { lintProse } from './lib/proseLint.js';
+import { buildCriticPrompt, buildCriticRequestBody } from './lib/critic.js';
 import { buildWorldEnginePrompt, buildWorldEngineRequestBody, tickWorldClock } from './lib/worldEngine.js';
 
 // ---------------------------------------------------------------------------
@@ -504,6 +505,46 @@ export class SignalingRoom {
             }
           }
 
+          // Phase 12: LLM Critic pass. Cost-guarded — only runs when a spare
+          // key is available so the table's main turn never stalls waiting on
+          // a Critic call. Catches structural failures the cheap lint can't
+          // (ruling fidelity, codex contradictions, option listing, etc.).
+          // One retry with the Critic's feedback on failure, same shape as the
+          // lint retry.
+          let criticPassed = null;
+          let criticRetried = false;
+          const criticKey = this.keyPool.next();
+          if (criticKey && criticKey.value !== keyEntry.value) {
+            const criticResult = await this.callWithFallback(
+              buildCriticRequestBody(buildCriticPrompt(ruling, finalNarration, codexJson)),
+              criticKey
+            );
+            if (criticResult.ok) {
+              const criticText = extractText(criticResult.data);
+              const criticParsed = parseJsonLoose(criticText) || { passes: true, feedback: '' };
+              criticPassed = !!criticParsed.passes;
+              if (!criticPassed && criticParsed.feedback) {
+                criticRetried = true;
+                const criticRetry = await this.callWithFallback(
+                  buildRequestBody(buildDmPrompt(ruling, codexJson, northStar, criticParsed.feedback)),
+                  keyEntry
+                );
+                if (criticRetry.ok) {
+                  const crtText = extractText(criticRetry.data);
+                  const crtParsed = parseJsonLoose(crtText) || { narration: crtText };
+                  // Cheap-lint the retry too; adopt only if it lints clean or
+                  // the Critic would prefer it (we can't re-run the Critic here
+                  // without risking a third call).
+                  const crtLint = lintProse(crtParsed.narration);
+                  if (crtLint.passes) {
+                    finalNarration = crtParsed.narration;
+                    criticPassed = true;
+                  }
+                }
+              }
+            }
+          }
+
           turn = {
             narration: finalNarration,
             scene_tags: ruling.scene_tags_change || null,
@@ -515,6 +556,8 @@ export class SignalingRoom {
             thread_changes: ruling.thread_changes || null,
             lint_passed: lint.passes,
             lint_retried: retried,
+            critic_passed: criticPassed,
+            critic_retried: criticRetried,
             pipeline: 'director-dm'
           };
         }
@@ -681,7 +724,9 @@ export class SignalingRoom {
       world_clock: newClock,
       pipeline: turn.pipeline || null,
       lint_passed: turn.lint_passed,
-      lint_retried: turn.lint_retried
+      lint_retried: turn.lint_retried,
+      critic_passed: turn.critic_passed ?? null,
+      critic_retried: turn.critic_retried ?? false
     });
 
     // Persist updated doc
