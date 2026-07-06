@@ -46,6 +46,18 @@
     let actionFieldEl = $state<HTMLInputElement | null>(null);  // Phase 11: focus/position cursor after template apply
     let inventoryAddName = $state('');   // Phase 20: bound to the inline inventory add input
     let enginePaused = $state(false);   // Phase 23: World Engine alarm-loop pause state
+    // Phase 30: NPC detail popover — opens when clicking an NPC name. Reads
+    // from the live codex, so it tracks World Engine drift without re-opening.
+    let npcDetailName = $state<string | null>(null);
+    let npcDetailData = $derived.by(() => {
+        if (!npcDetailName) return null;
+        const npcs = (codexData as any).npcs || {};
+        const npc = npcs[npcDetailName];
+        if (!npc) return null;
+        return { name: npcDetailName, ...(npc as any) };
+    });
+    function openNpcDetail(name: string) { npcDetailName = name; }
+    function closeNpcDetail() { npcDetailName = null; }
     // Phase 25: connection banner — show only after a 1.5s grace so brief
     // hiccups don't flash. Banner is non-blocking and dismisses on reconnect.
     let wsDisconnected = $state(false);
@@ -1434,12 +1446,19 @@
                         <div class="sit-segment sit-present">
                             <span class="sit-label">Present</span>
                             {#each presentNpcs.slice(0, 4) as npc}
-                                <span class="sit-chip npc-chip" data-disp={(npc as any).disposition || 'neutral'}>
+                                <button
+                                    type="button"
+                                    class="sit-chip npc-chip npc-chip-btn"
+                                    data-disp={(npc as any).disposition || 'neutral'}
+                                    onclick={() => openNpcDetail(npc.name)}
+                                    aria-label={`Details for ${npc.name}`}
+                                    title="Open NPC details"
+                                >
                                     <span class="chip-name">{npc.name}</span>
                                     {#if (npc as any).disposition}
                                         <span class="chip-disp">{(npc as any).disposition}</span>
                                     {/if}
-                                </span>
+                                </button>
                             {/each}
                         </div>
                     {/if}
@@ -1643,7 +1662,15 @@
                                                     <img class="npc-portrait" src={npcPortraitUrl(name, npc)} alt={name} loading="lazy" />
                                                 {/if}
                                                 <div class="world-item-text">
-                                                    <span class="world-name">{name}</span>
+                                                    <span class="world-name">
+                                                        <button
+                                                            type="button"
+                                                            class="npc-detail-trigger"
+                                                            onclick={() => openNpcDetail(name)}
+                                                            aria-label={`Details for ${name}`}
+                                                            title="Open NPC details"
+                                                        >{name}</button>
+                                                    </span>
                                                     {#if (npc as any).role}<span class="world-sub">{(npc as any).role}</span>{/if}
                                                     {#if (npc as any).location}<span class="world-meta">{(npc as any).location}</span>{/if}
                                                     {#if (npc as any).notes}<span class="world-note">{(npc as any).notes}</span>{/if}
@@ -2237,6 +2264,51 @@
 
     {#if showQTE}
         <QTE_Overlay timeLimit={qteConfig.time_limit_ms} startTime={qteConfig.start_time} onresult={handleQTEResult} />
+    {/if}
+
+    <!-- Phase 30: NPC detail popover. Reads from live codex so it tracks
+         World Engine drift without re-opening. -->
+    {#if npcDetailName && npcDetailData}
+        <div
+            class="modal-overlay npc-detail-overlay"
+            role="button"
+            tabindex="-1"
+            onkeydown={(e) => { if (e.key === 'Escape') closeNpcDetail(); }}
+            onclick={(e) => { if (e.target === e.currentTarget) closeNpcDetail(); }}
+        >
+            <div class="npc-detail-card panel">
+                <header class="npc-detail-head">
+                    <div class="npc-detail-id">
+                        <h3>{npcDetailData.name}</h3>
+                        {#if npcDetailData.role}<span class="npc-detail-role">{npcDetailData.role}</span>{/if}
+                    </div>
+                    <button class="icon-btn" onclick={closeNpcDetail} aria-label="Close">✕</button>
+                </header>
+                <dl class="npc-detail-grid">
+                    {#if npcDetailData.location}
+                        <div class="detail-row"><dt>Location</dt><dd>{npcDetailData.location}</dd></div>
+                    {/if}
+                    {#if npcDetailData.disposition}
+                        <div class="detail-row"><dt>Disposition</dt><dd>{npcDetailData.disposition}</dd></div>
+                    {/if}
+                    {#if npcDetailData.status}
+                        <div class="detail-row"><dt>Status</dt><dd>{npcDetailData.status}</dd></div>
+                    {/if}
+                    {#if typeof npcDetailData.last_seen_turn === 'number'}
+                        <div class="detail-row"><dt>Last seen</dt><dd>Turn {npcDetailData.last_seen_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>
+                    {/if}
+                    {#if npcDetailData.goal}
+                        <div class="detail-row"><dt>Goal</dt><dd>{npcDetailData.goal}</dd></div>
+                    {/if}
+                </dl>
+                {#if npcDetailData.notes}
+                    <div class="npc-detail-notes">
+                        <h4>Notes</h4>
+                        <p>{npcDetailData.notes}</p>
+                    </div>
+                {/if}
+            </div>
+        </div>
     {/if}
 </main>
 
@@ -4138,6 +4210,82 @@
     @media (max-width: 540px) {
         .conn-banner { font-size: 0.72rem; padding: 0.45rem 0.7rem; top: 0.5rem; }
     }
+
+    /* Phase 30: NPC detail popover — small card overlay. */
+    .npc-detail-overlay {
+        z-index: 110;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+    }
+    .npc-detail-card {
+        width: 100%;
+        max-width: 420px;
+        padding: 1.2rem 1.3rem;
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        box-shadow: var(--shadow-lg);
+        animation: rise 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .npc-detail-head {
+        display: flex; justify-content: space-between; align-items: flex-start;
+        gap: 0.8rem; margin-bottom: 0.8rem;
+        padding-bottom: 0.7rem;
+        border-bottom: 1px solid var(--line);
+    }
+    .npc-detail-id { display: flex; flex-direction: column; gap: 0.15rem; }
+    .npc-detail-id h3 {
+        margin: 0; font-family: var(--font-serif); font-size: 1.2rem; color: var(--ink);
+    }
+    .npc-detail-role {
+        font-size: 0.74rem; color: var(--accent);
+        letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .npc-detail-grid {
+        display: flex; flex-direction: column; gap: 0.35rem;
+        margin: 0 0 0.8rem;
+    }
+    .detail-row {
+        display: grid; grid-template-columns: 90px 1fr;
+        gap: 0.6rem; font-size: 0.82rem;
+    }
+    .detail-row dt {
+        color: var(--ink-soft);
+        font-weight: 500;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        font-size: 0.66rem;
+        padding-top: 0.1rem;
+    }
+    .detail-row dd { margin: 0; color: var(--ink); line-height: 1.45; }
+    .npc-detail-notes h4 {
+        margin: 0 0 0.3rem;
+        font-size: 0.7rem; color: var(--ink-soft);
+        letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .npc-detail-notes p {
+        margin: 0;
+        font-family: var(--font-serif);
+        font-size: 0.86rem; line-height: 1.55;
+        color: var(--ink);
+    }
+    .npc-detail-trigger {
+        background: none; border: none; padding: 0;
+        font: inherit; color: var(--ink);
+        cursor: pointer; text-decoration: underline dotted;
+        text-underline-offset: 2px;
+    }
+    .npc-detail-trigger:hover { color: var(--accent); }
+    .npc-chip-btn {
+        background: rgba(0,0,0,0.04);
+        border: 1px solid var(--line);
+        cursor: pointer;
+        font: inherit;
+        text-align: left;
+    }
+    .npc-chip-btn:hover { background: rgba(0,0,0,0.08); }
 
     /* ============ Phase 24: Mobile responsive audit ============
        Phone-class refinements (≤540px). The 768px block handles the
