@@ -1,8 +1,11 @@
 <script lang="ts">
     import { onDestroy, onMount } from 'svelte';
+    import { fade, slide, fly } from 'svelte/transition';
     import { gsap } from 'gsap';
     import CinematicDiorama from '$lib/components/CinematicDiorama.svelte';
     import QTE_Overlay from '$lib/components/QTE_Overlay.svelte';
+    import Modal from '$lib/components/Modal.svelte';
+    import InteractiveMap from '$lib/components/InteractiveMap.svelte';
     import { createGameState } from '$lib/stores/gameStore';
     import { forgeCharacter, forgeConverse, type ForgedCharacter, type ForgeMessage } from '$lib/ai/soulForge';
     import { ADVENTURE_SEEDS, type AdventureSeed } from '$lib/adventureSeeds';
@@ -57,60 +60,49 @@
         const ms = engineNextTickAt - nowTick;
         return Math.max(0, Math.ceil(ms / 1000));
     });
-    // Phase 30: NPC detail popover — opens when clicking an NPC name. Reads
-    // from the live codex, so it tracks World Engine drift without re-opening.
-    let npcDetailName = $state<string | null>(null);
-    let npcDetailData = $derived.by(() => {
-        if (!npcDetailName) return null;
-        const npcs = (codexData as any).npcs || {};
-        const npc = npcs[npcDetailName];
-        if (!npc) return null;
-        return { name: npcDetailName, ...(npc as any) };
-    });
-    function openNpcDetail(name: string) { npcDetailName = name; }
-    function closeNpcDetail() { npcDetailName = null; }
+    // Unified Detail Popover State
+    let activeDetail = $state<{ type: 'npc' | 'faction' | 'thread' | 'party' | 'location', id: string } | null>(null);
 
-    // Phase 31: faction detail popover — mirrors NPC. Factions carry agenda,
-    // resources, disposition, tension, next_move_turn — buried in codex JSON
-    // without this surface.
-    let factionDetailName = $state<string | null>(null);
-    let factionDetailData = $derived.by(() => {
-        if (!factionDetailName) return null;
-        const facs = (codexData as any).factions || {};
-        const fac = facs[factionDetailName];
-        if (!fac) return null;
-        return { name: factionDetailName, ...(fac as any) };
+    let detailData = $derived.by(() => {
+        if (!activeDetail) return null;
+        const { type, id } = activeDetail;
+        if (type === 'npc') {
+            const data = ((codexData as any).npcs || {})[id];
+            return data ? { name: id, ...data } : null;
+        }
+        if (type === 'faction') {
+            const data = ((codexData as any).factions || {})[id];
+            return data ? { name: id, ...data } : null;
+        }
+        if (type === 'thread') {
+            const threads = (codexData as any).threads || [];
+            return threads.find((x: any) => x?.id === id) || null;
+        }
+        if (type === 'party') {
+            const data = ((codexData as any).party || {})[id];
+            return data ? { name: id, ...data } : null;
+        }
+        if (type === 'location') {
+            const data = ((codexData as any).locations || {})[id];
+            return data ? { name: id, ...data } : null;
+        }
+        return null;
     });
-    function openFactionDetail(name: string) { factionDetailName = name; }
-    function closeFactionDetail() { factionDetailName = null; }
 
-    // Phase 32: thread detail popover — mirrors NPC/faction.
-    let threadDetailId = $state<string | null>(null);
-    let threadDetailData = $derived.by(() => {
-        if (!threadDetailId) return null;
-        const threads = (codexData as any).threads || [];
-        const t = threads.find((x: any) => x?.id === threadDetailId);
-        if (!t) return null;
-        return { ...(t as any) };
-    });
-    function openThreadDetail(id: string) { threadDetailId = id; }
-    function closeThreadDetail() { threadDetailId = null; }
+    function openNpcDetail(name: string) { activeDetail = { type: 'npc', id: name }; }
+    function closeNpcDetail() { activeDetail = null; }
+    
+    function openFactionDetail(name: string) { activeDetail = { type: 'faction', id: name }; }
+    function closeFactionDetail() { activeDetail = null; }
+    
+    function openThreadDetail(id: string) { activeDetail = { type: 'thread', id }; }
+    function closeThreadDetail() { activeDetail = null; }
+    
+    function openPartyDetail(name: string) { activeDetail = { type: 'party', id: name }; }
+    function closePartyDetail() { activeDetail = null; }
+    
+    function closeUnifiedDetail() { activeDetail = null; }
 
-    // Phase 36: party member detail popover — mirrors NPC/faction/thread.
-    // The active player's own sheet renders inline in the codex sidebar; this
-    // popover is for OTHER party members (those who joined the room or were
-    // registered by their own clients and persist in the codex). Without this,
-    // there's no way to inspect a fellow player's vitals/traits/scars.
-    let partyDetailName = $state<string | null>(null);
-    let partyDetailData = $derived.by(() => {
-        if (!partyDetailName) return null;
-        const party = (codexData as any).party || {};
-        const member = party[partyDetailName];
-        if (!member) return null;
-        return { name: partyDetailName, ...(member as any) };
-    });
-    function openPartyDetail(name: string) { partyDetailName = name; }
-    function closePartyDetail() { partyDetailName = null; }
     // Party roster — everyone except the active player. Used to render a small
     // roster in the codex sidebar so fellow players are inspectable.
     let partyRoster = $derived.by(() => {
@@ -369,15 +361,8 @@
         }
     }
 
-    let locationDetailName = $state<string | null>(null);
-    let locationDetailData = $derived.by(() => {
-        if (!locationDetailName) return null;
-        const locs = (codexData as any).locations || {};
-        const v = locs[locationDetailName];
-        return v ? { name: locationDetailName, ...v } : null;
-    });
-    function openLocationDetail(name: string) { locationDetailName = name; }
-    function closeLocationDetail() { locationDetailName = null; }
+    function openLocationDetail(name: string) { activeDetail = { type: 'location', id: name }; }
+    function closeLocationDetail() { activeDetail = null; }
 
     // Phase 28: encounter difficulty meter — derived heuristic from present
     // NPCs' dispositions, party vitals, and imminent threads. NOT authoritative;
@@ -618,8 +603,9 @@
     // the chronicle + world state read-only. Closes the loop with the export
     // button (Phase 5).
     let showReader = $state(false);
-    let readerData: any = $state(null);
-    let readerError = $state('');
+    let readerData = $state<any>(null);
+    let readerError = $state<string | null>(null);
+    let showMap = $state(false);
     function openReader() {
         readerData = null;
         readerError = '';
@@ -974,12 +960,14 @@
         };
         ydoc.transact(() => {
             const yCodex = ydoc.getMap('memoryCodex');
-            const party = yCodex.get('party') || {};
+            const party = (yCodex.get('party') || {}) as any;
             party[name] = charData;
             yCodex.set('party', party);
-            const inventory = yCodex.get('inventory') || {};
-            inventory[forged.starting_item.name] = { durability: 3, note: forged.starting_item.note || '' };
-            yCodex.set('inventory', inventory);
+            if (forged) {
+                const inventory = (yCodex.get('inventory') || {}) as any;
+                inventory[forged.starting_item.name] = { durability: 3, note: forged.starting_item.note || '' };
+                yCodex.set('inventory', inventory);
+            }
         });
         localStorage.setItem('rt_char_name', name);
         localStorage.setItem('rt_char_arc', forged.archetype);
@@ -1087,10 +1075,10 @@
         };
         ydoc.transact(() => {
             const yCodex = ydoc.getMap('memoryCodex');
-            const party = yCodex.get('party') || {};
+            const party = (yCodex.get('party') || {}) as any;
             if (!party[characterName]) { party[characterName] = charData; yCodex.set('party', party); }
-            const inventory = yCodex.get('inventory') || {};
-            if (forged.starting_item?.name && !inventory[forged.starting_item.name]) {
+            const inventory = (yCodex.get('inventory') || {}) as any;
+            if (forged && forged.starting_item?.name && !inventory[forged.starting_item.name]) {
                 inventory[forged.starting_item.name] = { durability: 3, note: forged.starting_item.note || '' };
                 yCodex.set('inventory', inventory);
             }
@@ -1755,7 +1743,7 @@
                     </button>
                     <div class="brand">
                         <h1>Round Table</h1>
-                        <span class="version">v3.0</span>
+                        <span class="version">v3.1</span>
                     </div>
                 </div>
 
@@ -2141,6 +2129,11 @@
                                 </div>
 
                                 {#if Object.keys(codexData.npcs || {}).length > 0 || Object.keys(codexData.factions || {}).length > 0 || (codexData.threads || []).length > 0 || partyRoster.length > 0 || discoveredLocations.length > 0}
+                                    <div class="world-actions" style="margin-bottom: 0.5rem; display: flex; gap: 0.5rem;">
+                                        <button class="btn-ghost" style="width: 100%; text-align: center; border-color: var(--gold); color: var(--gold);" onclick={() => showMap = true}>
+                                            <span style="font-size: 14px;">🗺️ View World Map</span>
+                                        </button>
+                                    </div>
                                     <div class="world-search-row">
                                         <input
                                             type="text"
@@ -2806,7 +2799,7 @@
                         <div class="rounds-list">
                             {#each filteredChronicleItems as item (item.id)}
                                 {#if item.kind === 'round'}
-                                    <article class="round-entry">
+                                    <article class="round-entry" transition:slide|local={{ duration: 300 }}>
                                         <header class="round-header-row">
                                             <h3 class="round-number">Round {item.id}</h3>
                                             <div class="round-divider-line"></div>
@@ -2814,7 +2807,7 @@
 
                                         <div class="round-actions">
                                             {#each item.actions as action}
-                                                <div class="action-bubble-row">
+                                                <div class="action-bubble-row" transition:fly|local={{ y: 10, duration: 250 }}>
                                                     <span class="action-author">{action.author}:</span>
                                                     <span class="action-text">“{action.text}”</span>
                                                 </div>
@@ -2899,285 +2892,127 @@
         <QTE_Overlay timeLimit={qteConfig.time_limit_ms} startTime={qteConfig.start_time} onresult={handleQTEResult} />
     {/if}
 
-    <!-- Phase 30: NPC detail popover. Reads from live codex so it tracks
-         World Engine drift without re-opening. -->
-    {#if npcDetailName && npcDetailData}
-        <div
-            class="modal-overlay npc-detail-overlay"
-            role="button"
-            tabindex="-1"
-            onkeydown={(e) => { if (e.key === 'Escape') closeNpcDetail(); }}
-            onclick={(e) => { if (e.target === e.currentTarget) closeNpcDetail(); }}
-        >
-            <div class="npc-detail-card panel">
-                <header class="npc-detail-head">
-                    <div class="npc-detail-id">
-                        <h3>{npcDetailData.name}</h3>
-                        {#if npcDetailData.role}<span class="npc-detail-role">{npcDetailData.role}</span>{/if}
-                    </div>
-                    <button class="icon-btn" onclick={closeNpcDetail} aria-label="Close">✕</button>
-                </header>
-                <dl class="npc-detail-grid">
-                    {#if npcDetailData.location}
-                        <div class="detail-row"><dt>Location</dt><dd>{npcDetailData.location}</dd></div>
-                    {/if}
-                    {#if npcDetailData.disposition}
-                        <div class="detail-row"><dt>Disposition</dt><dd>{npcDetailData.disposition}</dd></div>
-                    {/if}
-                    {#if npcDetailData.status}
-                        <div class="detail-row"><dt>Status</dt><dd>{npcDetailData.status}</dd></div>
-                    {/if}
-                    {#if typeof npcDetailData.last_seen_turn === 'number'}
-                        <div class="detail-row"><dt>Last seen</dt><dd>Turn {npcDetailData.last_seen_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>
-                    {/if}
-                    {#if npcDetailData.goal}
-                        <div class="detail-row"><dt>Goal</dt><dd>{npcDetailData.goal}</dd></div>
-                    {/if}
-                </dl>
-                {#if npcDetailData.notes}
-                    <div class="npc-detail-notes">
-                        <h4>Notes</h4>
-                        <p>{npcDetailData.notes}</p>
-                    </div>
-                {/if}
-                <footer class="popover-actions">
-                    <span class="popover-actions-label">Quick target:</span>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Approach', npcDetailData.name); closeNpcDetail(); }}>Approach</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Ask', npcDetailData.name); closeNpcDetail(); }}>Ask</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Search', npcDetailData.name); closeNpcDetail(); }}>Search</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Persuade', npcDetailData.name); closeNpcDetail(); }}>Persuade</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Hide from', npcDetailData.name); closeNpcDetail(); }}>Hide from</button>
-                </footer>
-            </div>
-        </div>
-    {/if}
-
-    <!-- Phase 31: faction detail popover — mirrors NPC. -->
-    {#if factionDetailName && factionDetailData}
-        <div
-            class="modal-overlay npc-detail-overlay"
-            role="button"
-            tabindex="-1"
-            onkeydown={(e) => { if (e.key === 'Escape') closeFactionDetail(); }}
-            onclick={(e) => { if (e.target === e.currentTarget) closeFactionDetail(); }}
-        >
-            <div class="npc-detail-card panel">
-                <header class="npc-detail-head">
-                    <div class="npc-detail-id">
-                        <h3>{factionDetailData.name}</h3>
-                        {#if factionDetailData.type}<span class="npc-detail-role">{factionDetailData.type}</span>{/if}
-                    </div>
-                    <button class="icon-btn" onclick={closeFactionDetail} aria-label="Close">✕</button>
-                </header>
-                <dl class="npc-detail-grid">
-                    {#if typeof factionDetailData.resources === 'number'}
-                        <div class="detail-row"><dt>Resources</dt><dd>{factionDetailData.resources}</dd></div>
-                    {/if}
-                    {#if factionDetailData.disposition !== undefined}
-                        <div class="detail-row"><dt>Disposition</dt><dd>{factionDetailData.disposition}</dd></div>
-                    {/if}
-                    {#if typeof factionDetailData.tension === 'number'}
-                        <div class="detail-row"><dt>Tension</dt><dd>{factionDetailData.tension}</dd></div>
-                    {/if}
-                    {#if typeof factionDetailData.next_move_turn === 'number'}
-                        <div class="detail-row"><dt>Next move</dt><dd>Turn {factionDetailData.next_move_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>
-                    {/if}
-                </dl>
-                {#if factionDetailData.agenda}
-                    <div class="npc-detail-notes">
-                        <h4>Agenda</h4>
-                        <p>{factionDetailData.agenda}</p>
-                    </div>
-                {/if}
-                <footer class="popover-actions">
-                    <span class="popover-actions-label">Quick target:</span>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Contact', factionDetailData.name); closeFactionDetail(); }}>Contact</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Approach', factionDetailData.name); closeFactionDetail(); }}>Approach</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Persuade', factionDetailData.name); closeFactionDetail(); }}>Persuade</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Investigate', factionDetailData.name); closeFactionDetail(); }}>Investigate</button>
-                </footer>
-            </div>
-        </div>
-    {/if}
-
-    <!-- Phase 32: thread detail popover — mirrors NPC/faction. -->
-    {#if threadDetailId && threadDetailData}        <div
-            class="modal-overlay npc-detail-overlay"
-            role="button"
-            tabindex="-1"
-            onkeydown={(e) => { if (e.key === 'Escape') closeThreadDetail(); }}
-            onclick={(e) => { if (e.target === e.currentTarget) closeThreadDetail(); }}
-        >
-            <div class="npc-detail-card panel">
-                <header class="npc-detail-head">
-                    <div class="npc-detail-id">
-                        <h3>{threadDetailData.name || threadDetailData.id}</h3>
-                        {#if threadDetailData.status}<span class="npc-detail-role">{threadDetailData.status}</span>{/if}
-                    </div>
-                    <button class="icon-btn" onclick={closeThreadDetail} aria-label="Close">✕</button>
-                </header>
-                <dl class="npc-detail-grid">
-                    {#if typeof threadDetailData.lands_at_turn === 'number'}
-                        <div class="detail-row"><dt>Lands at</dt><dd>Turn {threadDetailData.lands_at_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>
-                    {/if}
-                    {#if threadDetailData.faction}
-                        <div class="detail-row"><dt>Faction</dt><dd>{threadDetailData.faction}</dd></div>
-                    {/if}
-                    {#if threadDetailData.scope}
-                        <div class="detail-row"><dt>Scope</dt><dd>{threadDetailData.scope}</dd></div>
-                    {/if}
-                    {#if threadDetailData.intensity !== undefined}
-                        <div class="detail-row"><dt>Intensity</dt><dd>{threadDetailData.intensity}</dd></div>
-                    {/if}
-                </dl>
-                {#if threadDetailData.description}
-                    <div class="npc-detail-notes">
-                        <h4>Description</h4>
-                        <p>{threadDetailData.description}</p>
-                    </div>
-                {/if}
-            </div>
-        </div>
-    {/if}
-
-    <!-- Phase 36: party member detail popover — mirrors NPC/faction/thread.
-         Surfaces HP/resolve/corruption/traits/scars for fellow party members
-         who would otherwise be invisible (their sheet renders on their own
-         client, not yours). -->
-    {#if partyDetailName && partyDetailData}
-        <div
-            class="modal-overlay npc-detail-overlay"
-            role="button"
-            tabindex="-1"
-            onkeydown={(e) => { if (e.key === 'Escape') closePartyDetail(); }}
-            onclick={(e) => { if (e.target === e.currentTarget) closePartyDetail(); }}
-        >
-            <div class="npc-detail-card panel">
-                <header class="npc-detail-head">
-                    <div class="npc-detail-id">
-                        <h3>{partyDetailData.name}</h3>
-                        <span class="npc-detail-role">Party member</span>
-                    </div>
-                    <button class="icon-btn" onclick={closePartyDetail} aria-label="Close">✕</button>
-                </header>
-                <dl class="npc-detail-grid">
-                    {#if typeof partyDetailData.level === 'number'}
-                        <div class="detail-row"><dt>Level</dt><dd>{partyDetailData.level}</dd></div>
-                    {/if}
-                    {#if typeof partyDetailData.hp === 'number' && typeof partyDetailData.max_hp === 'number'}
-                        <div class="detail-row">
-                            <dt>Vitality</dt>
-                            <dd>{partyDetailData.hp} / {partyDetailData.max_hp}</dd>
-                        </div>
-                    {/if}
-                    {#if typeof partyDetailData.xp === 'number'}
-                        <div class="detail-row"><dt>XP</dt><dd>{partyDetailData.xp} ({(partyDetailData.xp % 10)} / 10 to next level)</dd></div>
-                    {/if}
-                    {#if typeof partyDetailData.resolve === 'number'}
-                        <div class="detail-row"><dt>Resolve</dt><dd>{partyDetailData.resolve}%</dd></div>
-                    {/if}
-                    {#if typeof partyDetailData.corruption === 'number' && partyDetailData.corruption > 0}
-                        <div class="detail-row"><dt>Corruption</dt><dd>{partyDetailData.corruption}%</dd></div>
-                    {/if}
-                </dl>
-                {#if partyDetailData.active_traits && partyDetailData.active_traits.length > 0}
-                    <div class="npc-detail-notes">
-                        <h4>Traits</h4>
-                        <ul class="trait-list">
-                            {#each partyDetailData.active_traits as trait}
-                                <li class="trait-tag">{trait}</li>
-                            {/each}
-                        </ul>
-                    </div>
-                {/if}
-                {#if partyDetailData.permanent_conditions && partyDetailData.permanent_conditions.length > 0}
-                    <div class="npc-detail-notes">
-                        <h4>Permanent scars</h4>
-                        <ul class="scar-list">
-                            {#each partyDetailData.permanent_conditions as scar}
-                                <li class="scar-item">{scar}</li>
-                            {/each}
-                        </ul>
-                    </div>
-                {/if}
-                {#if partyDetailData.echo_tags && partyDetailData.echo_tags.length > 0}
-                    <div class="npc-detail-notes">
-                        <h4>Echo tags</h4>
-                        <ul class="trait-list">
-                            {#each partyDetailData.echo_tags as tag}
-                                <li class="trait-tag">{tag}</li>
-                            {/each}
-                        </ul>
-                    </div>
-                {/if}
-                <footer class="popover-actions">
-                    <span class="popover-actions-label">Quick target:</span>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Ask', partyDetailData.name); closePartyDetail(); }}>Ask</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Persuade', partyDetailData.name); closePartyDetail(); }}>Persuade</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Help', partyDetailData.name); closePartyDetail(); }}>Help</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Heal', partyDetailData.name); closePartyDetail(); }}>Heal</button>
-                </footer>
-            </div>
-        </div>
-    {/if}
-
-    <!-- Phase 45: location detail popover — mirrors NPC/faction/thread/party. -->
-    {#if locationDetailName && locationDetailData}
-        <div
-            class="modal-overlay npc-detail-overlay"
-            role="button"
-            tabindex="-1"
-            onkeydown={(e) => { if (e.key === 'Escape') closeLocationDetail(); }}
-            onclick={(e) => { if (e.target === e.currentTarget) closeLocationDetail(); }}
-        >
-            <div class="npc-detail-card panel">
-                <header class="npc-detail-head">
-                    <div class="npc-detail-id">
-                        <h3>{locationDetailData.name}</h3>
-                        {#if locationDetailData.name === currentLocationName}
+    <!-- Unified Details Modal -->
+    <Modal isOpen={!!activeDetail} onClose={closeUnifiedDetail} customClass="npc-detail-card">
+        {#if activeDetail && detailData}
+            <header class="npc-detail-head" style="padding:0; border:none; background:transparent;">
+                <div class="npc-detail-id">
+                    <h3 style="margin:0;">{detailData.name || detailData.id}</h3>
+                    {#if activeDetail.type === 'location'}
+                        {#if detailData.name === currentLocationName}
                             <span class="npc-detail-role">· here ·</span>
-                        {:else if locationDetailData.biome}
-                            <span class="npc-detail-role">{locationDetailData.biome}</span>
+                        {:else if detailData.biome}
+                            <span class="npc-detail-role">{detailData.biome}</span>
                         {/if}
-                    </div>
-                    <button class="icon-btn" onclick={closeLocationDetail} aria-label="Close">✕</button>
-                </header>
-                <dl class="npc-detail-grid">
-                    {#if locationDetailData.biome && locationDetailData.name !== currentLocationName}
-                        <div class="detail-row"><dt>Biome</dt><dd>{locationDetailData.biome}</dd></div>
+                    {:else if activeDetail.type === 'party'}
+                        <span class="npc-detail-role">Party member</span>
+                    {:else if detailData.role || detailData.type || detailData.status}
+                        <span class="npc-detail-role">{detailData.role || detailData.type || detailData.status}</span>
                     {/if}
-                    {#if typeof locationDetailData.visited_turn === 'number'}
-                        <div class="detail-row"><dt>Last visited</dt><dd>Turn {locationDetailData.visited_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>
-                    {/if}
-                    {#if locationDetailData.exits && locationDetailData.exits.length > 0}
-                        <div class="detail-row"><dt>Exits</dt><dd>{locationDetailData.exits.join(', ')}</dd></div>
-                    {/if}
-                </dl>
-                {#if locationDetailData.description}
-                    <div class="npc-detail-notes">
-                        <h4>Description</h4>
-                        <p>{locationDetailData.description}</p>
-                    </div>
+                </div>
+            </header>
+            
+            <dl class="npc-detail-grid">
+                {#if detailData.location}<div class="detail-row"><dt>Location</dt><dd><button type="button" class="inline-link" onclick={() => openLocationDetail(detailData.location)}>{detailData.location}</button></dd></div>{/if}
+                {#if detailData.disposition !== undefined}<div class="detail-row"><dt>Disposition</dt><dd>{detailData.disposition}</dd></div>{/if}
+                {#if detailData.status && activeDetail.type !== 'thread'}<div class="detail-row"><dt>Status</dt><dd>{detailData.status}</dd></div>{/if}
+                {#if typeof detailData.last_seen_turn === 'number'}<div class="detail-row"><dt>Last seen</dt><dd>Turn {detailData.last_seen_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>{/if}
+                {#if detailData.goal}<div class="detail-row"><dt>Goal</dt><dd>{detailData.goal}</dd></div>{/if}
+                {#if typeof detailData.resources === 'number'}<div class="detail-row"><dt>Resources</dt><dd>{detailData.resources}</dd></div>{/if}
+                {#if typeof detailData.tension === 'number'}<div class="detail-row"><dt>Tension</dt><dd>{detailData.tension}</dd></div>{/if}
+                {#if typeof detailData.next_move_turn === 'number'}<div class="detail-row"><dt>Next move</dt><dd>Turn {detailData.next_move_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>{/if}
+                {#if typeof detailData.lands_at_turn === 'number'}<div class="detail-row"><dt>Lands at</dt><dd>Turn {detailData.lands_at_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>{/if}
+                {#if detailData.faction}<div class="detail-row"><dt>Faction</dt><dd><button type="button" class="inline-link" onclick={() => openFactionDetail(detailData.faction)}>{detailData.faction}</button></dd></div>{/if}
+                {#if detailData.scope}<div class="detail-row"><dt>Scope</dt><dd>{detailData.scope}</dd></div>{/if}
+                {#if detailData.intensity !== undefined}<div class="detail-row"><dt>Intensity</dt><dd>{detailData.intensity}</dd></div>{/if}
+                {#if typeof detailData.level === 'number'}<div class="detail-row"><dt>Level</dt><dd>{detailData.level}</dd></div>{/if}
+                {#if typeof detailData.hp === 'number' && typeof detailData.max_hp === 'number'}
+                    <div class="detail-row"><dt>Vitality</dt><dd>{detailData.hp} / {detailData.max_hp}</dd></div>
                 {/if}
-                {#if locationDetailData.notes}
-                    <div class="npc-detail-notes">
-                        <h4>Notes</h4>
-                        <p>{locationDetailData.notes}</p>
-                    </div>
+                {#if typeof detailData.xp === 'number'}
+                    <div class="detail-row"><dt>XP</dt><dd>{detailData.xp} ({(detailData.xp % 10)} / 10 to next level)</dd></div>
                 {/if}
-                <footer class="popover-actions">
-                    <span class="popover-actions-label">Quick action:</span>
-                    {#if locationDetailData.name !== currentLocationName}
-                        <button type="button" class="action-template-chip" onclick={() => { travelTo(locationDetailData.name); closeLocationDetail(); }} disabled={isLoading}>Travel here</button>
-                    {/if}
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Search', locationDetailData.name); closeLocationDetail(); }}>Search</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Investigate', locationDetailData.name); closeLocationDetail(); }}>Investigate</button>
-                    <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Look around', locationDetailData.name); closeLocationDetail(); }}>Look around</button>
-                </footer>
-            </div>
-        </div>
-    {/if}
+                {#if typeof detailData.resolve === 'number'}<div class="detail-row"><dt>Resolve</dt><dd>{detailData.resolve}%</dd></div>{/if}
+                {#if typeof detailData.corruption === 'number' && detailData.corruption > 0}<div class="detail-row"><dt>Corruption</dt><dd>{detailData.corruption}%</dd></div>{/if}
+                {#if detailData.biome && detailData.name !== currentLocationName}<div class="detail-row"><dt>Biome</dt><dd>{detailData.biome}</dd></div>{/if}
+                {#if typeof detailData.visited_turn === 'number'}<div class="detail-row"><dt>Last visited</dt><dd>Turn {detailData.visited_turn} (now: {(codexData as any).world_clock?.turn || 0})</dd></div>{/if}
+                {#if detailData.exits && detailData.exits.length > 0}<div class="detail-row"><dt>Exits</dt><dd>{detailData.exits.join(', ')}</dd></div>{/if}
+            </dl>
 
+            {#if detailData.notes}
+                <div class="npc-detail-notes"><h4>Notes</h4><p>{detailData.notes}</p></div>
+            {/if}
+            {#if detailData.agenda}
+                <div class="npc-detail-notes"><h4>Agenda</h4><p>{detailData.agenda}</p></div>
+            {/if}
+            {#if detailData.description}
+                <div class="npc-detail-notes"><h4>Description</h4><p>{detailData.description}</p></div>
+            {/if}
+
+            {#if detailData.active_traits && detailData.active_traits.length > 0}
+                <div class="npc-detail-notes">
+                    <h4>Traits</h4>
+                    <ul class="trait-list">
+                        {#each detailData.active_traits as trait}<li class="trait-tag">{trait}</li>{/each}
+                    </ul>
+                </div>
+            {/if}
+            {#if detailData.permanent_conditions && detailData.permanent_conditions.length > 0}
+                <div class="npc-detail-notes">
+                    <h4>Permanent scars</h4>
+                    <ul class="scar-list">
+                        {#each detailData.permanent_conditions as scar}<li class="scar-item">{scar}</li>{/each}
+                    </ul>
+                </div>
+            {/if}
+            {#if detailData.echo_tags && detailData.echo_tags.length > 0}
+                <div class="npc-detail-notes">
+                    <h4>Echo tags</h4>
+                    <ul class="trait-list">
+                        {#each detailData.echo_tags as tag}<li class="trait-tag">{tag}</li>{/each}
+                    </ul>
+                </div>
+            {/if}
+
+            {#if activeDetail.type !== 'thread'}
+                <footer class="popover-actions">
+                    <span class="popover-actions-label">Quick target:</span>
+                    {#if activeDetail.type === 'npc'}
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Approach', detailData.name); closeUnifiedDetail(); }}>Approach</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Ask', detailData.name); closeUnifiedDetail(); }}>Ask</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Search', detailData.name); closeUnifiedDetail(); }}>Search</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Persuade', detailData.name); closeUnifiedDetail(); }}>Persuade</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Hide from', detailData.name); closeUnifiedDetail(); }}>Hide from</button>
+                    {:else if activeDetail.type === 'faction'}
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Contact', detailData.name); closeUnifiedDetail(); }}>Contact</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Approach', detailData.name); closeUnifiedDetail(); }}>Approach</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Persuade', detailData.name); closeUnifiedDetail(); }}>Persuade</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Investigate', detailData.name); closeUnifiedDetail(); }}>Investigate</button>
+                    {:else if activeDetail.type === 'party'}
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Ask', detailData.name); closeUnifiedDetail(); }}>Ask</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Persuade', detailData.name); closeUnifiedDetail(); }}>Persuade</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Help', detailData.name); closeUnifiedDetail(); }}>Help</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Heal', detailData.name); closeUnifiedDetail(); }}>Heal</button>
+                    {:else if activeDetail.type === 'location'}
+                        {#if detailData.name !== currentLocationName}
+                            <button type="button" class="action-template-chip" onclick={() => { travelTo(detailData.name); closeUnifiedDetail(); }} disabled={isLoading}>Travel here</button>
+                        {/if}
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Search', detailData.name); closeUnifiedDetail(); }}>Search</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Investigate', detailData.name); closeUnifiedDetail(); }}>Investigate</button>
+                        <button type="button" class="action-template-chip" onclick={() => { applyNpcTemplate('Look around', detailData.name); closeUnifiedDetail(); }}>Look around</button>
+                    {/if}
+                </footer>
+            {/if}
+        {/if}
+    </Modal>
+    
+    <InteractiveMap 
+        isOpen={showMap} 
+        onClose={() => showMap = false} 
+        locations={discoveredLocations} 
+        currentLocationName={currentLocationName} 
+    />
+    
     <!-- Phase 34: pipeline audit log — flat scan view of every round with
          audit or ruling data. Host-only debugging surface. -->
     {#if showAuditLog}
