@@ -1,55 +1,61 @@
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Spectral:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Outfit:wght@300;400;500;600;700&display=swap');
 
 :root {
-    /* Warm parchment surfaces */
-    --bg:          #e9e0cf;
-    --bg-tint:     #efe7d7;
-    --surface:     #fbf8f1;
-    --surface-2:   #f3ecdd;
-    --surface-3:   #ece2ce;
+    /* ---------- Refined Parchment: three surfaces, one accent ---------- */
+    --page:        #ede4d0;   /* single parchment tint — the canvas */
+    --card:        #fcf8ed;   /* inset cards / chronicle beats on top of page */
+    --inset:       #e4dbc5;   /* recessed areas only (input wells, code blocks) */
 
-    /* Ink */
-    --ink:         #2c2621;
-    --ink-soft:    #5b5044;
-    --muted:       #8a7c68;
-    --faint:       #a99a83;
+    --ink:         #2a2420;
+    --ink-soft:    #5a4f44;
+    --muted:       #8c7e6a;
 
-    /* Lines / borders */
-    --line:        #e2d7c1;
-    --line-strong: #d3c4a6;
+    --line:        #d8cbac;   /* single hairline border */
+    --line-soft:   #e3d8be;
 
-    /* Brand */
-    --accent:      #8c2f2f;   /* deep burgundy */
+    --accent:      #8c2f2f;   /* burgundy — chrome + primary CTAs only */
     --accent-deep: #6f2020;
     --accent-soft: rgba(140, 47, 47, 0.10);
-    --gold:        #a97e3c;   /* bronze */
-    --gold-soft:   rgba(169, 126, 60, 0.14);
 
-    /* Semantic */
-    --hp:          #b5433c;
-    --resolve:     #b1852f;
-    --corruption:  #7b57b8;
-    --good:        #3f7d55;
+    --gold:        #a97e3c;   /* text-only — scene titles, round ornament */
+    --gold-soft:   rgba(169, 126, 60, 0.16);
 
-    --radius:      14px;
-    --radius-sm:   9px;
+    /* Semantic desaturated */
+    --hp:          #a04640;
+    --resolve:     #9a7530;
+    --corruption:  #6e4fa8;
+    --good:        #3a725a;
+
+    /* Radii — down from 14/9. Standard 6, small 4, pill 999. */
+    --radius:      8px;
+    --radius-sm:   4px;
     --radius-pill: 999px;
 
-    --shadow-sm: 0 1px 2px rgba(70, 52, 28, 0.08), 0 2px 6px rgba(70, 52, 28, 0.05);
-    --shadow-md: 0 6px 22px rgba(70, 52, 28, 0.12);
-    --shadow-lg: 0 20px 55px rgba(55, 41, 22, 0.20);
+    /* One shadow tier. No md/lg. */
+    --shadow:      0 1px 2px rgba(60, 40, 20, 0.08);
+    --shadow-press:0 1px 1px rgba(60, 40, 20, 0.10);
 
-    --font-serif: "Cinzel", Georgia, serif;
-    --font-sans:  "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    /* Type scale — six steps */
+    --t-xs:   12px;
+    --t-sm:   14px;
+    --t-base: 16px;
+    --t-prose:18px;
+    --t-lg:   24px;
+    --t-xl:   36px;
+
+    --font-display: "Cinzel", Georgia, serif;
+    --font-prose:   "Spectral", Georgia, serif;
+    --font-ui:      "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
     width: 100%; height: 100%;
-    background-color: var(--bg);
+    background-color: var(--page);
     color: var(--ink);
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
+    font-size: var(--t-base);
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -57,91 +63,162 @@ html, body {
     -webkit-tap-highlight-color: transparent;
 }
 
-/* Scrollbars */
-::-webkit-scrollbar { width: 8px; height: 8px; }
+/* User-select back on for prose regions (chronicle, codex entries) */
+.selectable, .selectable * {
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+/* Scrollbars — slim, gold-tinted */
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-    background: var(--line-strong);
+    background: var(--line);
     border-radius: var(--radius-pill);
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 /* ---------- Buttons ---------- */
 button {
-    font-family: var(--font-sans);
-    font-size: 0.95rem;
+    font-family: var(--font-ui);
+    font-size: var(--t-sm);
     font-weight: 600;
     letter-spacing: 0.2px;
     cursor: pointer;
-    border: none;
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
-    padding: 0.75rem 1.25rem;
-    transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    padding: 0.55rem 1rem;
+    background: transparent;
+    color: var(--ink);
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-/* Primary (default) */
 button.btn-primary, .btn-primary {
     background: var(--accent);
     color: #fdf6ec;
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow);
 }
 button.btn-primary:hover, .btn-primary:hover {
     background: var(--accent-deep);
-    box-shadow: var(--shadow-md);
-    transform: translateY(-1px);
 }
-button.btn-primary:active, .btn-primary:active { transform: translateY(0); }
+button.btn-primary:active, .btn-primary:active {
+    box-shadow: var(--shadow-press);
+}
 
-/* Secondary / ghost */
 .btn-ghost {
-    background: var(--surface);
+    background: transparent;
     color: var(--ink-soft);
-    border: 1px solid var(--line-strong);
-    box-shadow: none;
+    border-color: var(--line);
 }
 .btn-ghost:hover {
-    background: var(--surface-2);
+    background: var(--inset);
     color: var(--ink);
     border-color: var(--muted);
 }
 
+.btn-tiny {
+    font-size: var(--t-xs);
+    padding: 0.3rem 0.6rem;
+}
+
 button:disabled, .btn-primary:disabled {
-    background: var(--surface-3);
+    background: var(--inset);
     color: var(--muted);
     box-shadow: none;
     cursor: not-allowed;
-    transform: none;
-    border: 1px solid var(--line);
+    border-color: var(--line-soft);
 }
 
 /* ---------- Inputs ---------- */
 input, textarea {
     width: 100%;
-    background: var(--surface);
-    border: 1px solid var(--line-strong);
+    background: var(--card);
+    border: 1px solid var(--line);
     border-radius: var(--radius-sm);
-    padding: 0.8rem 1rem;
+    padding: 0.7rem 0.9rem;
     color: var(--ink);
-    font-family: var(--font-sans);
-    font-size: 0.98rem;
+    font-family: var(--font-ui);
+    font-size: var(--t-base);
     outline: none;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-input::placeholder { color: var(--muted); }
+input::placeholder, textarea::placeholder { color: var(--muted); }
 input:focus, textarea:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
-    background: #fff;
+    box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-/* ---------- Card / panel ---------- */
+textarea {
+    font-family: var(--font-ui);
+    line-height: 1.5;
+    resize: none;
+}
+
+/* ---------- Type primitives ---------- */
+.display { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.04em; }
+.prose   { font-family: var(--font-prose); font-weight: 400; line-height: 1.55; }
+.prose-italic { font-family: var(--font-prose); font-style: italic; line-height: 1.55; }
+.mono    { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
+
+.eyebrow {
+    font-family: var(--font-display);
+    font-size: var(--t-xs);
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--gold);
+}
+
+.muted { color: var(--muted); }
+.ink-soft { color: var(--ink-soft); }
+
+/* Hairline rule */
+.hr-gold {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--gold-soft) 50%, transparent);
+    border: 0;
+    margin: 0.5rem 0;
+}
+
+/* ---------- Layout helpers ---------- */
 .panel {
-    background: var(--surface);
+    background: var(--card);
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow);
 }
 
-h1, h2, h3, h4 { font-weight: 600; color: var(--ink); }
+.panel-inset {
+    background: var(--inset);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+}
+
+.row { display: flex; align-items: center; gap: 0.5rem; }
+.row-tight { display: flex; align-items: center; gap: 0.3rem; }
+.col { display: flex; flex-direction: column; }
+.spread { display: flex; align-items: center; justify-content: space-between; }
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-pill);
+    background: var(--inset);
+    border: 1px solid var(--line-soft);
+    color: var(--ink-soft);
+    font-size: var(--t-xs);
+    font-weight: 500;
+}
+
+h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; color: var(--ink); letter-spacing: 0.02em; }
+h1 { font-size: var(--t-xl); }
+h2 { font-size: var(--t-lg); }
+h3 { font-size: var(--t-base); }
+
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+
+/* Remove default SvelteKit focus ring — we use our own */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }

@@ -1,8 +1,11 @@
 // Phase 1 DM: writes prose from the Director's structural ruling.
-// No judgement — that already happened. Just grounded narration, 2-3 sentences,
-// plain tone. Critic lint runs after this; failures retry once with feedback.
+// No judgement — that already happened. Beat-aware density: scene_set openings
+// breathe (2-3 sentences, evocative), action beats hit terse (one short sentence),
+// social beats render the NPC reply. Critic lint runs after this; failures retry
+// once with feedback.
 
 import { formatNorthStar } from './northstar.js';
+import { deriveLintProfile } from './proseLint.js';
 
 export function buildDmPrompt(directorRuling, codexJson, northStar, retryFeedback = null) {
   const rulingJson = JSON.stringify(directorRuling, null, 2);
@@ -14,8 +17,28 @@ export function buildDmPrompt(directorRuling, codexJson, northStar, retryFeedbac
     northStar = null;
   }
   const feedbackBlock = retryFeedback
-    ? `\n\nPREVIOUS ATTEMPT REJECTED BY CRITIC:\n${retryFeedback}\nRewrite the narration to fix every listed violations. Keep it grounded.\n`
+    ? `\n\nPREVIOUS ATTEMPT REJECTED BY CRITIC:\n${retryFeedback}\nRewrite the narration to fix every listed violation. Keep it grounded.\n`
     : '';
+
+  // Build the per-turn shape briefing from the ruling.
+  const profile = deriveLintProfile(directorRuling);
+  const isSceneSet = !!(directorRuling?.is_scene_set);
+  const beats = Array.isArray(directorRuling?.rulings) ? directorRuling.rulings : [];
+  const sceneSetLine = isSceneSet
+    ? `- OPEN with 2-3 sentences establishing the new place. Biome, light, what's there. Evocative imagery allowed. This is the only place flowery prose belongs.`
+    : null;
+  const beatLines = beats.length > 0
+    ? beats.map((r, i) => {
+        const bt = r?.beat_type === 'social' ? 'social' : 'action';
+        const verdict = r?.verdict || 'near_miss';
+        if (bt === 'social') {
+          return `- Beat ${i + 1} (social, ${verdict}): render the NPC's reply in 1-2 sentences. Minimal narration around the reply. No long descriptions.`;
+        }
+        return `- Beat ${i + 1} (action, ${verdict}): render in ONE short sentence (8-20 words). Direct. Fragments OK. No decoration, no imagery, no padding.`;
+      })
+    : ['- Render the action in ONE short sentence (8-20 words). Direct. Fragments OK.'];
+
+  const shapeBriefing = [sceneSetLine, ...beatLines].filter(Boolean).join('\n');
 
   return `${nsBlock}CURRENT SITUATION (MEMORY CODEX):
 ${codexJson}
@@ -26,9 +49,14 @@ ${rulingJson}${feedbackBlock}
 YOU ARE THE DUNGEON MASTER — narrate what happens in plain grounded prose.
 You do NOT decide outcomes. The Director's ruling is canon. Your job is to render it.
 
+TURN SHAPE (lint profile: ${profile}):
+${shapeBriefing}
+
+Compose the final narration by sequencing the pieces above. The whole narration must fit the ${profile} profile.
+
 CONSTRAINTS (the Critic will check these — do not violate):
-- Exactly 2 to 3 sentences. Combined length 30 to 90 words.
-- Each sentence does one of: advance the scene, deliver a consequence, or stage the next beat. Pure description forbidden.
+- Density must match the turn shape above. Scene-setting breathes; action beats hit hard. Do NOT write every sentence the same way.
+- Each beat does one of: advance the scene, deliver a consequence, or stage the next beat. Pure description is forbidden outside the scene-set opening.
 - Max 2 descriptive adjectives per sentence.
 - Normal fantasy tone. No purple prose, no grimdark maximalism, no gratuitous gore.
 - FORBIDDEN WORDS: visceral, eldritch, dread, sickly, oozing, twisted, suffocating, malevolent, grotesque, writhing, noxious, tenebrous, abyssal, foul, wretched.
@@ -38,7 +66,7 @@ CONSTRAINTS (the Critic will check these — do not violate):
 
 OUTPUT (STRICT JSON, no markdown):
 {
-  "narration": "2-3 sentences of plain prose rendering the ruling"
+  "narration": "the prose rendering of the ruling, matching the turn shape"
 }`;
 }
 

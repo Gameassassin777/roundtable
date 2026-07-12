@@ -2,7 +2,7 @@ import * as Y from 'yjs';
 import { callGemini, extractText, parseJsonLoose, KeyPool, SYSTEM_PROMPT } from './lib/ai.js';
 import { buildDmPrompt, buildBatchPrompt, buildRequestBody } from './lib/promptBuilder.js';
 import { buildDirectorPrompt, buildDirectorRequestBody } from './lib/director.js';
-import { lintProse } from './lib/proseLint.js';
+import { lintProse, deriveLintProfile } from './lib/proseLint.js';
 import { buildCriticPrompt, buildCriticRequestBody } from './lib/critic.js';
 import { buildWorldEnginePrompt, buildWorldEngineRequestBody, tickWorldClock } from './lib/worldEngine.js';
 
@@ -571,6 +571,14 @@ export class SignalingRoom {
       const directorText = extractText(directorResult.data);
       const ruling = parseJsonLoose(directorText);
       if (ruling) {
+        // Safety net: if Director omitted is_scene_set, derive from codex_writes.location
+        // (party actually moves) — that's the canonical signal for scene-setting.
+        if (ruling.is_scene_set === undefined) {
+          ruling.is_scene_set = !!(ruling.codex_writes && ruling.codex_writes.location);
+        }
+        // Beat-aware lint profile — scene_set / action / social / world_ambient.
+        const lintProfile = deriveLintProfile(ruling);
+
         // DM call: render the ruling as prose.
         this.broadcast({ type: 'turn-stage', stage: 'dm', label: 'Composing the scene…' });
         const dmResult = await this.callWithFallback(
@@ -581,8 +589,8 @@ export class SignalingRoom {
           const dmText = extractText(dmResult.data);
           const dmParsed = parseJsonLoose(dmText) || { narration: dmText };
 
-          // Lint pass 1
-          let lint = lintProse(dmParsed.narration);
+          // Lint pass 1 — uses beat profile.
+          let lint = lintProse(dmParsed.narration, lintProfile);
           let finalNarration = dmParsed.narration;
           let retried = false;
 
@@ -596,7 +604,7 @@ export class SignalingRoom {
             if (retryResult.ok) {
               const retryText = extractText(retryResult.data);
               const retryParsed = parseJsonLoose(retryText) || { narration: retryText };
-              const lint2 = lintProse(retryParsed.narration);
+              const lint2 = lintProse(retryParsed.narration, lintProfile);
               // Only adopt the retry if it actually improved
               if (lint2.passes || (!lint.passes && retryParsed.narration?.length > finalNarration.length)) {
                 finalNarration = retryParsed.narration;
@@ -635,7 +643,7 @@ export class SignalingRoom {
                   // Cheap-lint the retry too; adopt only if it lints clean or
                   // the Critic would prefer it (we can't re-run the Critic here
                   // without risking a third call).
-                  const crtLint = lintProse(crtParsed.narration);
+                  const crtLint = lintProse(crtParsed.narration, lintProfile);
                   if (crtLint.passes) {
                     finalNarration = crtParsed.narration;
                     criticPassed = true;
@@ -661,6 +669,10 @@ export class SignalingRoom {
             lint_retried: retried,
             critic_passed: criticPassed,
             critic_retried: criticRetried,
+            // Beat-type telemetry — frontend uses these to pick the rendering style.
+            beat_profile: lintProfile,
+            is_scene_set: !!ruling.is_scene_set,
+            beat_types: (ruling.rulings || []).map(r => r?.beat_type || 'action'),
             // Phase 27: slim summary of the Director's structured ruling so
             // the chronicle can surface what was decided (not just rendered).
             // Keep it small — only the keys, not the values, for codex writes.
@@ -754,6 +766,9 @@ export class SignalingRoom {
           critic_passed: turn.critic_passed ?? null,
           critic_retried: !!turn.critic_retried
         },
+        beat_profile: turn.beat_profile || 'action',
+        is_scene_set: !!turn.is_scene_set,
+        beat_types: Array.isArray(turn.beat_types) ? turn.beat_types : [],
         ruling_summary: turn.ruling_summary || null
       }]);
 
@@ -879,7 +894,6 @@ export class SignalingRoom {
         }
         yCodex.set('party', party);
       }
-      }
     });
 
     // Broadcast turn-result with the parsed payload (UI uses this for QTE,
@@ -894,7 +908,10 @@ export class SignalingRoom {
       lint_passed: turn.lint_passed,
       lint_retried: turn.lint_retried,
       critic_passed: turn.critic_passed ?? null,
-      critic_retried: turn.critic_retried ?? false
+      critic_retried: turn.critic_retried ?? false,
+      beat_profile: turn.beat_profile || 'action',
+      is_scene_set: !!turn.is_scene_set,
+      beat_types: Array.isArray(turn.beat_types) ? turn.beat_types : []
     });
 
     // Persist updated doc
@@ -945,6 +962,11 @@ export class SignalingRoom {
       const directorText = extractText(directorResult.data);
       const ruling = parseJsonLoose(directorText);
       if (ruling) {
+        // Whisper safety net: derive is_scene_set if missing (matches flushBatch).
+        if (ruling.is_scene_set === undefined) {
+          ruling.is_scene_set = !!(ruling.codex_writes && ruling.codex_writes.location);
+        }
+        const lintProfile = deriveLintProfile(ruling);
         const dmResult = await this.callWithFallback(
           buildRequestBody(buildDmPrompt(ruling, codexJson, northStar)),
           keyEntry
@@ -952,7 +974,7 @@ export class SignalingRoom {
         if (dmResult.ok) {
           const dmText = extractText(dmResult.data);
           const dmParsed = parseJsonLoose(dmText) || { narration: dmText };
-          let lint = lintProse(dmParsed.narration);
+          let lint = lintProse(dmParsed.narration, lintProfile);
           let finalNarration = dmParsed.narration;
           let retried = false;
           if (!lint.passes) {
@@ -964,7 +986,7 @@ export class SignalingRoom {
             if (retryResult.ok) {
               const retryText = extractText(retryResult.data);
               const retryParsed = parseJsonLoose(retryText) || { narration: retryText };
-              const lint2 = lintProse(retryParsed.narration);
+              const lint2 = lintProse(retryParsed.narration, lintProfile);
               if (lint2.passes || (!lint.passes && retryParsed.narration?.length > finalNarration.length)) {
                 finalNarration = retryParsed.narration;
               }
@@ -983,6 +1005,9 @@ export class SignalingRoom {
             new_locations: ruling.new_locations || null,
             lint_passed: lint.passes,
             lint_retried: retried,
+            beat_profile: lintProfile,
+            is_scene_set: !!ruling.is_scene_set,
+            beat_types: (ruling.rulings || []).map(r => r?.beat_type || 'action'),
             pipeline: 'director-dm'
           };
         }
@@ -1139,7 +1164,15 @@ function buildRulingSummary(ruling) {
     if (ruling.faction_changes) summary.faction_change_keys = Object.keys(ruling.faction_changes).slice(0, 6);
     if (ruling.thread_changes) summary.thread_change_ids = ruling.thread_changes.map(t => t?.id).filter(Boolean).slice(0, 6);
     if (ruling.scene_tags_change) summary.scene_tags_change = ruling.scene_tags_change;
-    if (Object.keys(summary).length === 0) return null;
+    // Beat-type telemetry — frontend reads these to pick the chronicle rendering style.
+    summary.is_scene_set = !!ruling.is_scene_set;
+    if (Array.isArray(ruling.rulings)) {
+      summary.beat_types = ruling.rulings.map(r => r?.beat_type || 'action').slice(0, 6);
+      summary.verdicts_by_id = ruling.rulings
+        .filter(r => r?.id && r?.verdict)
+        .slice(0, 8)
+        .map(r => ({ id: String(r.id).slice(0, 32), verdict: String(r.verdict).slice(0, 32), beat_type: r.beat_type || 'action' }));
+    }
     return summary;
   } catch {
     return null;
