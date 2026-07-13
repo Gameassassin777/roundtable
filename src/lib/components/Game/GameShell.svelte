@@ -1,9 +1,21 @@
 <script lang="ts">
-    // Layout grid: TopBar / SituationBar (inlined) + Chronicle + ActionInput + Codex
-    // Mobile-first single column; desktop 2-column (chronicle center, codex right rail).
+    // Cinematic layout — Round Table as immersive story-decision game.
+    //
+    // Layers (bottom to top):
+    //   1. CinematicDiorama — full viewport foreground stage, live during play
+    //   2. PaperGrain — already global from +page.svelte
+    //   3. Floating chrome (topbar + scene-strip) — low-opacity until interacted
+    //   4. Bottom stack — SubtitleOverlay (latest beat only) + ActionSummon (pill
+    //      that expands into sheet) + ChronicleHistory (swipe-up drawer)
+    //   5. Codex sheet — slides from right when toggled
+    //
+    // The chat-flow chronicle is gone. Story lives in the diorama + subtitles.
+    // Past beats are tucked behind the swipe-up drawer.
 
-    import Chronicle from './Chronicle.svelte';
-    import ActionInput from './ActionInput.svelte';
+    import CinematicDiorama from '$lib/components/CinematicDiorama.svelte';
+    import SubtitleOverlay from './SubtitleOverlay.svelte';
+    import ActionSummon from './ActionSummon.svelte';
+    import ChronicleHistory from './ChronicleHistory.svelte';
     import Codex from './Codex.svelte';
     import type { CodexSlice } from '$lib/stores/gameStore';
 
@@ -17,6 +29,15 @@
         beat_profile?: string;
         is_scene_set?: boolean;
         beat_types?: string[];
+    };
+
+    type Beat = {
+        id: number | string;
+        narration: string;
+        beat_profile?: 'scene_set' | 'action' | 'social' | 'world_ambient';
+        is_scene_set?: boolean;
+        location?: string;
+        biome?: string;
     };
 
     type Props = {
@@ -53,17 +74,10 @@
     let scene = $derived(codex?.scene_tags || { biome: '', weather: '', mood: '' });
     let location = $derived(codex?.location || '');
 
-    // ---- Scene-aware theming ----
-    // The AI sets scene_tags + world_clock freely per turn. We normalize those
-    // free-form strings into category slugs and attach them as data-attributes
-    // on the shell root. CSS uses the slugs to tint the parchment palette.
-    // Fluidity comes from the AI — the visual system just renders its intent.
+    // ---- Scene classification (preserved verbatim from previous GameShell) ----
     function slugify(s: string): string {
         return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     }
-
-    // Map free-form biome strings to a small set of tint families.
-    // Unknown biomes fall through to "other" (no tint override).
     const BIOME_FAMILIES: Record<string, string> = {
         forest: 'forest', woods: 'forest', grove: 'forest', jungle: 'forest', taiga: 'forest',
         desert: 'desert', dune: 'desert', waste: 'desert', wastes: 'desert', sand: 'desert',
@@ -83,13 +97,11 @@
         const s = slugify(raw);
         if (!s) return '';
         if (BIOME_FAMILIES[s]) return BIOME_FAMILIES[s];
-        // Partial match — first biome family whose key appears as a substring
         for (const key of Object.keys(BIOME_FAMILIES)) {
             if (s.includes(key)) return BIOME_FAMILIES[key];
         }
         return '';
     }
-
     function classifyTime(raw: string): string {
         const s = slugify(raw);
         if (!s) return '';
@@ -99,9 +111,6 @@
         if (s.includes('night') || s.includes('midnight') || s.includes('dark')) return 'night';
         return '';
     }
-
-    // Mood families — calm / tense / dark / corrupt / warm / sorrowful / hopeful.
-    // Each tints the accent + page subtly.
     const MOOD_FAMILIES: Record<string, string> = {
         calm: 'calm', peaceful: 'calm', serene: 'calm', quiet: 'calm', still: 'calm', gentle: 'calm',
         tense: 'tense', anxious: 'tense', uneasy: 'tense', dread: 'tense', fearful: 'tense', suspense: 'tense', suspenseful: 'tense',
@@ -122,7 +131,6 @@
         }
         return '';
     }
-
     function classifyWeather(raw: string): string {
         const s = slugify(raw);
         if (!s) return '';
@@ -140,11 +148,45 @@
     let moodClass = $derived(classifyMood(scene.mood));
     let weatherClass = $derived(classifyWeather(scene.weather));
 
-    // More-menu (⚙) — collapses all secondary chrome into one dropdown.
-    // Engine controls, Map, Audit, North Star, Weave, Shortcuts, Settings.
-    let moreMenuOpen = $state(false);
+    // ---- Latest beat for SubtitleOverlay ----
+    // Pull the most recent DM narration from chatLog (skips System/Warning entries).
+    let latestBeat = $derived.by<Beat | null>(() => {
+        for (let i = chatLog.length - 1; i >= 0; i--) {
+            const entry = chatLog[i];
+            if (entry.type !== 'dm') continue;
+            if (entry.author === 'System' || entry.author === 'Warning') continue;
+            if (!entry.text) continue;
+            return {
+                id: entry.timestamp || i,
+                narration: entry.text,
+                beat_profile: entry.beat_profile as Beat['beat_profile'],
+                is_scene_set: entry.is_scene_set,
+                location: location || undefined,
+                biome: scene?.biome || undefined,
+            };
+        }
+        return null;
+    });
 
-    function toggleMoreMenu() { moreMenuOpen = !moreMenuOpen; }
+    // ---- Chrome dimming ----
+    // Floating chrome (topbar, scene-strip) is dim by default, brightens on
+    // pointermove. After 3s of no movement, dims again. On touch devices, tap
+    // toggles a "chrome active" state that holds for 4s.
+    let chromeActive = $state(false);
+    let chromeTimeout: ReturnType<typeof setTimeout> | null = null;
+    function wakeChrome(durationMs = 3200) {
+        chromeActive = true;
+        if (chromeTimeout) clearTimeout(chromeTimeout);
+        chromeTimeout = setTimeout(() => { chromeActive = false; }, durationMs);
+    }
+    function onPointerMove() { wakeChrome(); }
+
+    // ---- More menu ----
+    let moreMenuOpen = $state(false);
+    function toggleMoreMenu() {
+        moreMenuOpen = !moreMenuOpen;
+        wakeChrome(8000);
+    }
     function closeMoreMenu() { moreMenuOpen = false; }
 
     function engineAction(a: 'pause' | 'resume' | 'tick-now' | 'step-time') {
@@ -156,7 +198,11 @@
         closeMoreMenu();
     }
 
-    // Close more-menu on outside click / Escape
+    // ---- Chronicle drawer ----
+    let chronicleOpen = $state(false);
+    function setChronicleOpen(v: boolean) { chronicleOpen = v; }
+
+    // ---- Click-outside handling for more-menu ----
     function handleShellClick(e: MouseEvent) {
         const t = e.target as HTMLElement;
         if (moreMenuOpen && !t.closest('[data-more-menu]') && !t.closest('[data-more-toggle]')) {
@@ -164,44 +210,60 @@
         }
     }
     function handleKeydown(e: KeyboardEvent) {
-        if (e.key === 'Escape' && moreMenuOpen) closeMoreMenu();
+        if (e.key === 'Escape') {
+            if (moreMenuOpen) closeMoreMenu();
+            if (chronicleOpen) chronicleOpen = false;
+        }
     }
 </script>
 
-<svelte:window onclick={handleShellClick} onkeydown={handleKeydown} />
+<svelte:window
+    onpointermove={onPointerMove}
+    onclick={handleShellClick}
+    onkeydown={handleKeydown}
+/>
+
+<!-- Foreground stage: live diorama fills the viewport behind everything -->
+<CinematicDiorama sceneTags={scene} />
 
 <div
     class="shell"
+    class:chrome-active={chromeActive || moreMenuOpen}
     data-biome={biomeClass || undefined}
     data-time={timeClass || undefined}
     data-mood={moodClass || undefined}
     data-weather={weatherClass || undefined}
 >
-    <!-- TopBar — minimal: brand + location + connection + more-menu -->
-    <header class="topbar">
-        <div class="brand display">Round Table</div>
+    <!-- ====== Floating chrome — topbar ====== -->
+    <header class="floating-chrome topbar">
+        <div class="brand">
+            <span class="brand-mark">✦</span>
+            <span class="brand-text display">Round Table</span>
+        </div>
         <div class="location-tag" title={location}>
             <span class="loc-dot" aria-hidden="true"></span>
             <span class="loc-text">{location || 'Uncharted'}</span>
         </div>
         <div class="topbar-actions">
-            <span class="chip conn" data-status={connectionStatus.toLowerCase()} title={`${connectionStatus} · ${peers} peer${peers === 1 ? '' : 's'}`}>
+            <span class="conn-chip" data-status={connectionStatus.toLowerCase()} title={`${connectionStatus} · ${peers} peer${peers === 1 ? '' : 's'}`}>
                 <span class="conn-dot" aria-hidden="true"></span>
                 {peers}
             </span>
-            <button class="btn-tiny btn-ghost icon-only" onclick={onCodexToggle} aria-label="Toggle codex" title="Codex">
+            <button class="icon-btn" onclick={onCodexToggle} aria-label="Toggle codex" title="Codex">
                 <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 2h7l3 3v9H3z"/><path d="M10 2v3h3"/><path d="M5 8h6M5 11h6"/></svg>
             </button>
             <button
-                class="btn-tiny btn-ghost icon-only"
+                class="icon-btn"
                 data-more-toggle
                 onclick={toggleMoreMenu}
                 aria-label="More menu"
                 aria-expanded={moreMenuOpen}
-            >⚙</button>
+            >
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="3" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="13" cy="8" r="1"/></svg>
+            </button>
 
             {#if moreMenuOpen}
-                <div class="more-menu panel" data-more-menu role="menu">
+                <div class="more-menu" data-more-menu role="menu">
                     <div class="more-section">
                         <div class="more-label eyebrow">Engine</div>
                         <div class="more-row">
@@ -238,38 +300,48 @@
         </div>
     </header>
 
-    <!-- Scene strip — thin context band (day/time + scene tags) above chronicle -->
-    <div class="scene-strip">
+    <!-- ====== Floating chrome — scene strip ====== -->
+    <div class="floating-chrome scene-strip">
         <span class="chip scene-chip">{worldClock.day !== 1 ? `Day ${worldClock.day} · ` : ''}{worldClock.time_of_day || 'Unset hour'}</span>
         {#if scene.biome}<span class="chip scene-chip">{scene.biome}</span>{/if}
         {#if scene.weather}<span class="chip scene-chip">{scene.weather}</span>{/if}
         {#if scene.mood}<span class="chip scene-chip mood-chip">{scene.mood}</span>{/if}
     </div>
 
-    <!-- Main grid -->
-    <main class="grid">
-        <section class="chronicle-col">
-            <Chronicle
-                {chatLog}
-                {localWhispers}
-                {isLoading}
-                {turnStageLabel}
-                {lastTurnError}
-            />
-            <ActionInput
-                onsubmit={onsubmit}
-                {whisperInFlight}
-                authorName={characterName}
-            />
-        </section>
-
-        <Codex
-            {codex}
-            {characterName}
-            sheetOpen={codexSheetOpen}
-            onclose={onCodexToggle}
+    <!-- ====== Bottom stack — subtitles + action pill ====== -->
+    <div class="bottom-stack">
+        <SubtitleOverlay
+            beat={latestBeat}
+            {isLoading}
+            {turnStageLabel}
+            error={lastTurnError}
         />
-    </main>
+        <ActionSummon
+            {onsubmit}
+            {whisperInFlight}
+            authorName={characterName}
+            {isLoading}
+        />
+    </div>
+
+    <!-- ====== Chronicle history drawer (hidden by default) ====== -->
+    <ChronicleHistory
+        {chatLog}
+        {localWhispers}
+        {isLoading}
+        {turnStageLabel}
+        {lastTurnError}
+        open={chronicleOpen}
+        onOpenChange={setChronicleOpen}
+    />
+
+    <!-- ====== Codex sheet ====== -->
+    <Codex
+        {codex}
+        {characterName}
+        sheetOpen={codexSheetOpen}
+        onclose={onCodexToggle}
+    />
 
     {#if showLevelUp && levelUpName}
         <div class="level-toast" role="status" aria-live="polite">
@@ -281,27 +353,58 @@
 
 <style>
     .shell {
-        display: flex;
-        flex-direction: column;
+        position: relative;
+        width: 100%;
         height: 100%;
         padding-top: var(--safe-top);
-        position: relative;
         z-index: 2;
+        pointer-events: none; /* let diorama show through; children re-enable */
+    }
+    /* Make interactive elements receive pointer events */
+    .shell > * { pointer-events: auto; }
+
+    /* ---------- floating chrome ---------- */
+    .floating-chrome {
+        opacity: 0.42;
+        transition: opacity 0.36s ease;
+    }
+    .shell.chrome-active .floating-chrome,
+    .floating-chrome:hover,
+    .floating-chrome:focus-within {
+        opacity: 1;
     }
 
+    /* ---------- topbar ---------- */
     .topbar {
+        position: absolute;
+        top: var(--safe-top, 0px);
+        left: 0; right: 0;
         display: grid;
         grid-template-columns: auto 1fr auto;
         align-items: center;
-        gap: 0.8rem;
-        padding: 0.45rem 0.8rem;
+        gap: 0.7rem;
+        padding: 0.5rem 0.8rem;
         padding-left: max(0.8rem, var(--safe-left));
         padding-right: max(0.8rem, var(--safe-right));
-        background: var(--page);
-        border-bottom: 1px solid var(--line);
-        flex-shrink: 0;
+        background: linear-gradient(180deg, rgba(252, 248, 237, 0.92) 0%, rgba(252, 248, 237, 0.72) 70%, transparent 100%);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
     }
-    .brand { font-size: var(--t-base); color: var(--ink); letter-spacing: 0.06em; }
+    .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .brand-mark {
+        color: var(--gold);
+        font-size: 0.95rem;
+        line-height: 1;
+    }
+    .brand-text {
+        font-size: var(--t-sm);
+        color: var(--ink);
+        letter-spacing: 0.1em;
+    }
     .location-tag {
         display: flex;
         align-items: center;
@@ -317,6 +420,7 @@
         background: var(--gold);
         border-radius: 50%;
         flex-shrink: 0;
+        box-shadow: 0 0 8px rgba(169, 126, 60, 0.5);
     }
     .loc-text {
         overflow: hidden;
@@ -327,18 +431,20 @@
         display: flex;
         align-items: center;
         gap: 0.35rem;
-        position: relative; /* anchor for more-menu dropdown */
+        position: relative;
     }
-    .chip[data-status='live'] { color: var(--good); border-color: var(--good); }
-    .chip[data-status='solo'] { color: var(--muted); }
-    .chip[data-status='connecting'] { color: var(--resolve); }
 
-    /* Connection chip — dot + peer count, compact */
-    .conn {
+    .conn-chip {
         display: inline-flex;
         align-items: center;
         gap: 0.3rem;
-        padding: 0.2rem 0.5rem;
+        padding: 0.2rem 0.55rem;
+        font-family: var(--font-ui);
+        font-size: var(--t-xs);
+        color: var(--ink-soft);
+        background: var(--card);
+        border: 1px solid var(--line-soft);
+        border-radius: 999px;
         font-variant-numeric: tabular-nums;
     }
     .conn-dot {
@@ -347,38 +453,54 @@
         background: var(--muted);
         flex-shrink: 0;
     }
-    .conn[data-status='live'] .conn-dot { background: var(--good); }
-    .conn[data-status='connecting'] .conn-dot { background: var(--resolve); animation: pulse-dot 1.2s ease-in-out infinite; }
-    .conn[data-status='disconnected'] .conn-dot { background: var(--hp); }
+    .conn-chip[data-status='live'] .conn-dot { background: var(--good); }
+    .conn-chip[data-status='live'] { color: var(--good); border-color: var(--good); }
+    .conn-chip[data-status='connecting'] .conn-dot { background: var(--resolve); animation: pulse-dot 1.2s ease-in-out infinite; }
+    .conn-chip[data-status='connecting'] { color: var(--resolve); }
+    .conn-chip[data-status='disconnected'] .conn-dot { background: var(--hp); }
+    .conn-chip[data-status='disconnected'] { color: var(--hp); }
     @keyframes pulse-dot {
-        0%, 100% { opacity: 0.4; }
+        0%, 100% { opacity: 0.5; }
         50% { opacity: 1; }
     }
 
-    /* Icon-only buttons for topbar */
-    .icon-only {
-        padding: 0.4rem;
-        width: 32px;
-        height: 32px;
+    .icon-btn {
+        width: 32px; height: 32px;
         min-height: 32px;
+        padding: 0;
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        background: var(--card);
+        border: 1px solid var(--line-soft);
+        border-radius: 999px;
+        color: var(--ink-soft);
+        cursor: pointer;
         line-height: 1;
+        transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+    }
+    .icon-btn:hover {
+        background: var(--inset);
+        color: var(--ink);
+        border-color: var(--gold-soft);
     }
 
-    /* More-menu — dropdown panel under ⚙ */
     .more-menu {
         position: absolute;
         top: calc(100% + 4px);
         right: max(0.8rem, var(--safe-right));
         min-width: 220px;
         padding: 0.55rem;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: 0 6px 24px rgba(60, 40, 20, 0.14);
         z-index: 40;
         display: flex;
         flex-direction: column;
         gap: 0.4rem;
         animation: menu-in 0.14s ease-out;
+        opacity: 1;
     }
     @keyframes menu-in {
         from { opacity: 0; transform: translateY(-4px); }
@@ -404,26 +526,25 @@
     }
     .more-row .btn-tiny { flex: 1 1 auto; min-width: 80px; }
     .more-section .wide { width: 100%; }
-    .btn-ghost.wide, .btn-primary.wide {
+    :global(.btn-ghost.wide), :global(.btn-primary.wide) {
         width: 100%;
         text-align: left;
         justify-content: flex-start;
     }
 
-    /* Scene strip — single thin band of chips, scrolls horizontally on mobile */
+    /* ---------- scene strip ---------- */
     .scene-strip {
+        position: absolute;
+        top: calc(var(--safe-top, 0px) + 3.2rem);
+        left: max(0.8rem, var(--safe-left));
+        right: max(0.8rem, var(--safe-right));
         display: flex;
         align-items: center;
         gap: 0.3rem;
-        padding: 0.35rem 0.8rem;
-        padding-left: max(0.8rem, var(--safe-left));
-        padding-right: max(0.8rem, var(--safe-right));
-        background: var(--page);
-        border-bottom: 1px solid var(--line-soft);
-        flex-shrink: 0;
         overflow-x: auto;
         scrollbar-width: none;
         -webkit-overflow-scrolling: touch;
+        padding: 0.2rem 0;
     }
     .scene-strip::-webkit-scrollbar { display: none; }
     .scene-chip {
@@ -431,43 +552,37 @@
         font-family: var(--font-prose);
         font-style: italic;
         font-size: var(--t-xs);
+        background: rgba(252, 248, 237, 0.7);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        border-color: var(--line-soft);
     }
     .scene-chip.mood-chip { color: var(--accent); border-color: var(--accent-soft); }
     .chip.paused { color: var(--hp); border-color: var(--hp); }
 
-    .grid {
-        flex: 1;
-        display: grid;
-        grid-template-columns: 1fr;
-        min-height: 0;
-    }
-    .chronicle-col {
+    /* ---------- bottom stack ---------- */
+    .bottom-stack {
+        position: absolute;
+        left: 0; right: 0;
+        bottom: 0;
+        padding-bottom: var(--safe-bottom, 0px);
         display: flex;
         flex-direction: column;
-        min-height: 0;
-        order: 1;
+        align-items: stretch;
+        gap: 0.55rem;
+        pointer-events: none;
     }
+    .bottom-stack > * { pointer-events: auto; }
 
-    /* Desktop: 2-column */
-    @media (min-width: 900px) {
-        .grid {
-            grid-template-columns: 1fr 340px;
-        }
-        .chronicle-col {
-            max-width: 720px;
-            margin: 0 auto;
-            width: 100%;
-        }
-    }
-
+    /* ---------- level toast ---------- */
     .level-toast {
         position: fixed;
-        top: 4rem;
+        top: calc(var(--safe-top, 0px) + 4rem);
         left: 50%;
         transform: translateX(-50%);
         background: var(--card);
         border: 1px solid var(--gold);
-        box-shadow: var(--shadow);
+        box-shadow: 0 4px 20px rgba(60, 40, 20, 0.18);
         padding: 0.6rem 1.1rem;
         border-radius: var(--radius);
         display: flex;
@@ -481,5 +596,22 @@
     @keyframes toast-in {
         from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
         to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+
+    @media (max-width: 540px) {
+        .topbar {
+            grid-template-columns: auto 1fr auto;
+            gap: 0.45rem;
+            padding: 0.4rem 0.6rem;
+        }
+        .brand-text { display: none; }
+        .scene-strip {
+            top: calc(var(--safe-top, 0px) + 2.7rem);
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .floating-chrome { transition: none; }
+        .more-menu, .level-toast { animation: none !important; }
     }
 </style>
