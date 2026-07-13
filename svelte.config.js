@@ -16,7 +16,11 @@ export default {
     },
     // Poll for a newer deploy every 60s so installed iOS PWAs update themselves
     // (the `updated` store flips true; +layout.svelte refreshes to fetch it).
+    // Bump `name` explicitly on every push — auto-timestamp can collide and
+    // gets pinned by GH Pages' CDN max-age=600. Manual bump guarantees the
+    // SW sees a different string and triggers the update flow.
     version: {
+      name: '5.1.0',
       pollInterval: 60000
     }
   }
