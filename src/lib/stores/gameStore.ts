@@ -90,6 +90,9 @@ export function createGameState(roomId: string) {
         on(event: string, callback: any) {
             this._listeners.push(callback);
         },
+        off(_event: string, callback: any) {
+            this._listeners = this._listeners.filter(cb => cb !== callback);
+        },
         getStates() {
             return this._states;
         },
