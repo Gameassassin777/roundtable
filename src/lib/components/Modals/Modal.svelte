@@ -40,10 +40,15 @@
         justify-content: center;
         z-index: 70;
         padding: 1rem;
+        padding-top: max(1rem, var(--safe-top));
+        padding-bottom: max(1rem, var(--safe-bottom));
+        padding-left: max(1rem, var(--safe-left));
+        padding-right: max(1rem, var(--safe-right));
     }
     .modal {
         width: min(640px, 94vw);
         max-height: 86vh;
+        max-height: 86dvh;
         display: flex;
         flex-direction: column;
         overflow: hidden;
@@ -60,6 +65,7 @@
     .modal-body {
         padding: 0.9rem;
         overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
         flex: 1;
     }
 </style>

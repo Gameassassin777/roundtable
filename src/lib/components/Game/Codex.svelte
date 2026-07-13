@@ -323,6 +323,7 @@
     .codex-scroll {
         flex: 1;
         overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
         padding: 0.5rem 0.85rem 2rem;
     }
 
@@ -464,12 +465,14 @@
             bottom: 0;
             left: 0;
             right: 0;
-            height: 70vh;
+            height: 75dvh;
             transform: translateY(100%);
             transition: transform 0.25s ease;
             border-left: none;
             border-top: 1px solid var(--line);
+            border-radius: 12px 12px 0 0;
             box-shadow: 0 -8px 24px rgba(60, 40, 20, 0.15);
+            padding-bottom: var(--safe-bottom);
             z-index: 30;
         }
         .codex.sheet-open { transform: translateY(0); }

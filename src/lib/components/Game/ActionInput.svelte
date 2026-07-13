@@ -126,6 +126,9 @@
         background: var(--page);
         border-top: 1px solid var(--line);
         padding: 0.5rem 0.6rem;
+        padding-bottom: max(0.5rem, var(--safe-bottom));
+        padding-left: max(0.6rem, var(--safe-left));
+        padding-right: max(0.6rem, var(--safe-right));
         position: relative;
     }
     .action-input[data-whisper='true'] {
@@ -141,14 +144,17 @@
 
     textarea {
         flex: 1;
-        min-height: 38px;
+        min-height: 44px;
         max-height: 140px;
         font-family: var(--font-ui);
-        font-size: var(--t-base);
+        font-size: 16px;        /* iOS threshold — below this auto-zooms on focus */
         line-height: 1.4;
         padding: 0.55rem 0.8rem;
         background: var(--card);
         border-color: var(--line);
+        border-radius: 8px;
+        -webkit-appearance: none;
+        appearance: none;
     }
     .action-input[data-whisper='true'] textarea {
         border-color: var(--corruption);
@@ -158,7 +164,7 @@
 
     .tpl-toggle, .whisper-toggle {
         align-self: flex-end;
-        height: 38px;
+        min-height: 44px;
         padding: 0 0.7rem;
     }
     .whisper-toggle.active {
@@ -168,7 +174,7 @@
     }
     .send-btn {
         align-self: flex-end;
-        height: 38px;
+        min-height: 44px;
     }
 
     .template-tray {

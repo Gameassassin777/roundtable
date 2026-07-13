@@ -200,7 +200,9 @@
         padding: 0.85rem;
         min-height: 180px;
         max-height: 320px;
+        max-height: 40dvh;
         overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
         margin-bottom: 0.7rem;
     }
     .forge-hint { font-size: var(--t-sm); margin-bottom: 0.7rem; }

@@ -761,6 +761,10 @@
     .onboarding-frame {
         position: fixed;
         inset: 0;
+        padding-top: var(--safe-top);
+        padding-bottom: var(--safe-bottom);
+        padding-left: var(--safe-left);
+        padding-right: var(--safe-right);
         overflow: hidden;
     }
     .onboarding-stage {
@@ -775,7 +779,7 @@
 
     .conn-banner {
         position: fixed;
-        top: 0; left: 0; right: 0;
+        top: var(--safe-top); left: 0; right: 0;
         background: var(--hp);
         color: #fdf6ec;
         text-align: center;

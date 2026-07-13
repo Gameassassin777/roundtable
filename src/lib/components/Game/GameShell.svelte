@@ -131,6 +131,7 @@
         display: flex;
         flex-direction: column;
         height: 100%;
+        padding-top: var(--safe-top);
         position: relative;
         z-index: 2;
     }
@@ -141,6 +142,8 @@
         align-items: center;
         gap: 0.8rem;
         padding: 0.45rem 0.8rem;
+        padding-left: max(0.8rem, var(--safe-left));
+        padding-right: max(0.8rem, var(--safe-right));
         background: var(--page);
         border-bottom: 1px solid var(--line);
         flex-shrink: 0;
@@ -181,11 +184,13 @@
         align-items: center;
         gap: 0.3rem;
         padding: 0.4rem 0.8rem;
+        padding-left: max(0.8rem, var(--safe-left));
+        padding-right: max(0.8rem, var(--safe-right));
         background: var(--page);
         border-bottom: 1px solid var(--line-soft);
         flex-shrink: 0;
-        overflow-x: auto;
         flex-wrap: wrap;
+        row-gap: 0.3rem;
     }
     .engine-controls {
         display: flex;

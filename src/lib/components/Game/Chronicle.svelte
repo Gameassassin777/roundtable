@@ -258,8 +258,10 @@
     .chronicle-scroll {
         flex: 1;
         overflow-y: auto;
-        padding: 0.5rem 1rem 6rem;
+        -webkit-overflow-scrolling: touch;
+        padding: 0.5rem 1rem 1.5rem;
         min-height: 0;
+        overscroll-behavior: contain;
     }
 
     .chronicle-empty {
