@@ -236,3 +236,92 @@ a:hover { text-decoration: underline; }
 
 /* Remove default SvelteKit focus ring — we use our own */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+
+/* ========================================================================
+   Scene-aware dynamic theming
+   The AI sets scene_tags + world_clock per turn. The shell root carries
+   data-biome / data-time / data-mood / data-weather attributes; these rules
+   tint the base parchment palette in response. Subtle by design — the
+   parchment identity never leaves, it just takes on the color of the scene.
+   Multiple attributes combine (e.g. forest + night + rain = deep mossy dark).
+   ======================================================================== */
+
+/* ---- Time of day: shifts page light/darkness ---- */
+.shell[data-time='morning'] {
+    --page: #f1e7d2;
+    --gold-soft: rgba(169, 126, 60, 0.20);
+}
+.shell[data-time='day'] {
+    --page: #ede4d0;
+}
+.shell[data-time='dusk'] {
+    --page: #ebd6b2;
+    --ink: #3a2820;
+    --gold: #b8742c;
+}
+.shell[data-time='night'] {
+    --page: #1c1814;
+    --card: #2a2420;
+    --inset: #14110e;
+    --ink: #ede0c4;
+    --ink-soft: #b8a98a;
+    --muted: #7a6e5a;
+    --line: #3a3128;
+    --line-soft: #2a2420;
+    --gold-soft: rgba(169, 126, 60, 0.28);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.40);
+}
+
+/* ---- Biome: subtle hue shift on parchment ---- */
+.shell[data-biome='forest']   { --page: #e3e4c6; --gold: #6e8a3a; }
+.shell[data-biome='desert']   { --page: #f1dfa8; --gold: #c08a2c; }
+.shell[data-biome='arctic']   { --page: #dde2e8; --ink: #2c3540; --gold: #6e829a; }
+.shell[data-biome='sea']      { --page: #dde6e0; --gold: #4a7a78; }
+.shell[data-biome='mountain'] { --page: #e6dccd; --gold: #7a6a4a; }
+.shell[data-biome='underground'] { --page: #2a2620; --card: #38322a; --inset: #1a1612; --ink: #e0d4ba; --ink-soft: #a89878; --gold: #b89656; }
+.shell[data-biome='urban']    { --page: #e8e2d2; --gold: #8a6a3a; }
+.shell[data-biome='swamp']    { --page: #d4d8be; --gold: #5a6a3a; --ink: #283020; }
+.shell[data-biome='plains']   { --page: #ece4c4; --gold: #a0842c; }
+.shell[data-biome='ruin']     { --page: #d8d0c0; --gold: #7a6a5a; --ink: #3a3028; }
+.shell[data-biome='void']     { --page: #1a1828; --card: #26223a; --inset: #0e0c1a; --ink: #d8d2e8; --gold: #8a7eb8; --accent: #6e4fa8; }
+.shell[data-biome='fire']     { --page: #f0d4b8; --gold: #c84a1c; --ink: #3a1a0c; }
+.shell[data-biome='crossroads'] { --page: #ede4d0; }
+
+/* ---- Mood: shifts accent + ornament ---- */
+.shell[data-mood='calm']      { --accent: #6e8050; --accent-deep: #566a3e; }
+.shell[data-mood='tense']     { --accent: #8c3f2f; --accent-deep: #6a2818; }
+.shell[data-mood='dark']      { --accent: #4a3a4a; --accent-deep: #2c202c; --gold: #8a7a5a; }
+.shell[data-mood='corrupt']   { --accent: #6e4fa8; --accent-deep: #4a2c7a; --gold: #9a7ec8; }
+.shell[data-mood='warm']      { --accent: #b8742c; --accent-deep: #8a521c; --gold: #d8a040; }
+.shell[data-mood='sorrowful'] { --accent: #4a5a78; --accent-deep: #2c3a58; --gold: #8a98b0; }
+.shell[data-mood='hopeful']   { --accent: #b8902c; --accent-deep: #8a6a1c; --gold: #d8b050; }
+.shell[data-mood='violent']   { --accent: #8c1c1c; --accent-deep: #6a0c0c; --gold: #b8341c; }
+.shell[data-mood='mystical']  { --accent: #5a4a9a; --accent-deep: #3a2c7a; --gold: #8a7ec8; }
+
+/* ---- Weather: paper-grain visibility + chill ---- */
+.shell[data-weather='rain']   { --page: color-mix(in srgb, var(--page) 92%, #5a6a78); }
+.shell[data-weather='snow']   { --page: color-mix(in srgb, var(--page) 88%, #d8e0e8); }
+.shell[data-weather='fog']    { --page: color-mix(in srgb, var(--page) 85%, #b8b8a8); --ink-soft: color-mix(in srgb, var(--ink-soft) 80%, var(--muted)); }
+.shell[data-weather='overcast'] { --page: color-mix(in srgb, var(--page) 94%, #8a8a78); }
+
+/* Smooth transitions when scene shifts — 1.2s so the world bleeds in */
+.shell {
+    transition:
+        --page 1.2s ease,
+        --card 1.2s ease,
+        --inset 1.2s ease,
+        --ink 1.2s ease,
+        --ink-soft 1.2s ease,
+        --gold 1.2s ease,
+        --accent 1.2s ease,
+        background-color 1.2s ease,
+        color 1.2s ease;
+}
+@property --page { syntax: '<color>'; inherits: true; initial-value: #ede4d0; }
+@property --card { syntax: '<color>'; inherits: true; initial-value: #fcf8ed; }
+@property --inset { syntax: '<color>'; inherits: true; initial-value: #e4dbc5; }
+@property --ink { syntax: '<color>'; inherits: true; initial-value: #2a2420; }
+@property --ink-soft { syntax: '<color>'; inherits: true; initial-value: #5a4f44; }
+@property --gold { syntax: '<color>'; inherits: true; initial-value: #a97e3c; }
+@property --accent { syntax: '<color>'; inherits: true; initial-value: #8c2f2f; }
+

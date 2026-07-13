@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { callGemini, extractText, parseJsonLoose, KeyPool, SYSTEM_PROMPT } from './lib/ai.js';
-import { buildDmPrompt, buildBatchPrompt, buildRequestBody } from './lib/promptBuilder.js';
+import { buildDmPrompt, buildBatchPrompt, buildRequestBody, buildGenesisPrompt } from './lib/promptBuilder.js';
 import { buildDirectorPrompt, buildDirectorRequestBody } from './lib/director.js';
 import { lintProse, deriveLintProfile } from './lib/proseLint.js';
 import { buildCriticPrompt, buildCriticRequestBody } from './lib/critic.js';
@@ -52,6 +52,8 @@ export class SignalingRoom {
     this.batchTimeoutMs = 5000;
     this.turnInFlight = false;
     this.pendingActions = [];
+    this.genesisInFlight = false;
+    this.genesisFired = false;
     // Phase 10: whisper batches, one per session. Each drains on its own timer
     // and the resulting narration is unicast to the whisperer only (codex
     // changes still land on the shared doc). Other players see nothing.
@@ -455,6 +457,25 @@ export class SignalingRoom {
           return;
         }
 
+        // ----- Genesis: world speaks first --------------------------------
+        // Client fires this after their character is committed to the codex
+        // AND the chat log is empty. Server double-checks emptiness + party
+        // presence so the first finisher triggers it once for the whole table.
+        if (data.type === "trigger-genesis") {
+          if (this.genesisInFlight || this.genesisFired) return;
+          const yChat = this.yDoc.getArray('chatLog');
+          const yCodex = this.yDoc.getMap('memoryCodex');
+          const party = yCodex.get('party') || {};
+          if (yChat.length > 0 || Object.keys(party).length === 0) return;
+          this.genesisInFlight = true;
+          this.runGenesis().catch(err => {
+            console.error('Genesis error:', err);
+          }).finally(() => {
+            this.genesisInFlight = false;
+          });
+          return;
+        }
+
         // ----- Phase 23: World Engine host controls -----------------------
         // Pause/resume the alarm loop, force a tick now, or step the world
         // clock forward one bucket without invoking the model. All clients
@@ -521,6 +542,117 @@ export class SignalingRoom {
     };
     ws.addEventListener("close", removeSession);
     ws.addEventListener("error", removeSession);
+  }
+
+  // -------------------------------------------------------------------------
+  // Genesis: the world speaks first. Fires once per world when the chat log
+  // is empty and a party has assembled. Writes a scene_set beat to the chat
+  // log and seeds the starting location + scene tags. Does NOT advance the
+  // world clock (the world hasn't started ticking yet — that happens on the
+  // first player action).
+  // -------------------------------------------------------------------------
+  async runGenesis() {
+    const yChat = this.yDoc.getArray('chatLog');
+    const yCodex = this.yDoc.getMap('memoryCodex');
+    if (yChat.length > 0 || this.genesisFired) {
+      this.genesisInFlight = false;
+      return;
+    }
+    const party = yCodex.get('party') || {};
+    const partyList = Object.entries(party).map(([name, p]) => ({ name, ...(p || {}) }));
+    if (partyList.length === 0) {
+      this.genesisInFlight = false;
+      return;
+    }
+
+    const keyEntry = this.keyPool.next();
+    if (!keyEntry) {
+      // No key available right now — re-arm and let the next session retry.
+      this.genesisInFlight = false;
+      return;
+    }
+
+    this.broadcast({ type: 'turn-start', actionIds: ['genesis'] });
+    this.broadcast({ type: 'turn-stage', stage: 'genesis', label: 'The world awakens…' });
+
+    const codexObj = yCodex.toJSON();
+    const codexJson = JSON.stringify(codexObj, null, 2);
+    const northStar = codexObj.north_star || null;
+
+    const result = await this.callWithFallback(
+      buildRequestBody(buildGenesisPrompt(partyList, codexJson, northStar)),
+      keyEntry
+    );
+
+    if (!result.ok) {
+      this.genesisInFlight = false;
+      this.broadcast({ type: 'turn-error', kind: 'genesis-failed', message: 'The world hesitates at the threshold. Try sending an action to begin.' });
+      return;
+    }
+
+    const text = extractText(result.data);
+    const parsed = parseJsonLoose(text);
+    if (!parsed?.narration) {
+      this.genesisInFlight = false;
+      return;
+    }
+
+    this.yDoc.transact(() => {
+      yChat.push([{
+        author: 'World',
+        text: String(parsed.narration).slice(0, 1200),
+        type: 'dm',
+        timestamp: Date.now(),
+        audit: { lint_retried: false, critic_passed: null, critic_retried: false },
+        beat_profile: 'scene_set',
+        is_scene_set: true,
+        beat_types: ['scene_set'],
+        ruling_summary: null,
+        is_genesis: true
+      }]);
+      if (parsed.starting_location && typeof parsed.starting_location === 'string') {
+        yCodex.set('location', parsed.starting_location.slice(0, 120));
+        // Seed the locations map with this starting place so travel works.
+        const locs = { ...(yCodex.get('locations') || {}) };
+        const locName = parsed.starting_location.slice(0, 120);
+        if (!locs[locName]) {
+          locs[locName] = {
+            description: String(parsed.narration || '').slice(0, 400),
+            exits: [],
+            biome: parsed.starting_scene_tags?.biome || '',
+            visited_turn: 0
+          };
+          yCodex.set('locations', locs);
+        }
+      }
+      if (parsed.starting_scene_tags && typeof parsed.starting_scene_tags === 'object') {
+        const cur = yCodex.get('scene_tags') || {};
+        yCodex.set('scene_tags', {
+          biome: parsed.starting_scene_tags.biome || cur.biome || 'crossroads',
+          weather: parsed.starting_scene_tags.weather || cur.weather || 'clear',
+          mood: parsed.starting_scene_tags.mood || cur.mood || 'unsettled'
+        });
+      }
+    });
+
+    this.genesisFired = true;
+    this.genesisInFlight = false;
+
+    this.broadcast({
+      type: 'turn-result',
+      narration: parsed.narration,
+      scene_tags: parsed.starting_scene_tags || null,
+      ui_update: null,
+      world_clock: yCodex.get('world_clock'),
+      pipeline: 'genesis',
+      is_scene_set: true,
+      beat_profile: 'scene_set',
+      beat_types: ['scene_set'],
+      is_genesis: true
+    });
+
+    const merged = Y.encodeStateAsUpdate(this.yDoc);
+    await this.state.storage.put("yDocState", merged);
   }
 
   // -------------------------------------------------------------------------

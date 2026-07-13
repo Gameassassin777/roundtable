@@ -257,6 +257,12 @@ export function createGameState(roomId: string) {
         }
     }
 
+    function triggerGenesis() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'trigger-genesis' }));
+        }
+    }
+
     // ---------- Codex binding ----------
     // Lifted verbatim from the old +page.svelte bindCodex (lines 783-822).
     // Three load-bearing pieces — preserving all of them:
@@ -346,6 +352,8 @@ export function createGameState(roomId: string) {
         qte,
         // Engine
         engineCountdown, engineControl,
+        // Genesis
+        triggerGenesis,
         // Server events
         serverEvents,
         awareness,

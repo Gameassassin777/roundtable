@@ -9,10 +9,12 @@
     import PaperGrain from '$lib/components/Background/PaperGrain.svelte';
     import CinematicDiorama from '$lib/components/CinematicDiorama.svelte';
     import QTE_Overlay from '$lib/components/QTE_Overlay.svelte';
-    import Welcome from '$lib/components/Onboarding/Welcome.svelte';
+    import Title from '$lib/components/Onboarding/Title.svelte';
     import Attune from '$lib/components/Onboarding/Attune.svelte';
     import SoulForge from '$lib/components/Onboarding/SoulForge.svelte';
+    import Threshold from '$lib/components/Onboarding/Threshold.svelte';
     import GameShell from '$lib/components/Game/GameShell.svelte';
+    import Toasts from '$lib/components/Toasts.svelte';
     import Modal from '$lib/components/Modals/Modal.svelte';
     import SettingsBody from '$lib/components/Modals/SettingsBody.svelte';
     import NorthStarBody from '$lib/components/Modals/NorthStarBody.svelte';
@@ -21,10 +23,17 @@
     import ShortcutsBody from '$lib/components/Modals/ShortcutsBody.svelte';
     import InteractiveMap from '$lib/components/Modals/InteractiveMap.svelte';
     import { ADVENTURE_SEEDS, type AdventureSeed } from '$lib/adventureSeeds';
+    import { pushToast } from '$lib/stores/toastStore.svelte';
 
     // ---------- Session state ----------
-    type WizardStep = 'welcome' | 'attune' | 'forge';
-    let wizardStep = $state<WizardStep>('welcome');
+    type WizardStep = 'title' | 'attune' | 'forge';
+    let wizardStep = $state<WizardStep>('title');
+
+    // Threshold transition state. 'crossing' while genesis runs, 'arrived' once
+    // the genesis beat lands in the chat log, 'failed' on genesis error.
+    type ThresholdStage = 'crossing' | 'arrived' | 'failed';
+    let thresholdOpen = $state(false);
+    let thresholdStage = $state<ThresholdStage>('crossing');
 
     const initialRoomId = localStorage.getItem('rt_world') || 'crossroads-1';
     let roomId = $state(initialRoomId);
@@ -32,7 +41,7 @@
     let {
         chatStore, addChatEntry, ydoc, provider, providerStore,
         codex, qte, engineCountdown, serverEvents,
-        sendAction, registerKey, engineControl,
+        sendAction, registerKey, engineControl, triggerGenesis,
         setCurrentCharacter, registerCurrentCharacter,
         awareness
     } = gameState;
@@ -188,7 +197,31 @@
     }
 
     // ---------- Wizard handlers ----------
-    function beginQuest() { wizardStep = 'attune'; }
+    function beginNewWorld() {
+        // New world flow: generate a fresh room code, refresh gameState, attune.
+        const fresh = 'realm-' + Math.random().toString(36).slice(2, 7);
+        switchRoom(fresh);
+        wizardStep = 'attune';
+    }
+
+    function continueExisting() {
+        // Use whatever room is already loaded. If character is already
+        // selected and we have a key, skip straight to forge or game.
+        if (characterSelected && isReady) {
+            wizardStep = 'forge';
+        } else {
+            wizardStep = 'attune';
+        }
+    }
+
+    function joinWorldFromTitle(code: string) {
+        switchRoom(code);
+        if (characterSelected && isReady) {
+            wizardStep = 'forge';
+        } else {
+            wizardStep = 'attune';
+        }
+    }
 
     function attune() {
         if (!apiKey.trim()) return;
@@ -215,6 +248,7 @@
             starting_item: { name: 'Heirloom', note: '' }
         } as ForgedCharacter;
         acceptCharacter(forged, slot.name);
+        // Continuing from a saved slot — go straight to attune to confirm key.
         wizardStep = 'attune';
     }
 
@@ -235,11 +269,23 @@
         awareness.setLocalStateField('user', { name: cleanName });
         rememberWorld(roomId);
         saveCurrentCharacterSlot(forged, cleanName);
-        addChatEntry({ author: 'System', text: `${cleanName} — ${forged.class_title} — has joined the table.`, type: 'dm' });
+        // NOTE: the System "joined the table" beat was removed — the world now
+        // speaks first via the genesis call. The first chatLog entry is the
+        // world describing what the party sees when they arrive.
     }
 
     function onSoulForgeAccept(forged: ForgedCharacter, name: string) {
         acceptCharacter(forged, name);
+        // Kick off the genesis call — the world speaks first.
+        // Only fire if the chat log is empty (fresh world).
+        if (chatLog.length === 0) {
+            thresholdOpen = true;
+            thresholdStage = 'crossing';
+            // Give the threshold a beat to render, then trigger genesis.
+            setTimeout(() => {
+                triggerGenesis();
+            }, 400);
+        }
     }
 
     // ---------- Lifecycle ----------
@@ -258,20 +304,34 @@
             characterSelected = true;
         }
 
-        // Returning-player routing
-        if (characterSelected && !isReady) wizardStep = 'attune';
+        // Returning-player routing — land on title by default; user can
+        // continue or enter a new world from there.
+        wizardStep = 'title';
 
         // Subscriptions
         unsubChat = chatStore.subscribe((v: ChatEntry[]) => { chatLog = v; });
         unsubServer = serverEvents.subscribe(handleServerEvent);
         unsubProvider = providerStore.subscribe((p: any) => {
+            const prev = connectionStatus;
             if (p.status === 'connected') {
                 connectionStatus = peers > 0 ? 'Live' : 'Solo';
                 wsDisconnected = false;
                 if (wsDisconnectTimer) { clearTimeout(wsDisconnectTimer); wsDisconnectTimer = null; }
+                if (prev === 'Connecting') {
+                    pushToast('Connected to the world', { kind: 'success', ttl: 2500 });
+                }
             } else if (p.status === 'disconnected') {
                 connectionStatus = 'Connecting';
-                if (!wsDisconnectTimer) wsDisconnectTimer = setTimeout(() => { wsDisconnected = true; }, 1500);
+                if (!wsDisconnectTimer) {
+                    wsDisconnectTimer = setTimeout(() => {
+                        wsDisconnected = true;
+                        pushToast('Connection lost — retrying', {
+                            kind: 'warning',
+                            detail: 'Your local copy stays in sync. Reconnecting automatically.',
+                            ttl: 5000
+                        });
+                    }, 1500);
+                }
             }
         });
         unsubCodex = codex.subscribe((c: CodexSlice) => { codexData = c; });
@@ -330,6 +390,13 @@
                     setTimeout(() => { showLevelUp = false; }, 2400);
                 }
             }
+            // Genesis landed — close the threshold transition.
+            if (evt.is_genesis) {
+                thresholdStage = 'arrived';
+                setTimeout(() => { thresholdOpen = false; }, 1400);
+                sfx.play('turn-result');
+                return;
+            }
             sfx.play('turn-result');
         } else if (evt.type === 'turn-error') {
             isLoading = false;
@@ -337,7 +404,15 @@
             turnStageLabel = '';
             const errText = evt.message || 'The world hesitates.';
             lastTurnError = errText;
-            addChatEntry({ author: 'System', text: errText, type: 'dm' });
+            // Genesis failure: drop the threshold but let the user proceed —
+            // their first action will trigger a normal DM turn.
+            if (thresholdOpen) {
+                thresholdStage = 'failed';
+                setTimeout(() => { thresholdOpen = false; }, 1800);
+            } else {
+                addChatEntry({ author: 'System', text: errText, type: 'dm' });
+                pushToast('The world hesitates', { kind: 'error', detail: errText, ttl: 5000 });
+            }
             sfx.play('turn-error');
         } else if (evt.type === 'whisper-result') {
             isLoading = false;
@@ -358,6 +433,7 @@
                 type: 'whisper',
                 timestamp: Date.now()
             });
+            pushToast('Whisper failed', { kind: 'warning', detail: evt.message || 'The DM did not hear you.', ttl: 4000 });
         } else if (evt.type === 'engine-status') {
             enginePaused = !!evt.paused;
             const newTick = evt.next_tick_at ?? null;
@@ -578,20 +654,33 @@
         ({
             chatStore, addChatEntry, ydoc, provider, providerStore,
             codex, qte, engineCountdown, serverEvents,
-            sendAction, registerKey, engineControl,
+            sendAction, registerKey, engineControl, triggerGenesis,
             setCurrentCharacter, registerCurrentCharacter, awareness
         } = next);
         // Re-subscribe
         unsubChat?.(); unsubChat = chatStore.subscribe((v: ChatEntry[]) => { chatLog = v; });
         unsubServer?.(); unsubServer = serverEvents.subscribe(handleServerEvent);
         unsubProvider?.(); unsubProvider = providerStore.subscribe((p: any) => {
+            const prev = connectionStatus;
             if (p.status === 'connected') {
                 connectionStatus = peers > 0 ? 'Live' : 'Solo';
                 wsDisconnected = false;
                 if (wsDisconnectTimer) { clearTimeout(wsDisconnectTimer); wsDisconnectTimer = null; }
+                if (prev === 'Connecting') {
+                    pushToast('Joined ' + roomId.trim(), { kind: 'success', ttl: 2500 });
+                }
             } else if (p.status === 'disconnected') {
                 connectionStatus = 'Connecting';
-                if (!wsDisconnectTimer) wsDisconnectTimer = setTimeout(() => { wsDisconnected = true; }, 1500);
+                if (!wsDisconnectTimer) {
+                    wsDisconnectTimer = setTimeout(() => {
+                        wsDisconnected = true;
+                        pushToast('Connection lost — retrying', {
+                            kind: 'warning',
+                            detail: 'Your local copy stays in sync. Reconnecting automatically.',
+                            ttl: 5000
+                        });
+                    }, 1500);
+                }
             }
         });
         unsubCodex?.(); unsubCodex = codex.subscribe((c: CodexSlice) => { codexData = c; });
@@ -673,11 +762,15 @@
     <div class="onboarding-frame">
         <CinematicDiorama sceneTags={codexData.scene_tags} />
         <div class="onboarding-stage">
-            {#if wizardStep === 'welcome'}
-                <Welcome
+            {#if wizardStep === 'title'}
+                <Title
                     savedCharacters={savedCharacters}
-                    onBegin={beginQuest}
+                    recentWorlds={recentWorlds}
+                    onBegin={beginNewWorld}
+                    onContinue={continueExisting}
                     onLoadSaved={loadSaved}
+                    onJoinWorld={joinWorldFromTitle}
+                    onOpenSettings={() => ui.showModal('settings')}
                 />
             {:else if wizardStep === 'attune'}
                 <Attune
@@ -687,7 +780,7 @@
                     onApiKey={(v) => (apiKey = v)}
                     onPolicy={(v) => (keySharePolicy = v)}
                     onRoomId={(v) => (roomId = v)}
-                    onBack={() => (wizardStep = 'welcome')}
+                    onBack={() => (wizardStep = 'title')}
                     onContinue={attune}
                 />
             {:else if wizardStep === 'forge'}
@@ -700,6 +793,14 @@
             {/if}
         </div>
     </div>
+{/if}
+
+{#if thresholdOpen}
+    <Threshold
+        characterName={characterName || 'Wanderer'}
+        classTitle={classTitle || 'Adventurer'}
+        stage={thresholdStage}
+    />
 {/if}
 
 {#if ui.openModal}
@@ -756,6 +857,8 @@
         {/if}
     </Modal>
 {/if}
+
+<Toasts />
 
 <style>
     .onboarding-frame {

@@ -7,6 +7,47 @@
 import { formatNorthStar } from './northstar.js';
 import { deriveLintProfile } from './proseLint.js';
 
+// Genesis: world speaks first. The party has just crossed the threshold; the
+// world describes what they emerged into. Sensory emplacement, no player action
+// required. Used once per world, on first character commit.
+export function buildGenesisPrompt(partyList, codexJson, northStar) {
+  const ns = formatNorthStar(northStar);
+  const nsBlock = ns ? `${ns}\n\n` : '';
+
+  const partyLines = partyList.map(p => {
+    const cls = p.class_title || p.archetype || 'adventurer';
+    return `- ${p.name} — ${cls}${p.backstory ? ` — ${String(p.backstory).slice(0, 120)}` : ''}`;
+  }).join('\n');
+
+  return `${nsBlock}THE PARTY WHO HAS JUST ARRIVED:
+${partyLines}
+
+CURRENT MEMORY CODEX (this is the start of the world — most fields are empty):
+${codexJson}
+
+YOU ARE THE WORLD — speak first. The party has just crossed the threshold into this place. Open the story with sensory emplacement: the world exists, and they are in it. NO player action has been declared. NO question is being answered.
+
+Cover most of these — pick what fits this place, drop what doesn't:
+- SKY: color, light, time of day, what's overhead
+- GROUND: what's under their feet, texture, slope
+- AIR: smell, temperature, what carries on the wind
+- SOUND: distant, close, or the shape of the silence
+- DETAIL: one small concrete thing that hints at what's here — a sound, a mark, a shape, a movement. NOT a person yet. NOT a list of options.
+
+3-5 sentences. Evocative but grounded fantasy. No grimdark maximalism. No gore. End on the world as it is — do NOT ask what they do, do NOT list choices, do NOT address them in second person.
+
+Tone follows the North Star premise and tone if set. Otherwise find a register from the place itself.
+
+FORBIDDEN WORDS: visceral, eldritch, dread, sickly, oozing, twisted, suffocating, malevolent, grotesque, writhing, noxious, tenebrous, abyssal, foul, wretched, whisper (as a noun), ancient (as a filler adjective), shimmer (overused).
+
+OUTPUT (STRICT JSON, no markdown):
+{
+  "narration": "3-5 sentences of sensory worldbuilding — the world speaking first",
+  "starting_location": "evocative proper-name for this place, 3-7 words",
+  "starting_scene_tags": { "biome": "string", "weather": "string", "mood": "string" }
+}`;
+}
+
 export function buildDmPrompt(directorRuling, codexJson, northStar, retryFeedback = null) {
   const rulingJson = JSON.stringify(directorRuling, null, 2);
   const ns = formatNorthStar(northStar);

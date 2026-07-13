@@ -85,12 +85,16 @@
     <form class="input-row" onsubmit={(e) => { e.preventDefault(); submit(); }}>
         <button
             type="button"
-            class="btn-tiny btn-ghost tpl-toggle"
+            class="btn-ghost icon-btn tpl-toggle"
+            class:active={showTemplates}
             onclick={() => (showTemplates = !showTemplates)}
             aria-label="Action templates"
             title="Action templates"
         >
-            ⌘
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">
+                <rect x="2" y="2" width="12" height="12" rx="1.5"/>
+                <path d="M5 6h6M5 9h4"/>
+            </svg>
         </button>
 
         <textarea
@@ -105,13 +109,17 @@
 
         <button
             type="button"
-            class="btn-tiny whisper-toggle"
+            class="btn-ghost icon-btn whisper-toggle"
             class:active={whisper}
             onclick={() => (whisper = !whisper)}
             title="Whisper privately to the DM"
             aria-pressed={whisper}
+            aria-label="Toggle whisper"
         >
-            ◷ Whisper
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">
+                <path d="M2 4h9v6H6l-3 2.5V10H2z"/>
+                <path d="M14 6v2" opacity="0.6"/>
+            </svg>
         </button>
 
         <button type="submit" class="btn-primary send-btn" disabled={disabled || !value.trim()}>
@@ -167,6 +175,21 @@
         min-height: 44px;
         padding: 0 0.7rem;
     }
+    /* Icon-only condense — smaller footprint, same tap target via min-height */
+    .icon-btn {
+        align-self: flex-end;
+        min-height: 44px;
+        min-width: 44px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .icon-btn.active {
+        background: var(--inset);
+        color: var(--accent);
+        border-color: var(--accent);
+    }
     .whisper-toggle.active {
         background: var(--corruption);
         color: #fdf6ec;
@@ -175,6 +198,7 @@
     .send-btn {
         align-self: flex-end;
         min-height: 44px;
+        padding: 0 1rem;
     }
 
     .template-tray {

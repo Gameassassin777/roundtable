@@ -88,6 +88,22 @@
         expanded[key] = !expanded[key];
     }
     const key = (...parts: string[]) => parts.join('::');
+
+    // Tab state — Hero / Party / World. Default to Hero.
+    type Tab = 'hero' | 'party' | 'world';
+    let activeTab = $state<Tab>('hero');
+
+    // Per-tab counts for badges
+    let partyCount = $derived(partyRoster.length);
+    let worldCount = $derived(
+        filteredNpcs.length + filteredFactions.length + filteredThreads.length + filteredLocations.length
+    );
+
+    function tabBadge(t: Tab): string {
+        if (t === 'party') return partyCount ? String(partyCount) : '';
+        if (t === 'world') return worldCount ? String(worldCount) : '';
+        return '';
+    }
 </script>
 
 <aside class="codex" class:sheet-open={sheetOpen} aria-label="World codex">
@@ -97,204 +113,248 @@
         <button class="btn-tiny btn-ghost close-btn" onclick={onclose} aria-label="Close codex">×</button>
     </header>
 
+    <!-- Tab strip -->
+    <div class="tab-strip" role="tablist">
+        <button
+            class="tab-btn"
+            class:active={activeTab === 'hero'}
+            role="tab"
+            aria-selected={activeTab === 'hero'}
+            onclick={() => (activeTab = 'hero')}
+        >
+            <span class="tab-label">Hero</span>
+        </button>
+        <button
+            class="tab-btn"
+            class:active={activeTab === 'party'}
+            role="tab"
+            aria-selected={activeTab === 'party'}
+            onclick={() => (activeTab = 'party')}
+        >
+            <span class="tab-label">Party</span>
+            {#if tabBadge('party')}<span class="tab-badge">{tabBadge('party')}</span>{/if}
+        </button>
+        <button
+            class="tab-btn"
+            class:active={activeTab === 'world'}
+            role="tab"
+            aria-selected={activeTab === 'world'}
+            onclick={() => (activeTab = 'world')}
+        >
+            <span class="tab-label">World</span>
+            {#if tabBadge('world')}<span class="tab-badge">{tabBadge('world')}</span>{/if}
+        </button>
+    </div>
+
     <div class="codex-scroll">
-        <!-- Active character sheet -->
-        {#if myChar}
-            <section class="block">
-                <h3 class="block-title eyebrow">Your hero</h3>
-                <div class="char-card">
-                    <div class="char-head">
-                        {#if myChar.portrait_url}
-                            <img src={myChar.portrait_url} alt={myChar.name} class="portrait" />
+        <!-- ============ HERO TAB ============ -->
+        {#if activeTab === 'hero'}
+            {#if myChar}
+                <section class="block">
+                    <div class="char-card">
+                        <div class="char-head">
+                            {#if myChar.portrait_url}
+                                <img src={myChar.portrait_url} alt={myChar.name} class="portrait" />
+                            {/if}
+                            <div class="char-id">
+                                <div class="char-name">{myChar.name}</div>
+                                <div class="char-class muted">{myChar.class_title || myChar.archetype || 'Adventurer'}</div>
+                            </div>
+                        </div>
+                        <div class="stat-block">
+                            <Bar label="HP" value={myChar.hp} max={myChar.max_hp || myChar.hp} kind="hp" />
+                            <Bar label="Resolve" value={myChar.resolve} max={myChar.resolve} kind="resolve" />
+                            <Bar label="Corruption" value={myChar.corruption} max={10} kind="corruption" />
+                        </div>
+                        {#if myChar.level || myChar.xp !== undefined}
+                            <div class="lvl-row">
+                                <span class="chip">Lv {myChar.level || 1}</span>
+                                <span class="chip">XP {myChar.xp || 0}</span>
+                            </div>
                         {/if}
-                        <div class="char-id">
-                            <div class="char-name">{myChar.name}</div>
-                            <div class="char-class muted">{myChar.class_title || myChar.archetype || 'Adventurer'}</div>
-                        </div>
+                        {#if Array.isArray(myChar.active_traits) && myChar.active_traits.length}
+                            <ul class="trait-list">
+                                {#each myChar.active_traits as t}
+                                    <li class="trait">· {t}</li>
+                                {/each}
+                            </ul>
+                        {/if}
+                        {#if Array.isArray(myChar.permanent_conditions) && myChar.permanent_conditions.length}
+                            <div class="conditions">
+                                {#each myChar.permanent_conditions as c}
+                                    <span class="chip condition">{c}</span>
+                                {/each}
+                            </div>
+                        {/if}
                     </div>
-                    <div class="stat-block">
-                        <Bar label="HP" value={myChar.hp} max={myChar.max_hp || myChar.hp} kind="hp" />
-                        <Bar label="Resolve" value={myChar.resolve} max={myChar.resolve} kind="resolve" />
-                        <Bar label="Corruption" value={myChar.corruption} max={10} kind="corruption" />
-                    </div>
-                    {#if myChar.level || myChar.xp !== undefined}
-                        <div class="lvl-row">
-                            <span class="chip">Lv {myChar.level || 1}</span>
-                            <span class="chip">XP {myChar.xp || 0}</span>
-                        </div>
-                    {/if}
-                    {#if Array.isArray(myChar.active_traits) && myChar.active_traits.length}
-                        <ul class="trait-list">
-                            {#each myChar.active_traits as t}
-                                <li class="trait">· {t}</li>
-                            {/each}
-                        </ul>
-                    {/if}
-                    {#if Array.isArray(myChar.permanent_conditions) && myChar.permanent_conditions.length}
-                        <div class="conditions">
-                            {#each myChar.permanent_conditions as c}
-                                <span class="chip condition">{c}</span>
-                            {/each}
-                        </div>
-                    {/if}
+                </section>
+            {:else}
+                <div class="empty muted">
+                    <p>No hero yet.</p>
+                    <p>Forge one to begin.</p>
                 </div>
-            </section>
+            {/if}
+
+            <!-- Inventory lives under Hero (it's the active player's stuff) -->
+            {#if filteredInventory.length}
+                <section class="block">
+                    <h3 class="block-title eyebrow">Inventory · {filteredInventory.length}</h3>
+                    <ul class="flat-list">
+                        {#each filteredInventory as [name, val]}
+                            <li class="flat-item">
+                                <span class="flat-name">{name}</span>
+                                {#if (val as any)?.durability !== undefined}
+                                    <span class="chip"> ⑎ {(val as any).durability}</span>
+                                {/if}
+                                {#if (val as any)?.note}
+                                    <span class="flat-note muted">{(val as any).note}</span>
+                                {/if}
+                            </li>
+                        {/each}
+                    </ul>
+                </section>
+            {/if}
         {/if}
 
-        <!-- Party -->
-        {#if partyRoster.length}
-            <section class="block">
-                <h3 class="block-title eyebrow">Party · {partyRoster.length}</h3>
-                <ul class="roster-list">
-                    {#each partyRoster as name}
-                        <li class="roster-item">
-                            <button class="row-btn" onclick={() => toggle(key('party', name))}>
-                                <span class="row-name">{name}</span>
-                                <span class="row-meta muted">{codex.party[name]?.class_title || ''}</span>
-                                <span class="chevron">{expanded[key('party', name)] ? '−' : '+'}</span>
-                            </button>
-                            {#if expanded[key('party', name)] && codex.party[name]}
-                                <div class="row-detail">
-                                    <Bar label="HP" value={codex.party[name].hp} max={codex.party[name].max_hp || codex.party[name].hp} kind="hp" />
-                                    {#if codex.party[name].level}<span class="chip">Lv {codex.party[name].level}</span>{/if}
-                                    {#if Array.isArray(codex.party[name].active_traits)}
-                                        <div class="trait-inline">{codex.party[name].active_traits.join(' · ')}</div>
-                                    {/if}
-                                </div>
-                            {/if}
-                        </li>
-                    {/each}
-                </ul>
-            </section>
+        <!-- ============ PARTY TAB ============ -->
+        {#if activeTab === 'party'}
+            {#if partyRoster.length}
+                <section class="block">
+                    <ul class="roster-list">
+                        {#each partyRoster as name}
+                            <li class="roster-item">
+                                <button class="row-btn" onclick={() => toggle(key('party', name))}>
+                                    <span class="row-name">{name}</span>
+                                    <span class="row-meta muted">{codex.party[name]?.class_title || ''}</span>
+                                    <span class="chevron">{expanded[key('party', name)] ? '−' : '+'}</span>
+                                </button>
+                                {#if expanded[key('party', name)] && codex.party[name]}
+                                    <div class="row-detail">
+                                        <Bar label="HP" value={codex.party[name].hp} max={codex.party[name].max_hp || codex.party[name].hp} kind="hp" />
+                                        {#if codex.party[name].level}<span class="chip">Lv {codex.party[name].level}</span>{/if}
+                                        {#if Array.isArray(codex.party[name].active_traits)}
+                                            <div class="trait-inline">{codex.party[name].active_traits.join(' · ')}</div>
+                                        {/if}
+                                    </div>
+                                {/if}
+                            </li>
+                        {/each}
+                    </ul>
+                </section>
+            {:else}
+                <div class="empty muted">
+                    <p>You ride alone.</p>
+                    <p>Share the world code to gather a party.</p>
+                </div>
+            {/if}
         {/if}
 
-        <!-- Inventory -->
-        {#if filteredInventory.length}
-            <section class="block">
-                <h3 class="block-title eyebrow">Inventory · {filteredInventory.length}</h3>
-                <ul class="flat-list">
-                    {#each filteredInventory as [name, val]}
-                        <li class="flat-item">
-                            <span class="flat-name">{name}</span>
-                            {#if (val as any)?.durability !== undefined}
-                                <span class="chip"> ⑎ {(val as any).durability}</span>
-                            {/if}
-                            {#if (val as any)?.note}
-                                <span class="flat-note muted">{(val as any).note}</span>
-                            {/if}
-                        </li>
-                    {/each}
-                </ul>
-            </section>
-        {/if}
+        <!-- ============ WORLD TAB ============ -->
+        {#if activeTab === 'world'}
+            {#if filteredNpcs.length}
+                <section class="block">
+                    <h3 class="block-title eyebrow">NPCs · {filteredNpcs.length}</h3>
+                    <ul class="roster-list">
+                        {#each filteredNpcs as [name, val]}
+                            <li class="roster-item">
+                                <button class="row-btn" onclick={() => toggle(key('npc', name))}>
+                                    <span class="row-name">{name}</span>
+                                    <span class="row-meta muted">{(val as any)?.role || ''}</span>
+                                    <span class="chevron">{expanded[key('npc', name)] ? '−' : '+'}</span>
+                                </button>
+                                {#if expanded[key('npc', name)]}
+                                    <div class="row-detail">
+                                        {#if (val as any)?.disposition}<div class="kv"><b>Disposition</b> {(val as any).disposition}</div>{/if}
+                                        {#if (val as any)?.location}<div class="kv"><b>Where</b> {(val as any).location}</div>{/if}
+                                        {#if (val as any)?.goal}<div class="kv"><b>Wants</b> {(val as any).goal}</div>{/if}
+                                        {#if (val as any)?.notes}<div class="kv selectable"><b>Notes</b> {(val as any).notes}</div>{/if}
+                                        {#if (val as any)?.status}<div class="kv"><b>Status</b> {(val as any).status}</div>{/if}
+                                    </div>
+                                {/if}
+                            </li>
+                        {/each}
+                    </ul>
+                </section>
+            {/if}
 
-        <!-- NPCs -->
-        {#if filteredNpcs.length}
-            <section class="block">
-                <h3 class="block-title eyebrow">NPCs · {filteredNpcs.length}</h3>
-                <ul class="roster-list">
-                    {#each filteredNpcs as [name, val]}
-                        <li class="roster-item">
-                            <button class="row-btn" onclick={() => toggle(key('npc', name))}>
-                                <span class="row-name">{name}</span>
-                                <span class="row-meta muted">{(val as any)?.role || ''}</span>
-                                <span class="chevron">{expanded[key('npc', name)] ? '−' : '+'}</span>
-                            </button>
-                            {#if expanded[key('npc', name)]}
-                                <div class="row-detail">
-                                    {#if (val as any)?.disposition}<div class="kv"><b>Disposition</b> {(val as any).disposition}</div>{/if}
-                                    {#if (val as any)?.location}<div class="kv"><b>Where</b> {(val as any).location}</div>{/if}
-                                    {#if (val as any)?.goal}<div class="kv"><b>Wants</b> {(val as any).goal}</div>{/if}
-                                    {#if (val as any)?.notes}<div class="kv selectable"><b>Notes</b> {(val as any).notes}</div>{/if}
-                                    {#if (val as any)?.status}<div class="kv"><b>Status</b> {(val as any).status}</div>{/if}
-                                </div>
-                            {/if}
-                        </li>
-                    {/each}
-                </ul>
-            </section>
-        {/if}
+            {#if filteredFactions.length}
+                <section class="block">
+                    <h3 class="block-title eyebrow">Factions · {filteredFactions.length}</h3>
+                    <ul class="roster-list">
+                        {#each filteredFactions as [name, val]}
+                            <li class="roster-item">
+                                <button class="row-btn" onclick={() => toggle(key('fac', name))}>
+                                    <span class="row-name">{name}</span>
+                                    <span class="row-meta muted">{(val as any)?.type || ''}</span>
+                                    <span class="chevron">{expanded[key('fac', name)] ? '−' : '+'}</span>
+                                </button>
+                                {#if expanded[key('fac', name)]}
+                                    <div class="row-detail">
+                                        {#if (val as any)?.agenda}<div class="kv selectable"><b>Agenda</b> {(val as any).agenda}</div>{/if}
+                                        {#if (val as any)?.disposition}<div class="kv"><b>Disposition</b> {(val as any).disposition}</div>{/if}
+                                        {#if (val as any)?.resources !== undefined}<div class="kv"><b>Resources</b> {(val as any).resources}</div>{/if}
+                                    </div>
+                                {/if}
+                            </li>
+                        {/each}
+                    </ul>
+                </section>
+            {/if}
 
-        <!-- Factions -->
-        {#if filteredFactions.length}
-            <section class="block">
-                <h3 class="block-title eyebrow">Factions · {filteredFactions.length}</h3>
-                <ul class="roster-list">
-                    {#each filteredFactions as [name, val]}
-                        <li class="roster-item">
-                            <button class="row-btn" onclick={() => toggle(key('fac', name))}>
-                                <span class="row-name">{name}</span>
-                                <span class="row-meta muted">{(val as any)?.type || ''}</span>
-                                <span class="chevron">{expanded[key('fac', name)] ? '−' : '+'}</span>
-                            </button>
-                            {#if expanded[key('fac', name)]}
-                                <div class="row-detail">
-                                    {#if (val as any)?.agenda}<div class="kv selectable"><b>Agenda</b> {(val as any).agenda}</div>{/if}
-                                    {#if (val as any)?.disposition}<div class="kv"><b>Disposition</b> {(val as any).disposition}</div>{/if}
-                                    {#if (val as any)?.resources !== undefined}<div class="kv"><b>Resources</b> {(val as any).resources}</div>{/if}
-                                </div>
-                            {/if}
-                        </li>
-                    {/each}
-                </ul>
-            </section>
-        {/if}
+            {#if filteredThreads.length}
+                <section class="block">
+                    <h3 class="block-title eyebrow">Threads · {filteredThreads.length}</h3>
+                    <ul class="roster-list">
+                        {#each filteredThreads as t}
+                            <li class="roster-item">
+                                <button class="row-btn" onclick={() => toggle(key('thr', (t as any).id))}>
+                                    <span class="row-name">{(t as any).name || (t as any).id}</span>
+                                    <span class="row-meta muted">{(t as any).status}</span>
+                                    <span class="chevron">{expanded[key('thr', (t as any).id)] ? '−' : '+'}</span>
+                                </button>
+                                {#if expanded[key('thr', (t as any).id)]}
+                                    <div class="row-detail selectable">
+                                        {#if (t as any).description}<div class="kv">{(t as any).description}</div>{/if}
+                                    </div>
+                                {/if}
+                            </li>
+                        {/each}
+                    </ul>
+                </section>
+            {/if}
 
-        <!-- Threads -->
-        {#if filteredThreads.length}
-            <section class="block">
-                <h3 class="block-title eyebrow">Threads · {filteredThreads.length}</h3>
-                <ul class="roster-list">
-                    {#each filteredThreads as t}
-                        <li class="roster-item">
-                            <button class="row-btn" onclick={() => toggle(key('thr', (t as any).id))}>
-                                <span class="row-name">{(t as any).name || (t as any).id}</span>
-                                <span class="row-meta muted">{(t as any).status}</span>
-                                <span class="chevron">{expanded[key('thr', (t as any).id)] ? '−' : '+'}</span>
-                            </button>
-                            {#if expanded[key('thr', (t as any).id)]}
-                                <div class="row-detail selectable">
-                                    {#if (t as any).description}<div class="kv">{(t as any).description}</div>{/if}
-                                </div>
-                            {/if}
-                        </li>
-                    {/each}
-                </ul>
-            </section>
-        {/if}
+            {#if filteredLocations.length}
+                <section class="block">
+                    <h3 class="block-title eyebrow">Places · {filteredLocations.length}</h3>
+                    <ul class="roster-list">
+                        {#each filteredLocations as [name, val]}
+                            <li class="roster-item">
+                                <button class="row-btn" onclick={() => toggle(key('loc', name))}>
+                                    <span class="row-name">{name}</span>
+                                    <span class="row-meta muted">{(val as any)?.biome || ''}</span>
+                                    <span class="chevron">{expanded[key('loc', name)] ? '−' : '+'}</span>
+                                </button>
+                                {#if expanded[key('loc', name)]}
+                                    <div class="row-detail selectable">
+                                        {#if (val as any)?.description}<div class="kv">{(val as any).description}</div>{/if}
+                                        {#if Array.isArray((val as any)?.exits) && (val as any).exits.length}
+                                            <div class="kv"><b>Exits</b> {(val as any).exits.join(' · ')}</div>
+                                        {/if}
+                                        {#if (val as any)?.notes}<div class="kv">{(val as any).notes}</div>{/if}
+                                    </div>
+                                {/if}
+                            </li>
+                        {/each}
+                    </ul>
+                </section>
+            {/if}
 
-        <!-- Locations -->
-        {#if filteredLocations.length}
-            <section class="block">
-                <h3 class="block-title eyebrow">Places · {filteredLocations.length}</h3>
-                <ul class="roster-list">
-                    {#each filteredLocations as [name, val]}
-                        <li class="roster-item">
-                            <button class="row-btn" onclick={() => toggle(key('loc', name))}>
-                                <span class="row-name">{name}</span>
-                                <span class="row-meta muted">{(val as any)?.biome || ''}</span>
-                                <span class="chevron">{expanded[key('loc', name)] ? '−' : '+'}</span>
-                            </button>
-                            {#if expanded[key('loc', name)]}
-                                <div class="row-detail selectable">
-                                    {#if (val as any)?.description}<div class="kv">{(val as any).description}</div>{/if}
-                                    {#if Array.isArray((val as any)?.exits) && (val as any).exits.length}
-                                        <div class="kv"><b>Exits</b> {(val as any).exits.join(' · ')}</div>
-                                    {/if}
-                                    {#if (val as any)?.notes}<div class="kv">{(val as any).notes}</div>{/if}
-                                </div>
-                            {/if}
-                        </li>
-                    {/each}
-                </ul>
-            </section>
-        {/if}
-
-        {#if !myChar && !partyRoster.length && !filteredNpcs.length && !filteredFactions.length && !filteredThreads.length && !filteredLocations.length}
-            <div class="empty muted">
-                <p>The codex is empty.</p>
-                <p>Play a round to begin filling it.</p>
-            </div>
+            {#if !filteredNpcs.length && !filteredFactions.length && !filteredThreads.length && !filteredLocations.length}
+                <div class="empty muted">
+                    <p>The world is uncharted.</p>
+                    <p>Play to discover its people and places.</p>
+                </div>
+            {/if}
         {/if}
     </div>
 </aside>
@@ -319,6 +379,52 @@
     .codex-title { font-size: var(--t-sm); margin: 0; }
     .codex-head input { padding: 0.35rem 0.6rem; font-size: var(--t-sm); }
     .close-btn { display: none; }
+
+    /* Tab strip — single-row, hairline underline */
+    .tab-strip {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0;
+        padding: 0 0.5rem;
+        border-bottom: 1px solid var(--line-soft);
+        background: var(--page);
+        flex-shrink: 0;
+    }
+    .tab-btn {
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        padding: 0.55rem 0.4rem;
+        font-family: var(--font-display);
+        font-size: var(--t-xs);
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        min-height: 36px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.3rem;
+        cursor: pointer;
+    }
+    .tab-btn:hover { color: var(--ink); background: transparent; }
+    .tab-btn.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+    }
+    .tab-badge {
+        font-family: var(--font-ui);
+        font-size: 10px;
+        background: var(--inset);
+        color: var(--ink-soft);
+        padding: 0 0.35rem;
+        border-radius: var(--radius-pill);
+        line-height: 16px;
+    }
+    .tab-btn.active .tab-badge {
+        background: var(--accent-soft);
+        color: var(--accent);
+    }
 
     .codex-scroll {
         flex: 1;
