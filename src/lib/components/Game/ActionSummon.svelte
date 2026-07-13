@@ -373,7 +373,7 @@
         padding-right: max(0.9rem, var(--safe-right));
         background: var(--card);
         border-top: 1px solid var(--line);
-        border-radius: 18px 18px 0 0;
+        border-radius: 6px 6px 0 0;
         box-shadow: 0 -8px 32px rgba(60, 40, 20, 0.16);
         z-index: 31;
         display: flex;
@@ -407,23 +407,23 @@
         font-family: var(--font-prose);
         font-size: 1.06rem;
         line-height: 1.5;
-        padding: 0.7rem 0.95rem;
-        background: var(--page);
-        border: 1px solid var(--line);
-        border-radius: 12px;
+        padding: 0.55rem 0.15rem 0.65rem;
+        background: transparent;
+        border: none;
+        border-bottom: 1px solid var(--line-soft);
+        border-radius: 0;
         color: var(--ink);
         resize: none;
         -webkit-appearance: none;
         appearance: none;
+        transition: border-color 0.2s ease;
     }
     textarea:focus {
         outline: none;
-        border-color: var(--gold);
-        box-shadow: 0 0 0 3px rgba(169, 126, 60, 0.15);
+        border-bottom-color: var(--gold);
     }
     .action-sheet[data-whisper='true'] textarea {
-        border-color: var(--corruption);
-        background: var(--page);
+        border-bottom-color: var(--corruption);
     }
 
     .sheet-row {
@@ -441,22 +441,20 @@
         align-items: center;
         justify-content: center;
         background: transparent;
-        border: 1px solid var(--line);
-        border-radius: 999px;
+        border: none;
+        border-radius: var(--radius-sm);
         color: var(--ink-soft);
         cursor: pointer;
-        transition: background 0.18s ease, border-color 0.18s ease;
+        transition: color 0.18s ease, background 0.18s ease;
     }
     .icon-btn:hover {
         background: var(--inset);
         color: var(--ink);
     }
     .icon-btn.active {
-        background: var(--inset);
         color: var(--accent);
-        border-color: var(--accent);
     }
-    .whisper-btn { gap: 0.35rem; width: auto; padding: 0 0.85rem; }
+    .whisper-btn { gap: 0.35rem; width: auto; padding: 0 0.7rem; }
     .whisper-btn .lbl {
         font-family: var(--font-ui);
         font-size: var(--t-xs);
@@ -467,11 +465,10 @@
     .whisper-btn.active {
         background: var(--corruption);
         color: #fdf6ec;
-        border-color: var(--corruption);
     }
 
     .send-btn {
-        padding: 0.55rem 1.4rem;
+        padding: 0.5rem 1.3rem;
         font-family: var(--font-display);
         letter-spacing: 0.08em;
         min-height: 40px;
@@ -487,18 +484,19 @@
     .template-strip::-webkit-scrollbar { display: none; }
     .tpl-chip {
         flex-shrink: 0;
-        padding: 0.35rem 0.7rem;
-        background: var(--inset);
+        padding: 0.3rem 0.65rem;
+        background: transparent;
         border: 1px solid var(--line-soft);
-        border-radius: 999px;
-        font-family: var(--font-ui);
+        border-radius: var(--radius-sm);
+        font-family: var(--font-prose);
+        font-style: italic;
         font-size: var(--t-xs);
         color: var(--ink-soft);
         cursor: pointer;
         white-space: nowrap;
+        transition: color 0.18s ease, border-color 0.18s ease;
     }
     .tpl-chip:hover {
-        background: var(--card);
         color: var(--ink);
         border-color: var(--gold-soft);
     }

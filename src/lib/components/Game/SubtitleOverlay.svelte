@@ -81,7 +81,7 @@
             </span>
         </div>
     {:else if incoming}
-        <div class="subtitle current" data-beat={incoming.is_scene_set ? 'scene_set' : (incoming.beat_profile || 'action')} key={incoming.id}>
+        <div class="subtitle current" data-beat={incoming.is_scene_set ? 'scene_set' : (incoming.beat_profile || 'action')}>
             {#if incoming.is_scene_set}
                 <div class="scene-frame">
                     {#if sceneEyebrow}
@@ -147,19 +147,24 @@
         justify-content: flex-end;
     }
 
-    /* Top fade — blends the subtitle panel into the diorama above */
+    /* Cinematic scrim — builds from transparent at top through ink-tinted
+       depth into solid parchment at the bottom. The ink mid-stop creates
+       actual legibility contrast against the warm diorama (which is itself
+       parchment-tinted, so a pure-parchment gradient is invisible). */
     .subtitle-fade {
         position: absolute;
         inset: 0;
-        top: -40px;
-        height: calc(100% + 40px);
-        background: linear-gradient(
-            180deg,
-            rgba(237, 228, 208, 0) 0%,
-            rgba(237, 228, 208, 0.55) 40%,
-            rgba(237, 228, 208, 0.85) 75%,
-            var(--page) 100%
-        );
+        top: -56px;
+        height: calc(100% + 56px);
+        background:
+            linear-gradient(
+                180deg,
+                rgba(237, 228, 208, 0) 0%,
+                rgba(42, 36, 32, 0.10) 35%,
+                rgba(42, 36, 32, 0.22) 60%,
+                rgba(237, 228, 208, 0.78) 88%,
+                var(--page) 100%
+            );
         pointer-events: none;
         z-index: 0;
     }
@@ -190,7 +195,12 @@
         color: var(--ink);
         margin: 0;
         text-wrap: pretty;
-        text-shadow: 0 1px 2px rgba(237, 228, 208, 0.8), 0 0 14px rgba(237, 228, 208, 0.6);
+        /* Dark drop shadow creates contrast against the warm diorama;
+           light halo creates contrast against the ink-tinted mid-stop. */
+        text-shadow:
+            0 1px 2px rgba(42, 36, 32, 0.45),
+            0 0 14px rgba(252, 248, 237, 0.92),
+            0 0 28px rgba(252, 248, 237, 0.7);
     }
     .prose-scene {
         font-size: 1.14rem;
@@ -233,7 +243,9 @@
         letter-spacing: 0.22em;
         color: var(--gold);
         text-transform: uppercase;
-        text-shadow: 0 0 12px rgba(237, 228, 208, 0.7);
+        text-shadow:
+            0 1px 2px rgba(42, 36, 32, 0.5),
+            0 0 12px rgba(252, 248, 237, 0.85);
     }
     .scene-frame .hr-gold {
         margin: 0.4rem 0 0;

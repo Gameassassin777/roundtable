@@ -116,7 +116,7 @@
         tense: 'tense', anxious: 'tense', uneasy: 'tense', dread: 'tense', fearful: 'tense', suspense: 'tense', suspenseful: 'tense',
         dark: 'dark', grim: 'dark', grimdark: 'dark', haunted: 'dark', bleak: 'dark', hopeless: 'dark', forsaken: 'dark',
         corrupt: 'corrupt', corrupted: 'corrupt', blighted: 'corrupt', unholy: 'corrupt', profane: 'corrupt', cursed: 'corrupt',
-        warm: 'warm', cozy: 'warm', hopeful: 'warm', joyful: 'warm', festive: 'warm', tender: 'warm',
+        warm: 'warm', cozy: 'warm', joyful: 'warm', festive: 'warm', tender: 'warm',
         sorrowful: 'sorrowful', mournful: 'sorrowful', grieving: 'sorrowful', melancholic: 'sorrowful', melancholy: 'sorrowful', sad: 'sorrowful',
         hopeful: 'hopeful', bright: 'hopeful', defiant: 'hopeful', resolute: 'hopeful',
         violent: 'violent', chaotic: 'violent', raging: 'violent', battle: 'violent', blood: 'violent',
@@ -234,78 +234,63 @@
     data-mood={moodClass || undefined}
     data-weather={weatherClass || undefined}
 >
-    <!-- ====== Floating chrome — topbar ====== -->
-    <header class="floating-chrome topbar">
-        <div class="brand">
-            <span class="brand-mark">✦</span>
-            <span class="brand-text display">Round Table</span>
-        </div>
-        <div class="location-tag" title={location}>
-            <span class="loc-dot" aria-hidden="true"></span>
-            <span class="loc-text">{location || 'Uncharted'}</span>
-        </div>
-        <div class="topbar-actions">
-            <span class="conn-chip" data-status={connectionStatus.toLowerCase()} title={`${connectionStatus} · ${peers} peer${peers === 1 ? '' : 's'}`}>
-                <span class="conn-dot" aria-hidden="true"></span>
-                {peers}
-            </span>
-            <button class="icon-btn" onclick={onCodexToggle} aria-label="Toggle codex" title="Codex">
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 2h7l3 3v9H3z"/><path d="M10 2v3h3"/><path d="M5 8h6M5 11h6"/></svg>
-            </button>
-            <button
-                class="icon-btn"
-                data-more-toggle
-                onclick={toggleMoreMenu}
-                aria-label="More menu"
-                aria-expanded={moreMenuOpen}
-            >
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="3" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="13" cy="8" r="1"/></svg>
-            </button>
+    <!-- ====== Minimal corner chrome — connection pulse (top-left) ====== -->
+    <span
+        class="corner-status"
+        data-status={connectionStatus.toLowerCase()}
+        title={`${connectionStatus}${peers > 0 ? ` · ${peers} peer${peers === 1 ? '' : 's'}` : ''}`}
+        aria-hidden="true"
+    ></span>
 
-            {#if moreMenuOpen}
-                <div class="more-menu" data-more-menu role="menu">
-                    <div class="more-section">
-                        <div class="more-label eyebrow">Engine</div>
-                        <div class="more-row">
-                            {#if enginePaused}
-                                <span class="chip paused">Paused</span>
-                                <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('resume')}>Resume</button>
-                            {:else if engineSecondsLeft !== null}
-                                <span class="chip">◷ {engineSecondsLeft}s</span>
-                                <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('pause')}>Pause</button>
-                            {:else}
-                                <span class="chip muted">Idle</span>
-                            {/if}
-                        </div>
-                        <div class="more-row">
-                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('tick-now')}>Tick now</button>
-                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('step-time')}>Step time</button>
-                        </div>
+    <!-- ====== Minimal corner chrome — menu glyph (top-right) ====== -->
+    <div class="corner-anchor floating-chrome">
+        <button
+            class="corner-glyph"
+            data-more-toggle
+            onclick={toggleMoreMenu}
+            aria-label="Menu"
+            aria-expanded={moreMenuOpen}
+        >⋮</button>
+
+        {#if moreMenuOpen}
+            <div class="more-menu" data-more-menu role="menu">
+                <div class="more-section">
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => { onCodexToggle(); closeMoreMenu(); }}>Codex</button>
+                </div>
+
+                <div class="more-section">
+                    <div class="more-label eyebrow">Engine</div>
+                    <div class="more-row">
+                        {#if enginePaused}
+                            <span class="chip paused">Paused</span>
+                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('resume')}>Resume</button>
+                        {:else if engineSecondsLeft !== null}
+                            <span class="chip">◷ {engineSecondsLeft}s</span>
+                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('pause')}>Pause</button>
+                        {:else}
+                            <span class="chip muted">Idle</span>
+                        {/if}
                     </div>
-
-                    <div class="more-section">
-                        <div class="more-label eyebrow">World</div>
-                        <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('map')}>Map</button>
-                        <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('audit')}>Audit Log</button>
-                        <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('northstar')}>North Star</button>
-                        <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('weave')}>Weave</button>
-                        <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('shortcuts')}>Shortcuts</button>
-                    </div>
-
-                    <div class="more-section">
-                        <button class="btn-primary wide" role="menuitem" onclick={() => openModalFromMenu('settings')}>Settings</button>
+                    <div class="more-row">
+                        <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('tick-now')}>Tick now</button>
+                        <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('step-time')}>Step time</button>
                     </div>
                 </div>
-            {/if}
-        </div>
-    </header>
 
-    <!-- ====== Floating chrome — scene strip ====== -->
-    <div class="floating-chrome scene-strip">
-        <span class="chip scene-chip">{worldClock.day !== 1 ? `Day ${worldClock.day} · ` : ''}{worldClock.time_of_day || 'Unset hour'}</span>
-        {#if scene.biome}<span class="chip scene-chip">{scene.biome}</span>{/if}
-        {#if scene.weather}<span class="chip scene-chip">{scene.weather}</span>{/if}
-        {#if scene.mood}<span class="chip scene-chip mood-chip">{scene.mood}</span>{/if}
+                <div class="more-section">
+                    <div class="more-label eyebrow">World</div>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('map')}>Map</button>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('audit')}>Audit Log</button>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('northstar')}>North Star</button>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('weave')}>Weave</button>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('shortcuts')}>Shortcuts</button>
+                </div>
+
+                <div class="more-section">
+                    <button class="btn-primary wide" role="menuitem" onclick={() => openModalFromMenu('settings')}>Settings</button>
+                </div>
+            </div>
+        {/if}
     </div>
 
     <!-- ====== Bottom stack — subtitles + action pill ====== -->
@@ -333,6 +318,16 @@
         {lastTurnError}
         open={chronicleOpen}
         onOpenChange={setChronicleOpen}
+        sceneInfo={{
+            location,
+            biome: scene.biome,
+            weather: scene.weather,
+            mood: scene.mood,
+            day: worldClock.day,
+            time_of_day: worldClock.time_of_day,
+            peers,
+            connectionStatus
+        }}
     />
 
     <!-- ====== Codex sheet ====== -->
@@ -374,121 +369,63 @@
         opacity: 1;
     }
 
-    /* ---------- topbar ---------- */
-    .topbar {
+    /* ---------- corner status (connection dot — top-left) ---------- */
+    .corner-status {
         position: absolute;
-        top: var(--safe-top, 0px);
-        left: 0; right: 0;
-        display: grid;
-        grid-template-columns: auto 1fr auto;
-        align-items: center;
-        gap: 0.7rem;
-        padding: 0.5rem 0.8rem;
-        padding-left: max(0.8rem, var(--safe-left));
-        padding-right: max(0.8rem, var(--safe-right));
-        background: linear-gradient(180deg, rgba(252, 248, 237, 0.92) 0%, rgba(252, 248, 237, 0.72) 70%, transparent 100%);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-    }
-    .brand {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    .brand-mark {
-        color: var(--gold);
-        font-size: 0.95rem;
-        line-height: 1;
-    }
-    .brand-text {
-        font-size: var(--t-sm);
-        color: var(--ink);
-        letter-spacing: 0.1em;
-    }
-    .location-tag {
-        display: flex;
-        align-items: center;
-        gap: 0.45rem;
-        font-size: var(--t-sm);
-        color: var(--ink-soft);
-        font-family: var(--font-prose);
-        font-style: italic;
-        min-width: 0;
-    }
-    .loc-dot {
-        width: 6px; height: 6px;
-        background: var(--gold);
-        border-radius: 50%;
-        flex-shrink: 0;
-        box-shadow: 0 0 8px rgba(169, 126, 60, 0.5);
-    }
-    .loc-text {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    .topbar-actions {
-        display: flex;
-        align-items: center;
-        gap: 0.35rem;
-        position: relative;
-    }
-
-    .conn-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.3rem;
-        padding: 0.2rem 0.55rem;
-        font-family: var(--font-ui);
-        font-size: var(--t-xs);
-        color: var(--ink-soft);
-        background: var(--card);
-        border: 1px solid var(--line-soft);
-        border-radius: 999px;
-        font-variant-numeric: tabular-nums;
-    }
-    .conn-dot {
+        top: calc(var(--safe-top, 0px) + 0.85rem);
+        left: max(0.9rem, var(--safe-left));
         width: 6px; height: 6px;
         border-radius: 50%;
         background: var(--muted);
-        flex-shrink: 0;
+        box-shadow: 0 0 8px currentColor;
+        opacity: 0.55;
+        transition: opacity 0.3s ease, background 0.3s ease;
+        pointer-events: none;
+        z-index: 4;
     }
-    .conn-chip[data-status='live'] .conn-dot { background: var(--good); }
-    .conn-chip[data-status='live'] { color: var(--good); border-color: var(--good); }
-    .conn-chip[data-status='connecting'] .conn-dot { background: var(--resolve); animation: pulse-dot 1.2s ease-in-out infinite; }
-    .conn-chip[data-status='connecting'] { color: var(--resolve); }
-    .conn-chip[data-status='disconnected'] .conn-dot { background: var(--hp); }
-    .conn-chip[data-status='disconnected'] { color: var(--hp); }
-    @keyframes pulse-dot {
-        0%, 100% { opacity: 0.5; }
-        50% { opacity: 1; }
+    .corner-status[data-status='live'] { background: var(--good); color: var(--good); opacity: 0.7; }
+    .corner-status[data-status='connecting'] {
+        background: var(--resolve); color: var(--resolve);
+        animation: corner-pulse 1.6s ease-in-out infinite;
+    }
+    .corner-status[data-status='disconnected'] { background: var(--hp); color: var(--hp); opacity: 0.6; }
+    @keyframes corner-pulse {
+        0%, 100% { opacity: 0.35; }
+        50%      { opacity: 0.85; }
     }
 
-    .icon-btn {
-        width: 32px; height: 32px;
-        min-height: 32px;
+    /* ---------- corner menu glyph (top-right) ---------- */
+    .corner-anchor {
+        position: absolute;
+        top: calc(var(--safe-top, 0px) + 0.6rem);
+        right: max(0.7rem, var(--safe-right));
+        z-index: 5;
+    }
+    .corner-glyph {
+        width: 28px; height: 28px;
+        min-height: 28px;
         padding: 0;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        background: var(--card);
-        border: 1px solid var(--line-soft);
-        border-radius: 999px;
+        background: transparent;
+        border: none;
         color: var(--ink-soft);
         cursor: pointer;
         line-height: 1;
-        transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+        font-size: 1.1rem;
+        letter-spacing: 0;
+        transition: color 0.22s ease;
     }
-    .icon-btn:hover {
-        background: var(--inset);
+    .corner-glyph:hover, .corner-glyph:focus-visible {
         color: var(--ink);
-        border-color: var(--gold-soft);
+        outline: none;
     }
 
     .more-menu {
         position: absolute;
         top: calc(100% + 4px);
-        right: max(0.8rem, var(--safe-right));
+        right: 0;
         min-width: 220px;
         padding: 0.55rem;
         background: var(--card);
@@ -532,32 +469,6 @@
         justify-content: flex-start;
     }
 
-    /* ---------- scene strip ---------- */
-    .scene-strip {
-        position: absolute;
-        top: calc(var(--safe-top, 0px) + 3.2rem);
-        left: max(0.8rem, var(--safe-left));
-        right: max(0.8rem, var(--safe-right));
-        display: flex;
-        align-items: center;
-        gap: 0.3rem;
-        overflow-x: auto;
-        scrollbar-width: none;
-        -webkit-overflow-scrolling: touch;
-        padding: 0.2rem 0;
-    }
-    .scene-strip::-webkit-scrollbar { display: none; }
-    .scene-chip {
-        flex-shrink: 0;
-        font-family: var(--font-prose);
-        font-style: italic;
-        font-size: var(--t-xs);
-        background: rgba(252, 248, 237, 0.7);
-        backdrop-filter: blur(4px);
-        -webkit-backdrop-filter: blur(4px);
-        border-color: var(--line-soft);
-    }
-    .scene-chip.mood-chip { color: var(--accent); border-color: var(--accent-soft); }
     .chip.paused { color: var(--hp); border-color: var(--hp); }
 
     /* ---------- bottom stack ---------- */
@@ -599,14 +510,13 @@
     }
 
     @media (max-width: 540px) {
-        .topbar {
-            grid-template-columns: auto 1fr auto;
-            gap: 0.45rem;
-            padding: 0.4rem 0.6rem;
+        .corner-status {
+            top: calc(var(--safe-top, 0px) + 0.7rem);
+            left: max(0.75rem, var(--safe-left));
         }
-        .brand-text { display: none; }
-        .scene-strip {
-            top: calc(var(--safe-top, 0px) + 2.7rem);
+        .corner-anchor {
+            top: calc(var(--safe-top, 0px) + 0.45rem);
+            right: max(0.6rem, var(--safe-right));
         }
     }
 

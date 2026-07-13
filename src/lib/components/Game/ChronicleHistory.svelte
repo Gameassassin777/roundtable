@@ -34,6 +34,17 @@
           }
         | { kind: 'world'; id: string; text: string; timestamp?: number };
 
+    type SceneInfo = {
+        location: string;
+        biome: string;
+        weather: string;
+        mood: string;
+        day: number;
+        time_of_day: string;
+        peers: number;
+        connectionStatus: string;
+    };
+
     type Props = {
         chatLog: ChatEntry[];
         localWhispers: ChatEntry[];
@@ -42,11 +53,12 @@
         lastTurnError: string | null;
         open: boolean;
         onOpenChange: (open: boolean) => void;
+        sceneInfo?: SceneInfo;
     };
 
     let {
         chatLog, localWhispers, isLoading, turnStageLabel, lastTurnError,
-        open, onOpenChange
+        open, onOpenChange, sceneInfo
     }: Props = $props();
 
     let search = $state('');
@@ -178,14 +190,15 @@
 </script>
 
 {#if !open}
-    <!-- Hint handle — barely-visible pill at the bottom edge. Tap or drag up. -->
+    <!-- Chronicle handle — small marginalia tab pinned to the bottom-left
+         corner, away from the action-pill axis. -->
     <button
         class="history-handle"
         onclick={open_}
         aria-label="Open chronicle"
         title="Past beats"
     >
-        <span class="handle-bar" aria-hidden="true"></span>
+        <span class="handle-mark" aria-hidden="true">⌃</span>
         <span class="handle-count">{beatCount} {beatCount === 1 ? 'beat' : 'beats'}</span>
     </button>
 {/if}
@@ -204,20 +217,57 @@
     >
         <div class="drawer-header">
             <div class="handle-bar" aria-hidden="true"></div>
+
+            {#if sceneInfo}
+                <div class="chapter-heading" aria-label="Current scene">
+                    <span class="chapter-eyebrow">Chapter</span>
+                    <div class="chapter-line">
+                        {#if sceneInfo.location}
+                            <span class="chapter-place">{sceneInfo.location}</span>
+                        {/if}
+                        {#if sceneInfo.biome}
+                            <span class="chapter-sep" aria-hidden="true">·</span>
+                            <span class="chapter-detail italic">{sceneInfo.biome}</span>
+                        {/if}
+                    </div>
+                    <div class="chapter-line dim">
+                        {#if sceneInfo.day && sceneInfo.time_of_day}
+                            <span class="chapter-detail">Day {sceneInfo.day}, {sceneInfo.time_of_day}</span>
+                        {/if}
+                        {#if sceneInfo.weather}
+                            <span class="chapter-sep" aria-hidden="true">·</span>
+                            <span class="chapter-detail italic">{sceneInfo.weather}</span>
+                        {/if}
+                        {#if sceneInfo.mood}
+                            <span class="chapter-sep" aria-hidden="true">·</span>
+                            <span class="chapter-detail italic mood">{sceneInfo.mood}</span>
+                        {/if}
+                    </div>
+                    {#if sceneInfo.peers > 0}
+                        <div class="chapter-line dim">
+                            <span class="chapter-detail">{sceneInfo.peers} companion{sceneInfo.peers === 1 ? '' : 's'} at the table</span>
+                        </div>
+                    {/if}
+                </div>
+            {/if}
+
             <div class="drawer-title-row">
                 <span class="eyebrow">Chronicle</span>
                 <span class="beat-count">{beatCount}</span>
-                <button class="btn-tiny btn-ghost close-btn" onclick={close} aria-label="Close chronicle">✕</button>
+                <button class="done-link" onclick={close}>Done</button>
             </div>
             <div class="toolbar">
-                <input
-                    type="search"
-                    placeholder="Search the chronicle…"
-                    bind:value={search}
-                    aria-label="Search chronicle"
-                />
+                <div class="find-row">
+                    <span class="find-glyph" aria-hidden="true">⌕</span>
+                    <input
+                        type="text"
+                        placeholder="Search the chronicle…"
+                        bind:value={search}
+                        aria-label="Search chronicle"
+                    />
+                </div>
                 <button
-                    class="btn-tiny btn-ghost"
+                    class="filter-pill"
                     class:active={whisperOnly}
                     onclick={() => (whisperOnly = !whisperOnly)}
                     title="Whispers only"
@@ -275,42 +325,44 @@
 {/if}
 
 <style>
-    /* ---------- handle (collapsed affordance) ---------- */
+    /* ---------- handle (collapsed affordance — bottom-left marginalia) ---------- */
     .history-handle {
         position: fixed;
-        bottom: calc(var(--safe-bottom, 0px) + 0.4rem);
-        left: 50%;
-        transform: translateX(-50%);
+        bottom: calc(var(--safe-bottom, 0px) + 0.55rem);
+        left: max(0.85rem, var(--safe-left));
         display: inline-flex;
-        flex-direction: column;
         align-items: center;
-        gap: 0.15rem;
-        padding: 0.35rem 0.95rem;
-        background: var(--card);
-        border: 1px solid var(--line-soft);
-        border-radius: 999px;
-        box-shadow: 0 2px 10px rgba(60, 40, 20, 0.06);
+        gap: 0.3rem;
+        padding: 0.3rem 0.65rem 0.3rem 0.45rem;
+        background: rgba(252, 248, 237, 0.62);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        border: none;
+        border-radius: var(--radius-sm);
+        box-shadow: 0 1px 3px rgba(60, 40, 20, 0.08);
         cursor: pointer;
         z-index: 20;
-        opacity: 0.72;
-        transition: opacity 0.22s ease, transform 0.22s ease;
+        opacity: 0.62;
+        transition: opacity 0.22s ease, transform 0.22s ease, color 0.22s ease;
     }
     .history-handle:hover {
         opacity: 1;
-        transform: translateX(-50%) translateY(-2px);
+        transform: translateY(-1px);
     }
-    .handle-bar {
-        width: 30px; height: 3px;
-        background: var(--muted);
-        border-radius: 999px;
-        opacity: 0.55;
+    .handle-mark {
+        font-family: var(--font-prose);
+        color: var(--gold);
+        font-size: 0.85rem;
+        line-height: 1;
+        transform: translateY(-1px);
     }
     .handle-count {
-        font-family: var(--font-ui);
-        font-size: 10px;
-        color: var(--muted);
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
+        font-family: var(--font-prose);
+        font-style: italic;
+        font-size: var(--t-xs);
+        color: var(--ink-soft);
+        letter-spacing: 0;
+        text-transform: none;
         font-variant-numeric: tabular-nums;
     }
 
@@ -335,7 +387,7 @@
         height: 75vh;
         background: var(--card);
         border-top: 1px solid var(--line);
-        border-radius: 18px 18px 0 0;
+        border-radius: 6px 6px 0 0;
         box-shadow: 0 -8px 32px rgba(60, 40, 20, 0.18);
         z-index: 33;
         display: flex;
@@ -353,7 +405,7 @@
         padding: 0.55rem 0.9rem 0.5rem;
         border-bottom: 1px solid var(--line-soft);
         background: var(--card);
-        border-radius: 18px 18px 0 0;
+        border-radius: 6px 6px 0 0;
     }
     .drawer-header .handle-bar {
         margin: 0 auto 0.4rem;
@@ -366,7 +418,7 @@
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        margin-bottom: 0.4rem;
+        margin-bottom: 0.5rem;
     }
     .drawer-title-row .eyebrow {
         font-family: var(--font-display);
@@ -380,24 +432,117 @@
         font-family: var(--font-ui);
         font-size: var(--t-xs);
         color: var(--muted);
-        background: var(--inset);
-        padding: 0.1rem 0.45rem;
-        border-radius: 999px;
         font-variant-numeric: tabular-nums;
     }
-    .close-btn {
+    .done-link {
         margin-left: auto;
+        background: transparent;
+        border: none;
+        color: var(--accent);
+        font-family: var(--font-prose);
+        font-style: italic;
+        font-size: var(--t-sm);
+        cursor: pointer;
+        padding: 0.2rem 0.4rem;
+        transition: color 0.18s ease;
     }
+    .done-link:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+
+    /* ---------- chapter heading (chronicle marginalia) ---------- */
+    .chapter-heading {
+        padding: 0.5rem 0 0.65rem;
+        margin-bottom: 0.55rem;
+        border-bottom: 1px solid var(--line-soft);
+        display: flex;
+        flex-direction: column;
+        gap: 0.18rem;
+    }
+    .chapter-eyebrow {
+        font-family: var(--font-display);
+        font-size: 9.5px;
+        font-weight: 600;
+        letter-spacing: 0.28em;
+        color: var(--gold);
+        text-transform: uppercase;
+        margin-bottom: 0.15rem;
+    }
+    .chapter-line {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.35rem;
+        font-family: var(--font-prose);
+        line-height: 1.45;
+    }
+    .chapter-line.dim { opacity: 0.75; }
+    .chapter-place {
+        font-family: var(--font-display);
+        font-size: var(--t-md, 1rem);
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: var(--ink);
+    }
+    .chapter-detail {
+        font-family: var(--font-prose);
+        font-size: var(--t-sm);
+        color: var(--ink-soft);
+    }
+    .chapter-detail.italic { font-style: italic; }
+    .chapter-detail.mood { color: var(--accent); }
+    .chapter-sep {
+        color: var(--gold);
+        opacity: 0.55;
+        font-size: 0.7rem;
+    }
+
     .toolbar {
         display: flex;
         gap: 0.4rem;
     }
-    .toolbar input {
+    .find-row {
         flex: 1;
-        font-size: var(--t-sm);
-        padding: 0.4rem 0.65rem;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.35rem 0.65rem;
+        background: transparent;
+        border: none;
+        border-bottom: 1px solid var(--line-soft);
+        transition: border-color 0.2s ease;
     }
-    .toolbar button.active {
+    .find-row:focus-within { border-bottom-color: var(--gold); }
+    .find-glyph {
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1;
+        flex-shrink: 0;
+    }
+    .find-row input {
+        flex: 1;
+        font-family: var(--font-prose);
+        font-style: italic;
+        font-size: var(--t-sm);
+        color: var(--ink);
+        background: transparent;
+        border: none;
+        outline: none;
+        padding: 0;
+    }
+    .find-row input::placeholder { color: var(--muted); font-style: italic; }
+    .filter-pill {
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        padding: 0.3rem 0.7rem;
+        font-family: var(--font-ui);
+        font-size: var(--t-xs);
+        color: var(--ink-soft);
+        cursor: pointer;
+        letter-spacing: 0.04em;
+        transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    }
+    .filter-pill:hover { color: var(--ink); border-color: var(--gold-soft); }
+    .filter-pill.active {
         background: var(--accent-soft);
         border-color: var(--accent);
         color: var(--accent);
