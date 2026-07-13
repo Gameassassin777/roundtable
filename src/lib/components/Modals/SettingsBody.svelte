@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { version } from '$app/environment';
     import * as sfx from '$lib/audio/sfx';
 
     type SavedSlot = {
@@ -141,6 +142,11 @@
     </div>
 
     <button class="btn-primary wide" onclick={onSaveSettings}>Save</button>
+
+    <div class="build-info muted" aria-label="Build version">
+        <span class="build-label">Build</span>
+        <span class="build-version">{version}</span>
+    </div>
 </div>
 
 <style>
@@ -232,4 +238,24 @@
         font-size: var(--t-sm);
     }
     .saved-delete:hover { color: var(--hp); }
+
+    .build-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-top: 0.4rem;
+        padding-top: 0.6rem;
+        border-top: 1px solid var(--line);
+        font-size: var(--t-xs);
+    }
+    .build-label {
+        font-family: var(--font-display);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+    .build-version {
+        font-family: var(--font-ui);
+        color: var(--gold);
+        font-variant-numeric: tabular-nums;
+    }
 </style>
