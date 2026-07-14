@@ -479,7 +479,7 @@
         padding-bottom: var(--safe-bottom, 0px);
         display: flex;
         flex-direction: column;
-        align-items: stretch;
+        align-items: center;
         gap: 0.55rem;
         pointer-events: none;
     }

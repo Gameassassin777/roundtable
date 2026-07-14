@@ -193,7 +193,6 @@
         {:else}
             <span class="pill-glyph" aria-hidden="true">✦</span>
             <span class="pill-text">Press to act</span>
-            <span class="pill-hint" aria-hidden="true">/</span>
         {/if}
     </button>
 {/if}
@@ -326,17 +325,6 @@
     }
     .pill-text {
         letter-spacing: 0.01em;
-    }
-    .pill-hint {
-        font-family: var(--font-ui);
-        font-style: normal;
-        font-size: var(--t-xs);
-        color: var(--muted);
-        background: var(--inset);
-        padding: 0.05rem 0.4rem;
-        border-radius: var(--radius-sm);
-        margin-left: 0.25rem;
-        letter-spacing: 0;
     }
     .pill-dot {
         width: 6px; height: 6px;

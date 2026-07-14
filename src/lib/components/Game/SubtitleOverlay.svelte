@@ -336,18 +336,25 @@
         gap: 0.6rem;
         justify-content: center;
         padding: 1.2rem 0;
-        opacity: 0.55;
+        opacity: 0.82;
     }
     .idle-mark {
         color: var(--gold);
         font-size: 0.9rem;
+        text-shadow:
+            0 1px 2px rgba(42, 36, 32, 0.5),
+            0 0 12px rgba(252, 248, 237, 0.85);
         animation: idle-twinkle 3s ease-in-out infinite;
     }
     .idle-hint {
         font-family: var(--font-prose);
         font-style: italic;
-        color: var(--muted);
+        color: var(--ink-soft);
         font-size: var(--t-sm);
+        text-shadow:
+            0 1px 2px rgba(42, 36, 32, 0.45),
+            0 0 14px rgba(252, 248, 237, 0.92),
+            0 0 28px rgba(252, 248, 237, 0.7);
     }
     @keyframes idle-twinkle {
         0%, 100% { opacity: 0.5; }
