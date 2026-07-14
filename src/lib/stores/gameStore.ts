@@ -122,6 +122,8 @@ export function createGameState(roomId: string) {
         return bytes;
     }
 
+    let staleTimer: ReturnType<typeof setTimeout> | null = null;
+
     function connectWs() {
         ws = new WebSocket(wsUrl);
 
@@ -145,6 +147,15 @@ export function createGameState(roomId: string) {
         };
 
         ws.onmessage = (event) => {
+            // Any traffic (including server pings) proves the connection is alive.
+            // Reset the stale timer — if we don't hear anything for 35s, the
+            // DO was likely evicted and TCP is half-open; force a reconnect.
+            if (staleTimer) clearTimeout(staleTimer);
+            staleTimer = setTimeout(() => {
+                console.log('No traffic for 35s — forcing reconnect');
+                if (ws) ws.close();
+            }, 35000);
+
             try {
                 const data = JSON.parse(event.data);
                 if (data.type === 'sync-init' || data.type === 'update') {
@@ -180,6 +191,8 @@ export function createGameState(roomId: string) {
                         });
                     }
                 }
+                // 'ping' is the server heartbeat — no client response needed.
+                // The traffic itself keeps iOS Safari from killing the socket.
             } catch (e) {
                 console.error('Error handling WebSocket message:', e);
             }
@@ -187,6 +200,7 @@ export function createGameState(roomId: string) {
 
         ws.onclose = () => {
             console.log('World connection closed. Reconnecting...');
+            if (staleTimer) { clearTimeout(staleTimer); staleTimer = null; }
             providerStore.set({ status: 'disconnected', peersCount: 0 });
             setTimeout(connectWs, 3000);
         };
@@ -339,6 +353,7 @@ export function createGameState(roomId: string) {
     });
 
     function destroy() {
+        if (staleTimer) { clearTimeout(staleTimer); staleTimer = null; }
         try { provider.destroy(); } catch { /* noop */ }
         try { persistence.destroy(); } catch { /* noop */ }
     }

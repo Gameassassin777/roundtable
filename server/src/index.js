@@ -302,6 +302,13 @@ export class SignalingRoom {
     const session = { ws, name: 'Wanderer', keyValue: null, id: `s-${Date.now()}-${Math.random().toString(36).slice(2,8)}` };
     this.sessions.push(session);
 
+    // Heartbeat: iOS Safari kills idle WebSockets after ~30-60s. Send a ping
+    // every 25s to keep the connection alive. Client ignores the message; the
+    // traffic itself is enough to prevent the idle timeout.
+    const heartbeat = setInterval(() => {
+      try { ws.send(JSON.stringify({ type: 'ping' })); } catch { /* dead socket */ }
+    }, 25000);
+
     const uint8ToB64 = (uint8) => {
       let binary = '';
       const len = uint8.byteLength;
@@ -529,6 +536,7 @@ export class SignalingRoom {
     });
 
     const removeSession = () => {
+      clearInterval(heartbeat);
       this.sessions = this.sessions.filter((s) => s.ws !== ws);
       if (session.keyValue) this.keyPool.remove(session.keyValue);
       // Phase 10: drain any pending whisper batch for this session so the
