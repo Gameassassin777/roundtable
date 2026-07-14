@@ -31,8 +31,8 @@
 
     // Crossfade state — keep the previous beat mounted briefly so we can
     // animate it out under the new one. Driven by beat.id changes.
-    let outgoing: Beat | null = $state(null);
-    let incoming: Beat | null = $state(beat);
+    let outgoing = $state<Beat | null>(null);
+    let incoming = $state<Beat | null>(null);
     let phase: 'in' | 'out' = $state('in');
 
     $effect(() => {

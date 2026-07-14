@@ -82,10 +82,11 @@ export async function callAI(prompt: string, apiKey: string, ydoc: Y.Doc, myClie
             ydoc.transact(() => {
                 for (const key in parsed.new_codex) {
                     if (key === 'party' && typeof parsed.new_codex[key] === 'object') {
-                        const currentParty = yCodex.get('party') || {};
-                        const updatedParty = { ...currentParty };
-                        for (const player in parsed.new_codex.party) {
-                            updatedParty[player] = { ...updatedParty[player], ...parsed.new_codex.party[player] };
+                        const currentParty = (yCodex.get('party') as Record<string, any>) || {};
+                        const updatedParty: Record<string, any> = { ...currentParty };
+                        const newParty = parsed.new_codex.party as Record<string, any>;
+                        for (const player in newParty) {
+                            updatedParty[player] = { ...updatedParty[player], ...newParty[player] };
                         }
                         yCodex.set('party', updatedParty);
                     } else {

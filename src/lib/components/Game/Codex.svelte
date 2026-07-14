@@ -24,16 +24,18 @@
     let sheetEl: HTMLElement | null = $state(null);
     let dragOffset = $state(0);
     function draggable(node: HTMLElement) {
-        const gesture = new DragGesture(node, {
-            axis: 'y',
-            filterTaps: true,
-            onDrag: ({ down, movement: [, my], velocity: [, vy] }) => {
-                if (my > 0) dragOffset = my;
-                if (!down) {
-                    if (my > 100 || (vy > 0.5 && my > 40)) onclose();
-                    dragOffset = 0;
-                }
+        const gesture = new DragGesture(node, (state: any) => {
+            const down = state.down;
+            const my = state.movement[1];
+            const vy = state.velocity[1];
+            if (my > 0) dragOffset = my;
+            if (!down) {
+                if (my > 100 || (vy > 0.5 && my > 40)) onclose();
+                dragOffset = 0;
             }
+        }, {
+            axis: 'y',
+            filterTaps: true
         });
         return { destroy() { gesture.destroy(); } };
     }

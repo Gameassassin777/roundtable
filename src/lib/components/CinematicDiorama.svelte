@@ -34,11 +34,12 @@
             animationId = requestAnimationFrame(animate);
             scene.children.forEach(c => {
                 if (c.userData.isRain) {
-                    const pos = c.geometry.attributes.position.array;
+                    const points = c as any;
+                    const pos = points.geometry.attributes.position.array;
                     for (let i = 1; i < pos.length; i += 3) {
                         pos[i] -= 0.2; if (pos[i] < 0) pos[i] = 10;
                     }
-                    c.geometry.attributes.position.needsUpdate = true;
+                    points.geometry.attributes.position.needsUpdate = true;
                 }
             });
             renderer.render(scene, camera);

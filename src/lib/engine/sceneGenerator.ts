@@ -8,10 +8,11 @@ export function generateScene(scene: THREE.Scene, tags: any) {
     const toRemove = scene.children.filter(c => c.userData.procedural);
     toRemove.forEach(c => {
         scene.remove(c);
-        if (c.geometry) c.geometry.dispose();
-        if (c.material) {
-            if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
-            else c.material.dispose();
+        const mesh = c as any;
+        if (mesh.geometry) mesh.geometry.dispose();
+        if (mesh.material) {
+            if (Array.isArray(mesh.material)) mesh.material.forEach((m: any) => m.dispose());
+            else mesh.material.dispose();
         }
     });
 

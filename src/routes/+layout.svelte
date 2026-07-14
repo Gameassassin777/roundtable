@@ -1,11 +1,19 @@
 <script lang="ts">
     import '../app.css';
     import { onMount } from 'svelte';
+    import { dev } from '$app/environment';
     import { updated } from '$app/stores';
 
     let { children } = $props();
 
     onMount(() => {
+        // Register service worker in production only to avoid HMR caching issues
+        if ('serviceWorker' in navigator && !dev) {
+            navigator.serviceWorker.register('/service-worker.js').catch(err => {
+                console.error('Service worker registration failed:', err);
+            });
+        }
+        
         // When a newer deploy is detected (poll every 60s, see svelte.config), refresh so
         // installed iOS PWAs pick up the update automatically — no manual clearing. Game
         // state persists (server + IndexedDB), so the reload resumes seamlessly.

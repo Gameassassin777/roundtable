@@ -37,14 +37,23 @@
 
     const initialRoomId = localStorage.getItem('rt_world') || 'crossroads-1';
     let roomId = $state(initialRoomId);
-    let gameState = $state(createGameState(initialRoomId));
-    let {
-        chatStore, addChatEntry, ydoc, provider, providerStore,
-        codex, qte, engineCountdown, serverEvents,
-        sendAction, registerKey, engineControl, triggerGenesis,
-        setCurrentCharacter, registerCurrentCharacter,
-        awareness
-    } = gameState;
+    let gameState = createGameState(initialRoomId);
+    let chatStore = $state(gameState.chatStore);
+    let addChatEntry = $state(gameState.addChatEntry);
+    let ydoc = $state(gameState.ydoc);
+    let provider = $state(gameState.provider);
+    let providerStore = $state(gameState.providerStore);
+    let codex = $state(gameState.codex);
+    let qte = $state(gameState.qte);
+    let engineCountdown = $state(gameState.engineCountdown);
+    let serverEvents = $state(gameState.serverEvents);
+    let sendAction = $state(gameState.sendAction);
+    let registerKey = $state(gameState.registerKey);
+    let engineControl = $state(gameState.engineControl);
+    let triggerGenesis = $state(gameState.triggerGenesis);
+    let setCurrentCharacter = $state(gameState.setCurrentCharacter);
+    let registerCurrentCharacter = $state(gameState.registerCurrentCharacter);
+    let awareness = $state(gameState.awareness);
 
     // ---------- API key + sharing ----------
     let apiKey = $state(localStorage.getItem('rt_api_key') || '');
@@ -200,7 +209,8 @@
     function beginNewWorld() {
         // New world flow: generate a fresh room code, refresh gameState, attune.
         const fresh = 'realm-' + Math.random().toString(36).slice(2, 7);
-        switchRoom(fresh);
+        roomId = fresh;
+        switchRoom();
         wizardStep = 'attune';
     }
 
@@ -215,7 +225,8 @@
     }
 
     function joinWorldFromTitle(code: string) {
-        switchRoom(code);
+        roomId = code;
+        switchRoom();
         if (characterSelected && isReady) {
             wizardStep = 'forge';
         } else {
@@ -651,12 +662,22 @@
         try { gameState.destroy(); } catch { /* noop */ }
         const next = createGameState(roomId.trim());
         gameState = next;
-        ({
-            chatStore, addChatEntry, ydoc, provider, providerStore,
-            codex, qte, engineCountdown, serverEvents,
-            sendAction, registerKey, engineControl, triggerGenesis,
-            setCurrentCharacter, registerCurrentCharacter, awareness
-        } = next);
+        chatStore = next.chatStore;
+        addChatEntry = next.addChatEntry;
+        ydoc = next.ydoc;
+        provider = next.provider;
+        providerStore = next.providerStore;
+        codex = next.codex;
+        qte = next.qte;
+        engineCountdown = next.engineCountdown;
+        serverEvents = next.serverEvents;
+        sendAction = next.sendAction;
+        registerKey = next.registerKey;
+        engineControl = next.engineControl;
+        triggerGenesis = next.triggerGenesis;
+        setCurrentCharacter = next.setCurrentCharacter;
+        registerCurrentCharacter = next.registerCurrentCharacter;
+        awareness = next.awareness;
         // Re-subscribe
         unsubChat?.(); unsubChat = chatStore.subscribe((v: ChatEntry[]) => { chatLog = v; });
         unsubServer?.(); unsubServer = serverEvents.subscribe(handleServerEvent);
