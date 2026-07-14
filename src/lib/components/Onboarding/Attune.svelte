@@ -94,47 +94,71 @@
 <style>
     .wizard-card {
         width: min(540px, 92vw);
-        padding: 1.8rem;
+        padding: 1.9rem 1.8rem 1.7rem;
+        animation: card-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
     }
-    .wizard-head { margin-bottom: 1.4rem; }
-    .wizard-head h2 { font-size: var(--t-lg); margin: 0.3rem 0; }
-    .wizard-sub { color: var(--ink-soft); font-size: var(--t-sm); }
+    @keyframes card-in {
+        from { transform: translateY(8px); opacity: 0; }
+        to   { transform: translateY(0); opacity: 1; }
+    }
+    .wizard-head { margin-bottom: 1.5rem; }
+    .wizard-head .eyebrow {
+        display: block;
+        margin-bottom: 0.3rem;
+    }
+    .wizard-head h2 {
+        font-size: var(--t-lg);
+        margin: 0 0 0.5rem;
+        letter-spacing: 0.03em;
+    }
+    .wizard-sub { color: var(--ink-soft); font-size: var(--t-sm); line-height: 1.55; }
 
     .field {
         display: block;
-        margin-bottom: 1.1rem;
+        margin-bottom: 1.2rem;
     }
     .field-label {
         display: block;
-        font-size: var(--t-xs);
+        font-family: var(--font-display);
+        font-size: 10px;
         font-weight: 600;
-        letter-spacing: 0.06em;
-        color: var(--ink-soft);
-        margin-bottom: 0.35rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--gold);
+        margin-bottom: 0.4rem;
     }
     .field-help {
         display: block;
         font-size: var(--t-xs);
-        margin-top: 0.35rem;
-        line-height: 1.4;
+        margin-top: 0.4rem;
+        line-height: 1.5;
+        font-family: var(--font-prose);
+        font-style: italic;
     }
     .field-help a { color: var(--accent); }
 
     .policy-row {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 0.35rem;
+        gap: 0.4rem;
     }
     .policy-chip {
-        padding: 0.5rem;
+        padding: 0.5rem 0.4rem;
         background: var(--card);
         border: 1px solid var(--line);
         border-radius: var(--radius-sm);
-        font-size: var(--t-sm);
+        font-family: var(--font-display);
+        font-size: var(--t-xs);
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
         color: var(--ink-soft);
+        min-height: 44px;
+        cursor: pointer;
+        transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
     }
     .policy-chip:hover {
-        background: var(--inset);
+        border-color: var(--gold-soft);
         color: var(--ink);
     }
     .policy-chip.selected {
@@ -147,8 +171,16 @@
         display: flex;
         gap: 0.5rem;
         justify-content: space-between;
-        margin-top: 1.5rem;
+        margin-top: 1.6rem;
     }
-    .wizard-actions .btn-primary { flex: 1; }
+    .wizard-actions .btn-primary {
+        flex: 1;
+        min-height: 48px;
+        letter-spacing: 0.04em;
+    }
     .wizard-actions .btn-ghost { padding-left: 1.3rem; padding-right: 1.3rem; }
+
+    @media (prefers-reduced-motion: reduce) {
+        .wizard-card { animation: none !important; }
+    }
 </style>

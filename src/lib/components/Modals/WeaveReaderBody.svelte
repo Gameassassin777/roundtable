@@ -100,11 +100,28 @@
         text-align: center;
         padding: 2rem 1rem;
     }
-    .reader-help { margin-top: 0.8rem; font-size: var(--t-sm); }
+    .reader-import .btn-primary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        padding: 0.85rem 1.5rem;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+    }
+    .reader-help {
+        margin-top: 0.8rem;
+        font-size: var(--t-sm);
+        font-family: var(--font-prose);
+        font-style: italic;
+        color: var(--ink-soft);
+    }
     .reader-error {
         color: var(--hp);
         margin-top: 0.8rem;
         font-size: var(--t-sm);
+        font-family: var(--font-prose);
+        font-style: italic;
     }
     .reader-content {
         font-family: var(--font-prose);
@@ -114,23 +131,31 @@
     .reader-header {
         margin-bottom: 1rem;
         padding-bottom: 0.6rem;
-        border-bottom: 1px solid var(--line-soft);
+        border-bottom: 1px solid var(--gold-soft);
     }
     .reader-title {
         font-family: var(--font-display);
         font-size: var(--t-base);
         color: var(--ink);
         margin-bottom: 0.25rem;
+        letter-spacing: 0.03em;
     }
-    .reader-meta { font-size: var(--t-xs); margin: 0.1rem 0; }
+    .reader-meta {
+        font-size: var(--t-xs);
+        margin: 0.1rem 0;
+        font-family: var(--font-prose);
+        font-style: italic;
+        color: var(--ink-soft);
+    }
     .reader-section { margin: 0.75rem 0; }
     .reader-section h4 {
         font-family: var(--font-display);
-        font-size: var(--t-xs);
+        font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
+        letter-spacing: 0.16em;
         color: var(--gold);
         margin-bottom: 0.4rem;
+        font-weight: 600;
     }
     .reader-list {
         list-style: none;
@@ -138,14 +163,16 @@
         margin: 0;
     }
     .reader-list li {
-        padding: 0.2rem 0;
+        padding: 0.3rem 0;
         color: var(--ink-soft);
+        line-height: 1.5;
     }
     .reader-list strong { color: var(--ink); font-weight: 600; }
     .reader-chronicle {
         background: var(--inset);
         border-radius: var(--radius-sm);
         padding: 0.7rem;
+        border: 1px solid var(--line-soft);
     }
     .reader-entry { margin: 0.35rem 0; }
     .reader-entry.world { color: var(--gold); font-style: italic; }

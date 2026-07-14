@@ -153,41 +153,56 @@
     .settings-grid {
         display: flex;
         flex-direction: column;
-        gap: 0.85rem;
+        gap: 0.95rem;
     }
     .field {
         display: flex;
         flex-direction: column;
-        gap: 0.3rem;
+        gap: 0.35rem;
     }
     .field-label {
         font-family: var(--font-display);
-        font-size: var(--t-xs);
+        font-size: 10px;
         font-weight: 600;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.16em;
         text-transform: uppercase;
-        color: var(--muted);
+        color: var(--gold);
     }
     .field-help {
         font-size: var(--t-xs);
         color: var(--ink-soft);
-        line-height: 1.4;
+        line-height: 1.5;
+        font-family: var(--font-prose);
+        font-style: italic;
     }
     .row {
         display: flex;
         gap: 0.4rem;
     }
     .row input { flex: 1; }
+    .row .btn-ghost { min-height: 44px; }
+
+    .btn-ghost.wide {
+        min-height: 44px;
+        text-align: left;
+        padding: 0.55rem 0.85rem;
+    }
 
     .share-policy-row, .recent-worlds {
         display: flex;
-        gap: 0.3rem;
+        gap: 0.35rem;
         flex-wrap: wrap;
     }
+    .share-policy-row .chip {
+        min-height: 36px;
+        display: inline-flex;
+        align-items: center;
+        cursor: pointer;
+    }
     .chip.current {
-        background: var(--inset);
-        border-color: var(--accent);
-        color: var(--accent);
+        background: var(--gold-soft);
+        border-color: var(--gold);
+        color: var(--gold);
     }
     .chip.selected {
         background: var(--accent);
@@ -197,61 +212,90 @@
     .toggle-row {
         display: flex;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.55rem;
         font-size: var(--t-sm);
+        min-height: 44px;
+        cursor: pointer;
     }
     .volume-row {
         display: flex;
         align-items: center;
-        gap: 0.6rem;
+        gap: 0.65rem;
         font-size: var(--t-sm);
-        margin-top: 0.3rem;
+        margin-top: 0.35rem;
+        min-height: 44px;
     }
-    .volume-label { color: var(--muted); }
+    .volume-label {
+        color: var(--muted);
+        font-family: var(--font-prose);
+        font-style: italic;
+    }
 
     .saved-roster {
         display: flex;
         flex-direction: column;
-        gap: 0.2rem;
-        margin-top: 0.4rem;
+        gap: 0.25rem;
+        margin-top: 0.45rem;
     }
     .saved-slot {
         display: grid;
         grid-template-columns: 1fr auto auto;
         gap: 0.6rem;
-        align-items: baseline;
-        padding: 0.35rem 0.5rem;
+        align-items: center;
+        padding: 0.4rem 0.55rem;
         background: var(--inset);
         border-radius: var(--radius-sm);
         font-size: var(--t-sm);
+        min-height: 44px;
     }
     .saved-slot.is-current {
-        border-left: 2px solid var(--accent);
+        border-left: 2px solid var(--gold);
     }
-    .saved-name { color: var(--ink); font-weight: 500; }
-    .saved-class { font-size: var(--t-xs); }
+    .saved-name {
+        color: var(--ink);
+        font-weight: 500;
+        font-family: var(--font-ui);
+    }
+    .saved-class {
+        font-size: var(--t-xs);
+        color: var(--muted);
+        font-family: var(--font-prose);
+        font-style: italic;
+    }
     .saved-delete {
         background: transparent;
         border: none;
         color: var(--muted);
         cursor: pointer;
         font-size: var(--t-sm);
+        width: 44px;
+        height: 44px;
+        min-height: 44px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: color 0.18s ease, transform 0.18s ease;
     }
-    .saved-delete:hover { color: var(--hp); }
+    .saved-delete:hover {
+        color: var(--hp);
+        transform: scale(1.08);
+    }
 
     .build-info {
         display: flex;
         justify-content: space-between;
         align-items: baseline;
-        margin-top: 0.4rem;
-        padding-top: 0.6rem;
-        border-top: 1px solid var(--line);
+        margin-top: 0.6rem;
+        padding-top: 0.7rem;
+        border-top: 1px solid var(--gold-soft);
         font-size: var(--t-xs);
     }
     .build-label {
         font-family: var(--font-display);
-        letter-spacing: 0.08em;
+        letter-spacing: 0.14em;
         text-transform: uppercase;
+        color: var(--muted);
     }
     .build-version {
         font-family: var(--font-ui);

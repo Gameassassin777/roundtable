@@ -29,28 +29,37 @@
     }
     .shortcuts-list li {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         gap: 0.8rem;
-        padding: 0.4rem 0;
-        border-bottom: 1px solid var(--line-soft);
+        padding: 0.5rem 0;
+        border-bottom: 1px solid var(--gold-soft);
         font-size: var(--t-sm);
+        min-height: 44px;
     }
     kbd {
         font-family: var(--font-display);
         font-size: var(--t-xs);
         font-weight: 600;
         background: var(--inset);
-        border: 1px solid var(--line);
+        border: 1px solid var(--gold-soft);
         border-radius: var(--radius-sm);
-        padding: 0.15rem 0.45rem;
-        color: var(--ink);
+        padding: 0.2rem 0.5rem;
+        color: var(--gold);
         min-width: 90px;
         text-align: center;
         flex-shrink: 0;
+        letter-spacing: 0.06em;
+    }
+    .shortcuts-list span {
+        font-family: var(--font-prose);
+        color: var(--ink-soft);
+        line-height: 1.5;
     }
     .tip {
         font-size: var(--t-xs);
         line-height: 1.5;
+        font-family: var(--font-prose);
         font-style: italic;
+        color: var(--ink-soft);
     }
 </style>

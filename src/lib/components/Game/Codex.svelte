@@ -5,6 +5,8 @@
 
     import type { CodexSlice } from '$lib/stores/gameStore';
     import Bar from './Bar.svelte';
+    import { DragGesture } from '@use-gesture/vanilla';
+    import { onMount, onDestroy } from 'svelte';
 
     type Props = {
         codex: CodexSlice;
@@ -17,6 +19,24 @@
 
     let search = $state('');
     let query = $derived(search.trim().toLowerCase());
+
+    // Swipe-down to dismiss (mobile sheet)
+    let sheetEl: HTMLElement | null = $state(null);
+    let dragOffset = $state(0);
+    function draggable(node: HTMLElement) {
+        const gesture = new DragGesture(node, {
+            axis: 'y',
+            filterTaps: true,
+            onDrag: ({ down, movement: [, my], velocity: [, vy] }) => {
+                if (my > 0) dragOffset = my;
+                if (!down) {
+                    if (my > 100 || (vy > 0.5 && my > 40)) onclose();
+                    dragOffset = 0;
+                }
+            }
+        });
+        return { destroy() { gesture.destroy(); } };
+    }
 
     // Active player's own sheet
     let myChar = $derived.by(() => {
@@ -106,11 +126,27 @@
     }
 </script>
 
-<aside class="codex" class:sheet-open={sheetOpen} aria-label="World codex">
+{#if sheetOpen}
+    <div class="codex-backdrop" onclick={onclose}></div>
+{/if}
+
+<aside
+    class="codex"
+    class:sheet-open={sheetOpen}
+    aria-label="World codex"
+    bind:this={sheetEl}
+    use:draggable
+    style="transform: translateY({dragOffset}px)"
+>
     <header class="codex-head">
-        <h2 class="codex-title">Codex</h2>
-        <input type="search" placeholder="Search…" bind:value={search} aria-label="Search codex" />
-        <button class="btn-tiny btn-ghost close-btn" onclick={onclose} aria-label="Close codex">×</button>
+        <div class="head-row">
+            <span class="head-eyebrow">Codex</span>
+            <button class="close-btn" onclick={onclose} aria-label="Close codex">×</button>
+        </div>
+        <div class="find-row">
+            <span class="find-glyph" aria-hidden="true">§</span>
+            <input type="search" placeholder="Search the codex…" bind:value={search} aria-label="Search codex" />
+        </div>
     </header>
 
     <!-- Tab strip -->
@@ -189,9 +225,10 @@
                     </div>
                 </section>
             {:else}
-                <div class="empty muted">
-                    <p>No hero yet.</p>
-                    <p>Forge one to begin.</p>
+                <div class="empty">
+                    <p class="empty-mark" aria-hidden="true">✦</p>
+                    <p class="empty-eyebrow">No hero yet</p>
+                    <p class="empty-hint">Forge one to begin.</p>
                 </div>
             {/if}
 
@@ -242,9 +279,10 @@
                     </ul>
                 </section>
             {:else}
-                <div class="empty muted">
-                    <p>You ride alone.</p>
-                    <p>Share the world code to gather a party.</p>
+                <div class="empty">
+                    <p class="empty-mark" aria-hidden="true">✦</p>
+                    <p class="empty-eyebrow">You ride alone</p>
+                    <p class="empty-hint">Share the world code to gather a party.</p>
                 </div>
             {/if}
         {/if}
@@ -350,9 +388,10 @@
             {/if}
 
             {#if !filteredNpcs.length && !filteredFactions.length && !filteredThreads.length && !filteredLocations.length}
-                <div class="empty muted">
-                    <p>The world is uncharted.</p>
-                    <p>Play to discover its people and places.</p>
+                <div class="empty">
+                    <p class="empty-mark" aria-hidden="true">✦</p>
+                    <p class="empty-eyebrow">The world is uncharted</p>
+                    <p class="empty-hint">Play to discover its people and places.</p>
                 </div>
             {/if}
         {/if}
@@ -368,17 +407,90 @@
         border-left: 1px solid var(--line);
     }
 
-    .codex-head {
-        padding: 0.7rem 0.85rem;
-        border-bottom: 1px solid var(--line-soft);
-        display: grid;
-        grid-template-columns: auto 1fr auto;
-        align-items: center;
-        gap: 0.5rem;
+    .codex-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(42, 36, 32, 0.4);
+        backdrop-filter: blur(2px);
+        -webkit-backdrop-filter: blur(2px);
+        z-index: 32;
+        animation: backdrop-in 0.24s ease-out;
     }
-    .codex-title { font-size: var(--t-sm); margin: 0; }
-    .codex-head input { padding: 0.35rem 0.6rem; font-size: var(--t-sm); }
-    .close-btn { display: none; }
+    @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+
+    .codex-head {
+        padding: 0.55rem 0.9rem 0.5rem;
+        border-bottom: 1px solid var(--gold-soft);
+        flex-shrink: 0;
+        background: var(--card);
+    }
+    .head-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.4rem;
+    }
+    .head-eyebrow {
+        font-family: var(--font-display);
+        font-size: var(--t-sm);
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        color: var(--ink);
+        text-transform: uppercase;
+    }
+    .close-btn {
+        width: 44px;
+        height: 44px;
+        min-height: 44px;
+        padding: 0;
+        background: transparent;
+        border: none;
+        color: var(--muted);
+        font-family: var(--font-display);
+        font-size: 1.4rem;
+        line-height: 1;
+        cursor: pointer;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        transition: color 0.18s ease, transform 0.18s ease;
+    }
+    .close-btn:hover, .close-btn:focus-visible {
+        color: var(--accent);
+        transform: scale(1.08);
+        outline: none;
+    }
+
+    .find-row {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.2rem 0;
+        border-bottom: 1px solid var(--line-soft);
+        transition: border-color 0.2s ease;
+    }
+    .find-row:focus-within { border-bottom-color: var(--gold); }
+    .find-glyph {
+        color: var(--gold);
+        font-family: var(--font-display);
+        font-size: 1.05rem;
+        line-height: 1;
+        flex-shrink: 0;
+        opacity: 0.7;
+    }
+    .find-row input {
+        flex: 1;
+        font-family: var(--font-prose);
+        font-style: italic;
+        font-size: var(--t-sm);
+        color: var(--ink);
+        background: transparent;
+        border: none;
+        outline: none;
+        padding: 0.3rem 0;
+        border-radius: 0;
+    }
+    .find-row input::placeholder { color: var(--muted); font-style: italic; }
 
     /* Tab strip — single-row, hairline underline */
     .tab-strip {
@@ -398,19 +510,21 @@
         font-family: var(--font-display);
         font-size: var(--t-xs);
         font-weight: 600;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.14em;
         color: var(--muted);
-        min-height: 36px;
+        min-height: 44px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         gap: 0.3rem;
         cursor: pointer;
+        text-transform: uppercase;
+        transition: color 0.18s ease, border-color 0.18s ease;
     }
     .tab-btn:hover { color: var(--ink); background: transparent; }
     .tab-btn.active {
-        color: var(--accent);
-        border-bottom-color: var(--accent);
+        color: var(--ink);
+        border-bottom-color: var(--gold);
     }
     .tab-badge {
         font-family: var(--font-ui);
@@ -420,23 +534,30 @@
         padding: 0 0.35rem;
         border-radius: var(--radius-pill);
         line-height: 16px;
+        font-variant-numeric: tabular-nums;
     }
     .tab-btn.active .tab-badge {
-        background: var(--accent-soft);
-        color: var(--accent);
+        background: var(--gold-soft);
+        color: var(--gold);
     }
 
     .codex-scroll {
         flex: 1;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
-        padding: 0.5rem 0.85rem 2rem;
+        padding: 0.5rem 0.9rem 2rem;
+        min-height: 0;
+        overscroll-behavior: contain;
     }
 
-    .block { margin: 0.7rem 0; }
+    .block { margin: 0.8rem 0; }
     .block-title {
-        margin-bottom: 0.4rem;
-        display: block;
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: baseline;
+        gap: 0.4rem;
+        padding-bottom: 0.3rem;
+        border-bottom: 1px solid var(--gold-soft);
     }
 
     /* ---------- Character card ---------- */
@@ -444,46 +565,51 @@
         background: var(--card);
         border: 1px solid var(--line);
         border-radius: var(--radius);
-        padding: 0.7rem;
+        padding: 0.75rem;
+        box-shadow: var(--shadow);
     }
     .char-head {
         display: flex;
-        gap: 0.6rem;
+        gap: 0.65rem;
         align-items: center;
-        margin-bottom: 0.55rem;
+        margin-bottom: 0.6rem;
+        padding-bottom: 0.55rem;
+        border-bottom: 1px solid var(--line-soft);
     }
     .portrait {
-        width: 44px; height: 44px;
+        width: 48px; height: 48px;
         border-radius: var(--radius-sm);
         object-fit: cover;
         border: 1px solid var(--line);
     }
     .char-id { flex: 1; min-width: 0; }
-    .char-name { font-family: var(--font-display); font-weight: 600; font-size: var(--t-base); }
-    .char-class { font-size: var(--t-xs); }
+    .char-name { font-family: var(--font-display); font-weight: 600; font-size: var(--t-base); color: var(--ink); }
+    .char-class { font-size: var(--t-xs); color: var(--muted); font-style: italic; font-family: var(--font-prose); }
     .stat-block {
         display: flex;
         flex-direction: column;
-        gap: 0.35rem;
+        gap: 0.4rem;
     }
     .lvl-row {
         display: flex;
         gap: 0.3rem;
-        margin-top: 0.55rem;
+        margin-top: 0.6rem;
     }
     .trait-list {
         list-style: none;
-        margin: 0.5rem 0 0;
+        margin: 0.55rem 0 0;
         padding: 0;
         font-size: var(--t-xs);
         color: var(--ink-soft);
+        font-family: var(--font-prose);
+        line-height: 1.5;
     }
     .trait { padding: 0.1rem 0; }
     .conditions {
         display: flex;
         flex-wrap: wrap;
         gap: 0.25rem;
-        margin-top: 0.4rem;
+        margin-top: 0.45rem;
     }
     .chip.condition {
         background: rgba(160, 70, 64, 0.08);
@@ -509,45 +635,60 @@
         grid-template-columns: 1fr auto auto;
         gap: 0.5rem;
         align-items: baseline;
-        padding: 0.5rem 0.2rem;
+        padding: 0.6rem 0.2rem;
         text-align: left;
         background: transparent;
         border: none;
         font-family: var(--font-ui);
+        min-height: 44px;
+        cursor: pointer;
+        transition: background 0.15s ease;
     }
-    .row-btn:hover { background: var(--inset); }
+    .row-btn:hover { background: var(--gold-soft); }
     .row-name {
         font-size: var(--t-sm);
         color: var(--ink);
         font-weight: 500;
     }
-    .row-meta { font-size: var(--t-xs); }
-    .chevron {
+    .row-meta {
+        font-size: var(--t-xs);
         color: var(--muted);
+        font-family: var(--font-prose);
+        font-style: italic;
+    }
+    .chevron {
+        color: var(--gold);
         font-size: var(--t-sm);
         width: 1rem;
         text-align: right;
+        opacity: 0.7;
     }
     .row-detail {
-        padding: 0.4rem 0.2rem 0.65rem;
+        padding: 0.4rem 0.2rem 0.7rem;
         font-size: var(--t-xs);
-        line-height: 1.5;
+        line-height: 1.55;
         color: var(--ink-soft);
+        font-family: var(--font-prose);
     }
-    .kv { margin: 0.15rem 0; }
+    .kv { margin: 0.2rem 0; }
     .kv b {
         font-weight: 500;
-        color: var(--muted);
+        color: var(--gold);
         margin-right: 0.35rem;
+        font-family: var(--font-display);
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
     }
 
     .flat-list .flat-item {
-        padding: 0.4rem 0.2rem;
+        padding: 0.5rem 0.2rem;
         display: flex;
         gap: 0.4rem;
         align-items: baseline;
         font-size: var(--t-sm);
         border-top: 1px solid var(--line-soft);
+        min-height: 44px;
     }
     .flat-list .flat-item:first-child { border-top: none; }
     .flat-name { font-weight: 500; color: var(--ink); }
@@ -556,13 +697,37 @@
         margin-left: auto;
         max-width: 50%;
         text-align: right;
+        color: var(--muted);
+        font-style: italic;
+        font-family: var(--font-prose);
     }
 
     .empty {
-        padding: 3rem 1rem;
+        padding: 4rem 1rem;
         text-align: center;
     }
-    .empty p { margin: 0.25rem 0; }
+    .empty-mark {
+        font-family: var(--font-display);
+        color: var(--gold);
+        font-size: 1.4rem;
+        opacity: 0.5;
+        margin-bottom: 0.6rem;
+    }
+    .empty-eyebrow {
+        font-family: var(--font-display);
+        font-size: var(--t-xs);
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--ink-soft);
+        margin-bottom: 0.25rem;
+    }
+    .empty-hint {
+        font-family: var(--font-prose);
+        font-style: italic;
+        font-size: var(--t-sm);
+        color: var(--muted);
+    }
 
     /* ---------- Mobile / sheet mode ---------- */
     @media (max-width: 899px) {
@@ -571,17 +736,30 @@
             bottom: 0;
             left: 0;
             right: 0;
+            max-width: 760px;
+            margin: 0 auto;
             height: 75dvh;
             transform: translateY(100%);
-            transition: transform 0.25s ease;
+            transition: transform 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
             border-left: none;
             border-top: 1px solid var(--line);
-            border-radius: 12px 12px 0 0;
-            box-shadow: 0 -8px 24px rgba(60, 40, 20, 0.15);
+            border-radius: 6px 6px 0 0;
+            box-shadow: 0 -8px 32px rgba(60, 40, 20, 0.18);
             padding-bottom: var(--safe-bottom);
-            z-index: 30;
+            z-index: 33;
         }
-        .codex.sheet-open { transform: translateY(0); }
+        .codex.sheet-open {
+            transform: translateY(0);
+            animation: sheet-in 0.4s cubic-bezier(0.2, 0.7, 0.2, 1);
+        }
+        @keyframes sheet-in {
+            from { transform: translateY(100%); opacity: 0.4; }
+            to   { transform: translateY(0); opacity: 1; }
+        }
         .close-btn { display: inline-flex; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .codex, .codex-backdrop { animation: none !important; transition: none !important; }
     }
 </style>

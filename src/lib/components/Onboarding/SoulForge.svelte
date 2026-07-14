@@ -283,36 +283,48 @@
 <style>
     .wizard-card {
         width: min(620px, 94vw);
-        padding: 1.8rem;
+        padding: 1.9rem 1.8rem 1.7rem;
+        animation: card-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
     }
-    .wizard-head { margin-bottom: 1.2rem; }
-    .wizard-head h2 { font-size: var(--t-lg); margin: 0.3rem 0; }
-    .wizard-sub { color: var(--ink-soft); font-size: var(--t-sm); }
+    @keyframes card-in {
+        from { transform: translateY(8px); opacity: 0; }
+        to   { transform: translateY(0); opacity: 1; }
+    }
+    .wizard-head { margin-bottom: 1.3rem; }
+    .wizard-head .eyebrow { display: block; margin-bottom: 0.3rem; }
+    .wizard-head h2 {
+        font-size: var(--t-lg);
+        margin: 0 0 0.5rem;
+        letter-spacing: 0.03em;
+    }
+    .wizard-sub { color: var(--ink-soft); font-size: var(--t-sm); line-height: 1.55; }
 
     /* Path toggle */
     .path-toggle {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 0.5rem;
-        margin-bottom: 1.2rem;
+        margin-bottom: 1.3rem;
     }
     .path-btn {
         display: flex;
         flex-direction: column;
-        gap: 0.15rem;
-        padding: 0.65rem 0.7rem;
+        gap: 0.2rem;
+        padding: 0.7rem 0.75rem;
         background: var(--inset);
         border: 1px solid var(--line-soft);
         border-radius: var(--radius);
         font-family: var(--font-ui);
         text-align: left;
         cursor: pointer;
+        min-height: 44px;
+        transition: border-color 0.18s ease, background 0.18s ease;
     }
-    .path-btn:hover { background: var(--card); border-color: var(--line); }
+    .path-btn:hover { background: var(--card); border-color: var(--gold-soft); }
     .path-btn.active {
         background: var(--card);
-        border-color: var(--accent);
-        box-shadow: inset 0 0 0 1px var(--accent);
+        border-color: var(--gold);
+        box-shadow: inset 0 0 0 1px var(--gold-soft);
     }
     .path-name {
         font-family: var(--font-display);
@@ -321,40 +333,60 @@
         color: var(--ink);
         letter-spacing: 0.04em;
     }
-    .path-btn.active .path-name { color: var(--accent); }
-    .path-desc { font-size: var(--t-xs); }
+    .path-btn.active .path-name { color: var(--ink); }
+    .path-desc {
+        font-size: var(--t-xs);
+        color: var(--muted);
+        font-family: var(--font-prose);
+        font-style: italic;
+    }
 
     /* Quick pane */
     .quick-pane { display: flex; flex-direction: column; gap: 1rem; }
     .field-label {
         display: block;
-        font-size: var(--t-xs);
+        font-family: var(--font-display);
+        font-size: 10px;
         font-weight: 600;
-        letter-spacing: 0.06em;
-        color: var(--ink-soft);
-        margin-bottom: 0.35rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--gold);
+        margin-bottom: 0.4rem;
     }
     .quick-pane textarea {
         font-size: var(--t-base);
-        line-height: 1.5;
-        min-height: 60px;
+        line-height: 1.55;
+        min-height: 64px;
+        font-family: var(--font-prose);
     }
 
-    .concept-chips { display: flex; flex-direction: column; gap: 0.4rem; }
-    .chip-label { font-size: var(--t-xs); }
-    .chip-flow { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+    .concept-chips { display: flex; flex-direction: column; gap: 0.45rem; }
+    .chip-label {
+        font-size: var(--t-xs);
+        letter-spacing: 0.18em;
+    }
+    .chip-flow { display: flex; flex-wrap: wrap; gap: 0.4rem; }
     .chip-btn {
         flex: 1 1 auto;
         text-align: left;
-        padding: 0.45rem 0.7rem;
+        padding: 0.5rem 0.75rem;
         background: var(--card);
         border: 1px solid var(--line);
         border-radius: var(--radius-sm);
+        font-family: var(--font-prose);
+        font-style: italic;
         font-size: var(--t-sm);
         color: var(--ink-soft);
-        min-height: 36px;
+        min-height: 44px;
+        cursor: pointer;
+        transition: border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
     }
-    .chip-btn:hover:not(:disabled) { background: var(--page); color: var(--ink); border-color: var(--accent); }
+    .chip-btn:hover:not(:disabled) {
+        background: var(--card);
+        color: var(--ink);
+        border-color: var(--gold-soft);
+        transform: translateY(-1px);
+    }
     .chip-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     /* Custom path chat */
@@ -370,14 +402,18 @@
         -webkit-overflow-scrolling: touch;
         margin-bottom: 0.7rem;
     }
-    .forge-hint { font-size: var(--t-sm); margin-bottom: 0.7rem; }
+    .forge-hint {
+        font-size: var(--t-sm);
+        margin-bottom: 0.8rem;
+        line-height: 1.55;
+    }
 
     .forge-msg {
-        padding: 0.45rem 0.7rem;
-        margin: 0.35rem 0;
+        padding: 0.5rem 0.75rem;
+        margin: 0.4rem 0;
         border-radius: var(--radius-sm);
         font-size: var(--t-sm);
-        line-height: 1.5;
+        line-height: 1.55;
     }
     .forge-msg.user {
         background: var(--card);
@@ -387,14 +423,16 @@
         background: var(--card);
         border-left: 2px solid var(--gold);
         font-family: var(--font-prose);
+        font-style: italic;
     }
     .forge-msg.model.typing {
         display: inline-flex;
-        gap: 0.2rem;
+        gap: 0.25rem;
+        align-items: center;
     }
     .dot {
         width: 5px; height: 5px;
-        background: var(--muted);
+        background: var(--gold);
         border-radius: 50%;
         animation: pulse 1.2s ease-in-out infinite;
     }
@@ -410,17 +448,24 @@
         border: 1px solid var(--hp);
         border-radius: var(--radius-sm);
         color: var(--hp);
-        padding: 0.45rem 0.7rem;
+        padding: 0.5rem 0.75rem;
         font-size: var(--t-xs);
-        margin: 0.4rem 0;
+        margin: 0.5rem 0;
+        font-family: var(--font-prose);
+        font-style: italic;
     }
 
     .refine-row {
         display: flex;
-        gap: 0.35rem;
-        margin-bottom: 0.9rem;
+        gap: 0.4rem;
+        margin-bottom: 1rem;
     }
-    .refine-row input { flex: 1; }
+    .refine-row input {
+        flex: 1;
+        font-family: var(--font-prose);
+        font-style: italic;
+    }
+    .refine-row .btn-ghost { min-height: 44px; }
 
     .wizard-actions {
         display: flex;
@@ -428,16 +473,22 @@
         justify-content: space-between;
         flex-wrap: wrap;
     }
-    .wizard-actions .btn-primary { flex: 1 1 60%; }
-    .wizard-actions .btn-ghost { flex: 0 0 auto; }
+    .wizard-actions .btn-primary {
+        flex: 1 1 60%;
+        min-height: 48px;
+        letter-spacing: 0.04em;
+    }
+    .wizard-actions .btn-ghost { flex: 0 0 auto; min-height: 44px; }
 
     /* Forged character card */
-    .forged-card { margin-bottom: 1rem; }
+    .forged-card { margin-bottom: 1.1rem; }
     .forged-head {
         display: flex;
-        gap: 0.85rem;
+        gap: 0.9rem;
         align-items: center;
-        margin-bottom: 0.9rem;
+        margin-bottom: 1rem;
+        padding-bottom: 0.9rem;
+        border-bottom: 1px solid var(--gold-soft);
     }
     .forged-portrait {
         width: 64px; height: 64px;
@@ -451,7 +502,7 @@
         flex-shrink: 0;
     }
     .forged-portrait img { width: 100%; height: 100%; object-fit: cover; }
-    .forged-glyph { font-size: 1.8rem; color: var(--accent); }
+    .forged-glyph { font-size: 1.8rem; color: var(--gold); }
     .forged-id { flex: 1; min-width: 0; }
     .forged-name-input {
         font-family: var(--font-display);
@@ -460,15 +511,21 @@
         background: transparent;
         border: none;
         padding: 0;
-        margin-bottom: 0.15rem;
+        margin-bottom: 0.2rem;
+        letter-spacing: 0.02em;
     }
-    .forged-name-input:focus { box-shadow: none; }
-    .forged-class { font-size: var(--t-sm); }
+    .forged-name-input:focus { box-shadow: none; border: none; }
+    .forged-class {
+        font-size: var(--t-sm);
+        color: var(--muted);
+        font-family: var(--font-prose);
+        font-style: italic;
+    }
 
     .stat-chips {
         display: flex;
-        gap: 0.35rem;
-        margin: 0.7rem 0;
+        gap: 0.4rem;
+        margin: 0.8rem 0;
         flex-wrap: wrap;
     }
     .stat-chips .chip b { font-weight: 600; margin-right: 0.2rem; }
@@ -478,30 +535,48 @@
         background: var(--inset);
         border: 1px solid var(--line-soft);
         border-radius: var(--radius-sm);
-        padding: 0.6rem 0.8rem;
-        margin: 0.7rem 0;
+        padding: 0.7rem 0.85rem;
+        margin: 0.8rem 0;
         font-size: var(--t-sm);
-        line-height: 1.5;
+        line-height: 1.55;
     }
-    .trait-row { padding: 0.2rem 0; }
-    .trait-row b { color: var(--accent); font-weight: 600; }
+    .trait-row {
+        padding: 0.25rem 0;
+        font-family: var(--font-prose);
+    }
+    .trait-row b {
+        color: var(--gold);
+        font-weight: 600;
+        font-family: var(--font-display);
+        font-size: var(--t-xs);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-right: 0.3rem;
+    }
 
     .forged-item {
         font-size: var(--t-sm);
         color: var(--ink-soft);
-        margin: 0.5rem 0;
+        margin: 0.6rem 0;
+        font-family: var(--font-prose);
     }
     .item-key {
         font-family: var(--font-display);
         font-size: var(--t-xs);
-        letter-spacing: 0.1em;
+        letter-spacing: 0.14em;
         text-transform: uppercase;
+        color: var(--gold);
         margin-right: 0.3rem;
     }
     .forged-backstory {
-        margin-top: 0.8rem;
+        margin-top: 0.9rem;
         font-size: var(--t-sm);
         color: var(--ink);
         font-style: italic;
+        line-height: 1.6;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .wizard-card { animation: none !important; }
     }
 </style>

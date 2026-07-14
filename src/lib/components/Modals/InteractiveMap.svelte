@@ -74,6 +74,9 @@
         text-align: center;
         padding: 2rem 1rem;
         font-size: var(--t-sm);
+        font-family: var(--font-prose);
+        font-style: italic;
+        color: var(--ink-soft);
     }
     .map-layout {
         display: grid;
@@ -87,7 +90,7 @@
         position: relative;
         aspect-ratio: 1.4 / 1;
         background: var(--inset);
-        border: 1px solid var(--line);
+        border: 1px solid var(--gold-soft);
         border-radius: var(--radius);
         overflow: hidden;
     }
@@ -101,14 +104,18 @@
         flex-direction: column;
         align-items: center;
         gap: 0.15rem;
-        padding: 0.2rem;
+        padding: 0.3rem;
+        min-width: 44px;
+        min-height: 44px;
+        transition: transform 0.18s ease;
     }
+    .map-node:hover { transform: translate(-50%, -50%) scale(1.08); }
     .node-dot {
         font-size: 1.5rem;
         color: var(--muted);
         line-height: 1;
     }
-    .map-node.current .node-dot { color: var(--accent); }
+    .map-node.current .node-dot { color: var(--gold); }
     .map-node.selected .node-dot { color: var(--gold); }
     .node-label {
         font-family: var(--font-display);
@@ -116,11 +123,16 @@
         font-weight: 600;
         color: var(--ink);
         background: var(--card);
-        padding: 0.1rem 0.35rem;
+        padding: 0.15rem 0.4rem;
         border-radius: var(--radius-sm);
         max-width: 100px;
         text-align: center;
         line-height: 1.2;
+        letter-spacing: 0.04em;
+    }
+    .map-node.current .node-label {
+        border: 1px solid var(--gold);
+        color: var(--gold);
     }
     .here-marker {
         position: absolute;
@@ -128,15 +140,17 @@
         left: 0.5rem;
         font-size: var(--t-xs);
         font-family: var(--font-display);
-        color: var(--accent);
+        color: var(--gold);
         background: var(--card);
-        padding: 0.2rem 0.5rem;
+        padding: 0.25rem 0.55rem;
         border-radius: var(--radius-sm);
-        border: 1px solid var(--accent);
+        border: 1px solid var(--gold);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
     }
     .detail-panel {
         background: var(--card);
-        border: 1px solid var(--line);
+        border: 1px solid var(--gold-soft);
         border-radius: var(--radius-sm);
         padding: 0.7rem;
         font-size: var(--t-sm);
@@ -146,11 +160,13 @@
         align-items: center;
         justify-content: center;
         text-align: center;
+        font-family: var(--font-prose);
+        font-style: italic;
     }
     .detail-panel header {
         display: flex;
         justify-content: space-between;
-        align-items: baseline;
+        align-items: center;
         margin-bottom: 0.5rem;
     }
     .detail-panel h4 {
@@ -158,14 +174,44 @@
         font-size: var(--t-sm);
         color: var(--ink);
         margin: 0;
+        letter-spacing: 0.04em;
     }
-    .kv { font-size: var(--t-xs); margin: 0.25rem 0; color: var(--ink-soft); }
-    .kv b { color: var(--muted); font-weight: 500; margin-right: 0.3rem; }
+    .detail-panel .btn-tiny {
+        min-width: 44px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+    }
+    .kv {
+        font-size: var(--t-xs);
+        margin: 0.3rem 0;
+        color: var(--ink-soft);
+        display: flex;
+        gap: 0.4rem;
+        align-items: baseline;
+    }
+    .kv b {
+        color: var(--gold);
+        font-family: var(--font-display);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        flex-shrink: 0;
+    }
     .desc {
         font-size: var(--t-sm);
         line-height: 1.5;
         margin: 0.4rem 0;
         color: var(--ink);
+        font-family: var(--font-prose);
     }
-    .notes { font-size: var(--t-xs); margin-top: 0.4rem; }
+    .notes {
+        font-size: var(--t-xs);
+        margin-top: 0.4rem;
+        font-family: var(--font-prose);
+        font-style: italic;
+    }
 </style>

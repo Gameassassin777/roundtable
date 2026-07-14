@@ -63,6 +63,9 @@
         text-align: center;
         padding: 2rem 1rem;
         font-size: var(--t-sm);
+        font-family: var(--font-prose);
+        font-style: italic;
+        color: var(--ink-soft);
     }
     .audit-table {
         width: 100%;
@@ -72,16 +75,16 @@
     .audit-table th {
         text-align: left;
         font-family: var(--font-display);
-        font-size: var(--t-xs);
+        font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.16em;
         color: var(--gold);
-        padding: 0.4rem 0.5rem;
-        border-bottom: 1px solid var(--line);
+        padding: 0.5rem 0.5rem;
+        border-bottom: 1px solid var(--gold-soft);
         font-weight: 600;
     }
     .audit-table td {
-        padding: 0.45rem 0.5rem;
+        padding: 0.5rem 0.5rem;
         border-bottom: 1px solid var(--line-soft);
         vertical-align: top;
     }
@@ -89,6 +92,7 @@
         font-family: var(--font-display);
         color: var(--gold);
         font-weight: 600;
+        white-space: nowrap;
     }
     .actions { max-width: 240px; }
     .action-row {
@@ -99,13 +103,20 @@
     }
     .action-author {
         font-family: var(--font-display);
-        color: var(--accent);
+        color: var(--gold);
         font-size: var(--t-xs);
         font-weight: 600;
         flex-shrink: 0;
+        letter-spacing: 0.04em;
     }
-    .action-text { color: var(--ink-soft); }
-    .verdict { color: var(--ink-soft); }
+    .action-text {
+        color: var(--ink-soft);
+        font-family: var(--font-prose);
+    }
+    .verdict {
+        color: var(--ink-soft);
+        font-family: var(--font-prose);
+    }
     .flags {
         display: flex;
         gap: 0.3rem;
@@ -115,9 +126,11 @@
         font-family: var(--font-display);
         font-size: var(--t-xs);
         font-weight: 600;
-        padding: 0.1rem 0.3rem;
+        padding: 0.15rem 0.4rem;
         border-radius: var(--radius-sm);
         border: 1px solid var(--line);
+        min-width: 28px;
+        text-align: center;
     }
     .flag.lint { color: var(--resolve); border-color: var(--resolve); }
     .flag.retry { color: var(--resolve); border-color: var(--resolve); }

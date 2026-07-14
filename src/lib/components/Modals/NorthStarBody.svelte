@@ -80,6 +80,9 @@
         font-size: var(--t-sm);
         margin-bottom: 0.8rem;
         line-height: 1.5;
+        font-family: var(--font-prose);
+        font-style: italic;
+        color: var(--ink-soft);
     }
     .field {
         display: flex;
@@ -89,27 +92,32 @@
     }
     .field-label {
         font-family: var(--font-display);
-        font-size: var(--t-xs);
+        font-size: 10px;
         font-weight: 600;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.16em;
         text-transform: uppercase;
-        color: var(--muted);
+        color: var(--gold);
     }
     .field-help {
         font-size: var(--t-xs);
         color: var(--ink-soft);
-        line-height: 1.4;
+        line-height: 1.5;
+        font-family: var(--font-prose);
+        font-style: italic;
     }
     textarea, input[type="text"] {
         font-family: var(--font-ui);
         font-size: var(--t-sm);
-        padding: 0.5rem 0.7rem;
+        padding: 0.55rem 0.7rem;
         background: var(--card);
         border: 1px solid var(--line);
         border-radius: var(--radius-sm);
         resize: vertical;
+        min-height: 44px;
     }
-    textarea:focus, input[type="text"]:focus { border-color: var(--accent); }
+    textarea:focus, input[type="text"]:focus { border-color: var(--gold); }
+
+    .btn-ghost.wide { min-height: 44px; }
 
     .seed-library {
         display: flex;
@@ -123,10 +131,13 @@
         background: var(--inset);
         border: 1px solid var(--line-soft);
         border-radius: var(--radius-sm);
+        min-height: 44px;
+        transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
     }
     .seed-card:hover {
         background: var(--card);
-        border-color: var(--accent);
+        border-color: var(--gold-soft);
+        transform: translateY(-1px);
     }
     .seed-head {
         display: flex;
@@ -140,19 +151,27 @@
         font-weight: 600;
         font-size: var(--t-sm);
         color: var(--ink);
+        letter-spacing: 0.03em;
     }
     .seed-premise {
         font-family: var(--font-prose);
         font-size: var(--t-sm);
         color: var(--ink-soft);
-        line-height: 1.4;
+        line-height: 1.5;
         margin: 0;
+        font-style: italic;
     }
 
     .tone-row {
         display: flex;
         gap: 0.3rem;
         flex-wrap: wrap;
+    }
+    .tone-row .chip {
+        min-height: 36px;
+        display: inline-flex;
+        align-items: center;
+        cursor: pointer;
     }
     .chip.selected {
         background: var(--accent);
@@ -165,5 +184,14 @@
         gap: 0.4rem;
         justify-content: flex-end;
         margin-top: 0.8rem;
+    }
+    .ns-actions .btn-primary {
+        min-height: 48px;
+        letter-spacing: 0.04em;
+    }
+    .ns-actions .btn-ghost {
+        min-height: 44px;
+        padding-left: 1.3rem;
+        padding-right: 1.3rem;
     }
 </style>
