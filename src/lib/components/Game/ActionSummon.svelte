@@ -11,6 +11,7 @@
 
     import { ACTION_TEMPLATES } from '$lib/actionTemplates';
     import { onMount, onDestroy } from 'svelte';
+    import { DragGesture } from '@use-gesture/vanilla';
 
     type Props = {
         onsubmit: (text: string, whisper: boolean) => void;
@@ -150,23 +151,44 @@
     onDestroy(() => clearInterval(interval));
     let placeholder = $derived(whisper ? `Whisper privately as ${authorName}…` : PROMPTS[promptIndex]);
 
-    // Swipe-down to dismiss
-    let dragStartY: number | null = null;
+    // Swipe-down to dismiss (via @use-gesture/vanilla — handles edge cases
+    // the manual touchstart/touchmove math misses: multi-touch, scroll
+    // conflicts, momentum, velocity-based dismissal)
     let dragOffset = $state(0);
-    function onTouchStart(e: TouchEvent) {
-        if (!open) return;
-        dragStartY = e.touches[0].clientY;
+    function draggable(node: HTMLElement) {
+        const gesture = new DragGesture(node, {
+            axis: 'y',
+            filterTaps: true,
+            onDrag: ({ down, movement: [, my], velocity: [, vy] }) => {
+                if (my > 0) dragOffset = my;
+                if (!down) {
+                    if (my > 100 || (vy > 0.5 && my > 40)) {
+                        collapse();
+                    }
+                    dragOffset = 0;
+                }
+            }
+        });
+        return { destroy() { gesture.destroy(); } };
     }
-    function onTouchMove(e: TouchEvent) {
-        if (dragStartY === null) return;
-        const delta = e.touches[0].clientY - dragStartY;
-        dragOffset = Math.max(0, delta);
-    }
-    function onTouchEnd() {
-        if (dragOffset > 80) collapse();
-        dragOffset = 0;
-        dragStartY = null;
-    }
+
+    // Keyboard-safe viewport height (iOS Safari visualViewport API).
+    // When the keyboard opens, visualViewport.height shrinks — we pin it
+    // to --vh so the sheet doesn't get covered.
+    onMount(() => {
+        if (!window.visualViewport) return;
+        const onResize = () => {
+            const vh = window.visualViewport!.height;
+            document.documentElement.style.setProperty('--vh', `${vh}px`);
+        };
+        window.visualViewport.addEventListener('resize', onResize);
+        window.visualViewport.addEventListener('scroll', onResize);
+        onResize();
+        return () => {
+            window.visualViewport?.removeEventListener('resize', onResize);
+            window.visualViewport?.removeEventListener('scroll', onResize);
+        };
+    });
 </script>
 
 <svelte:window onclick={(e) => {
@@ -206,9 +228,7 @@
         data-whisper={whisper}
         style="transform: translateY({dragOffset}px)"
         onsubmit={(e) => { e.preventDefault(); submit(); }}
-        ontouchstart={onTouchStart}
-        ontouchmove={onTouchMove}
-        ontouchend={onTouchEnd}
+        use:draggable
         role="dialog"
         aria-label="Action input"
     >
@@ -228,48 +248,44 @@
             </div>
         {/if}
 
-        <textarea
-            bind:this={el}
-            bind:value
-            onkeydown={handleKeydown}
-            {placeholder}
-            rows="1"
-            disabled={disabled}
-            aria-label="Action input"
-        ></textarea>
+        <div class="input-wrap">
+            <pre class="input-mirror" aria-hidden="true">{value + '\n'}</pre>
+            <textarea
+                bind:this={el}
+                bind:value
+                onkeydown={handleKeydown}
+                {placeholder}
+                rows="1"
+                disabled={disabled}
+                aria-label="Action input"
+            ></textarea>
+        </div>
 
         <div class="sheet-row">
             <button
                 type="button"
-                class="btn-ghost icon-btn"
+                class="btn-ghost text-btn"
                 class:active={showTemplates}
                 onclick={() => (showTemplates = !showTemplates)}
                 title="Action templates"
                 aria-label="Action templates"
             >
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">
-                    <rect x="2" y="2" width="12" height="12" rx="1.5"/>
-                    <path d="M5 6h6M5 9h4"/>
-                </svg>
+                <span class="lbl">Templates</span>
             </button>
             <button
                 type="button"
-                class="btn-ghost icon-btn whisper-btn"
+                class="btn-ghost text-btn whisper-btn"
                 class:active={whisper}
                 onclick={() => (whisper = !whisper)}
                 title="Whisper privately to the DM"
                 aria-pressed={whisper}
                 aria-label="Toggle whisper"
             >
-                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">
-                    <path d="M2 4h9v6H6l-3 2.5V10H2z"/>
-                    <path d="M14 6v2" opacity="0.6"/>
-                </svg>
-                {#if whisper}<span class="lbl">Whisper</span>{/if}
+                <span class="lbl">Whisper</span>
             </button>
             <div class="spacer"></div>
-            <button type="submit" class="btn-primary send-btn" disabled={disabled || !value.trim()}>
-                {whisperInFlight ? '…' : 'Send'}
+            <button type="submit" class="btn-primary send-btn" disabled={disabled || !value.trim()} aria-label="Submit action">
+                <span class="send-glyph">{whisperInFlight ? '…' : '↵'}</span>
             </button>
         </div>
     </form>
@@ -388,10 +404,30 @@
         flex-shrink: 0;
     }
 
-    textarea {
-        width: 100%;
+    /* Auto-expanding textarea — grid+pre mirror pattern.
+       The <pre> mirrors content and forces the grid row to grow;
+       the textarea matches its height. Identical typography on both. */
+    .input-wrap {
+        display: grid;
+        align-items: start;
+    }
+    .input-mirror {
+        grid-area: 1 / 1;
+        font-family: var(--font-prose);
+        font-size: 1.06rem;
+        line-height: 1.5;
+        padding: 0.55rem 0.15rem 0.65rem;
+        margin: 0;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow: hidden;
+        visibility: hidden;
         min-height: 56px;
         max-height: 180px;
+    }
+    textarea {
+        grid-area: 1 / 1;
+        width: 100%;
         font-family: var(--font-prose);
         font-size: 1.06rem;
         line-height: 1.5;
@@ -402,6 +438,7 @@
         border-radius: 0;
         color: var(--ink);
         resize: none;
+        overflow: hidden;
         -webkit-appearance: none;
         appearance: none;
         transition: border-color 0.2s ease;
@@ -421,45 +458,55 @@
     }
     .spacer { flex: 1; }
 
-    .icon-btn {
-        width: 40px; height: 40px;
-        min-height: 40px;
-        padding: 0;
+    .text-btn {
+        min-height: 44px;
+        padding: 0 0.85rem;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         background: transparent;
-        border: none;
+        border: 1px solid var(--line-soft);
         border-radius: var(--radius-sm);
         color: var(--ink-soft);
         cursor: pointer;
-        transition: color 0.18s ease, background 0.18s ease;
+        transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
     }
-    .icon-btn:hover {
-        background: var(--inset);
+    .text-btn:hover {
         color: var(--ink);
+        border-color: var(--gold-soft);
     }
-    .icon-btn.active {
-        color: var(--accent);
-    }
-    .whisper-btn { gap: 0.35rem; width: auto; padding: 0 0.7rem; }
-    .whisper-btn .lbl {
+    .text-btn .lbl {
         font-family: var(--font-ui);
         font-size: var(--t-xs);
         font-weight: 600;
         letter-spacing: 0.06em;
         text-transform: uppercase;
     }
+    .text-btn.active {
+        color: var(--accent);
+        border-color: var(--accent);
+        background: var(--accent-soft);
+    }
     .whisper-btn.active {
         background: var(--corruption);
+        border-color: var(--corruption);
         color: #fdf6ec;
     }
 
     .send-btn {
-        padding: 0.5rem 1.3rem;
-        font-family: var(--font-display);
-        letter-spacing: 0.08em;
-        min-height: 40px;
+        width: 44px; height: 44px;
+        min-height: 44px;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: var(--radius-pill);
+    }
+    .send-glyph {
+        font-family: var(--font-ui);
+        font-size: 1.1rem;
+        font-weight: 600;
+        line-height: 1;
     }
 
     .template-strip {

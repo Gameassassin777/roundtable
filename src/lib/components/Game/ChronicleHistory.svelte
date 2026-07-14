@@ -258,7 +258,7 @@
             </div>
             <div class="toolbar">
                 <div class="find-row">
-                    <span class="find-glyph" aria-hidden="true">⌕</span>
+                    <span class="find-glyph" aria-hidden="true">§</span>
                     <input
                         type="text"
                         placeholder="Search the chronicle…"
@@ -512,10 +512,12 @@
     }
     .find-row:focus-within { border-bottom-color: var(--gold); }
     .find-glyph {
-        color: var(--muted);
-        font-size: 0.95rem;
+        color: var(--gold);
+        font-family: var(--font-display);
+        font-size: 1.05rem;
         line-height: 1;
         flex-shrink: 0;
+        opacity: 0.7;
     }
     .find-row input {
         flex: 1;

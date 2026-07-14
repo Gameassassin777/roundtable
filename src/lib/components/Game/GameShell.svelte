@@ -250,7 +250,7 @@
             onclick={toggleMoreMenu}
             aria-label="Menu"
             aria-expanded={moreMenuOpen}
-        >⋮</button>
+        >◈</button>
 
         {#if moreMenuOpen}
             <div class="more-menu" data-more-menu role="menu">
@@ -402,23 +402,24 @@
         z-index: 5;
     }
     .corner-glyph {
-        width: 28px; height: 28px;
-        min-height: 28px;
+        width: 44px; height: 44px;
+        min-height: 44px;
         padding: 0;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         background: transparent;
         border: none;
-        color: var(--ink-soft);
+        color: var(--gold);
         cursor: pointer;
         line-height: 1;
-        font-size: 1.1rem;
+        font-size: 1.15rem;
         letter-spacing: 0;
-        transition: color 0.22s ease;
+        transition: color 0.22s ease, transform 0.22s ease;
     }
     .corner-glyph:hover, .corner-glyph:focus-visible {
         color: var(--ink);
+        transform: scale(1.08);
         outline: none;
     }
 
@@ -427,28 +428,29 @@
         top: calc(100% + 4px);
         right: 0;
         min-width: 220px;
-        padding: 0.55rem;
+        padding: 0.6rem 0.5rem;
         background: var(--card);
         border: 1px solid var(--line);
+        border-top: 1px solid var(--gold-soft);
         border-radius: var(--radius);
         box-shadow: 0 6px 24px rgba(60, 40, 20, 0.14);
         z-index: 40;
         display: flex;
         flex-direction: column;
         gap: 0.4rem;
-        animation: menu-in 0.14s ease-out;
+        animation: menu-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
         opacity: 1;
     }
     @keyframes menu-in {
-        from { opacity: 0; transform: translateY(-4px); }
+        from { opacity: 0; transform: translateY(-6px); }
         to { opacity: 1; transform: translateY(0); }
     }
     .more-section {
         display: flex;
         flex-direction: column;
         gap: 0.3rem;
-        padding: 0.35rem 0;
-        border-bottom: 1px solid var(--line-soft);
+        padding: 0.4rem 0;
+        border-bottom: 1px solid var(--gold-soft);
     }
     .more-section:last-child { border-bottom: none; padding-bottom: 0; }
     .more-label {
