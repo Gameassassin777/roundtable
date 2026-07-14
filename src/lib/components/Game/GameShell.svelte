@@ -17,6 +17,7 @@
     import ActionSummon from './ActionSummon.svelte';
     import ChronicleHistory from './ChronicleHistory.svelte';
     import Codex from './Codex.svelte';
+    import { version } from '$app/environment';
     import type { CodexSlice } from '$lib/stores/gameStore';
 
     type ChatEntry = {
@@ -241,6 +242,7 @@
         title={`${connectionStatus}${peers > 0 ? ` · ${peers} peer${peers === 1 ? '' : 's'}` : ''}`}
         aria-hidden="true"
     ></span>
+    <span class="version-label">v{version}</span>
 
     <!-- ====== Minimal corner chrome — menu glyph (top-right) ====== -->
     <div class="corner-anchor floating-chrome">
@@ -519,6 +521,27 @@
         .corner-anchor {
             top: calc(var(--safe-top, 0px) + 0.45rem);
             right: max(0.6rem, var(--safe-right));
+        }
+    }
+
+    .version-label {
+        position: absolute;
+        top: calc(var(--safe-top, 0px) + 0.72rem);
+        left: calc(max(0.9rem, var(--safe-left)) + 12px);
+        font-family: var(--font-display);
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        opacity: 0.35;
+        z-index: 4;
+        pointer-events: none;
+    }
+
+    @media (max-width: 540px) {
+        .version-label {
+            top: calc(var(--safe-top, 0px) + 0.58rem);
+            left: calc(max(0.75rem, var(--safe-left)) + 10px);
         }
     }
 
