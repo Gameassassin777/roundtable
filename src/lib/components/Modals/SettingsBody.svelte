@@ -62,6 +62,25 @@
         onAudioChange(audioMuted, v);
         sfx.play('turn-result');
     }
+
+    let forceRefreshing = $state(false);
+    async function forceRefresh() {
+        if (forceRefreshing) return;
+        forceRefreshing = true;
+        // Nuke SW + caches but LEAVE IndexedDB (world state, character, codex).
+        // This evicts a stuck service worker without deleting game data.
+        try {
+            if ('caches' in window) {
+                const keys = await caches.keys();
+                await Promise.all(keys.map((k) => caches.delete(k)));
+            }
+            if ('serviceWorker' in navigator) {
+                const regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.map((r) => r.unregister()));
+            }
+        } catch { /* noop */ }
+        location.reload();
+    }
 </script>
 
 <div class="settings-grid">
@@ -142,6 +161,14 @@
     </div>
 
     <button class="btn-primary wide" onclick={onSaveSettings}>Save</button>
+
+    <div class="field">
+        <span class="field-label">Troubleshoot</span>
+        <button class="btn-ghost wide" onclick={forceRefresh} disabled={forceRefreshing}>
+            {forceRefreshing ? 'Refreshing…' : 'Force refresh (clear cache)'}
+        </button>
+        <span class="field-help">Evicts a stuck service worker without losing your world or character.</span>
+    </div>
 
     <div class="build-info muted" aria-label="Build version">
         <span class="build-label">Build</span>

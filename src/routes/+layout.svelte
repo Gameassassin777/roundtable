@@ -12,6 +12,19 @@
         const unsub = updated.subscribe((isStale) => {
             if (isStale) setTimeout(() => location.reload(), 800);
         });
+
+        // Belt-and-suspenders: when a new service worker takes control (e.g. after
+        // skipWaiting + clients.claim), reload immediately so the page picks up the
+        // new assets. Without this, iOS PWAs can run old JS under a new SW until the
+        // next navigation.
+        if ('serviceWorker' in navigator) {
+            const onControllerChange = () => location.reload();
+            navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+            return () => {
+                unsub();
+                navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+            };
+        }
         return unsub;
     });
 </script>
