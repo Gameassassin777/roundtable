@@ -375,7 +375,7 @@
     /* ---------- corner status (connection dot — top-left) ---------- */
     .corner-status {
         position: absolute;
-        top: calc(var(--safe-top, 0px) + 0.85rem);
+        bottom: calc(var(--safe-bottom, 0px) + 0.75rem);
         left: max(0.9rem, var(--safe-left));
         width: 6px; height: 6px;
         border-radius: 50%;
@@ -447,7 +447,7 @@
         animation: menu-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
         opacity: 1;
     }
-    .more-menu button.wide {
+    .more-menu button.wide:not(.btn-primary) {
         text-align: left;
         padding-left: 1.8rem !important;
         position: relative;
@@ -542,7 +542,7 @@
 
     @media (max-width: 540px) {
         .corner-status {
-            top: calc(var(--safe-top, 0px) + 0.7rem);
+            bottom: calc(var(--safe-bottom, 0px) + 0.6rem);
             left: max(0.75rem, var(--safe-left));
         }
         .corner-anchor {
@@ -553,7 +553,7 @@
 
     .version-label {
         position: absolute;
-        top: calc(var(--safe-top, 0px) + 0.72rem);
+        bottom: calc(var(--safe-bottom, 0px) + 0.72rem);
         left: calc(max(0.9rem, var(--safe-left)) + 12px);
         font-family: var(--font-display);
         font-size: 9px;
@@ -567,7 +567,7 @@
 
     @media (max-width: 540px) {
         .version-label {
-            top: calc(var(--safe-top, 0px) + 0.58rem);
+            bottom: calc(var(--safe-bottom, 0px) + 0.58rem);
             left: calc(max(0.75rem, var(--safe-left)) + 10px);
         }
     }

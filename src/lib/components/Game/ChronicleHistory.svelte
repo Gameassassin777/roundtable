@@ -191,8 +191,7 @@
 </script>
 
 {#if !open}
-    <!-- Chronicle handle — small marginalia tab pinned to the bottom-left
-         corner, away from the action-pill axis. -->
+    <!-- Chronicle handle — small marginalia tab pinned to the top-left corner -->
     <button
         class="history-handle"
         onclick={() => { playClick(); open_(); }}
@@ -200,7 +199,7 @@
         aria-label="Open chronicle"
         title="Past beats"
     >
-        <span class="handle-mark" aria-hidden="true">⌃</span>
+        <span class="handle-mark" aria-hidden="true">📖</span>
         <span class="handle-count">{beatCount} {beatCount === 1 ? 'beat' : 'beats'}</span>
     </button>
 {/if}
@@ -328,15 +327,14 @@
 {/if}
 
 <style>
-    /* ---------- handle (collapsed affordance — bottom-left marginalia) ---------- */
-    .history-handle {
+    /* ---------- handle (collapsed affordance — bottom-left margi    .history-handle {
         position: fixed;
-        bottom: calc(var(--safe-bottom, 0px) + 0.55rem);
-        left: max(0.85rem, var(--safe-left));
+        top: calc(var(--safe-top, 0px) + 0.6rem);
+        left: max(0.7rem, var(--safe-left));
         display: inline-flex;
         align-items: center;
-        gap: 0.3rem;
-        padding: 0.3rem 0.65rem 0.3rem 0.45rem;
+        gap: 0.35rem;
+        padding: 0.3rem 0.65rem 0.3rem 0.5rem;
         background: rgba(252, 248, 237, 0.75);
         backdrop-filter: blur(6px);
         -webkit-backdrop-filter: blur(6px);
@@ -351,15 +349,14 @@
     .history-handle:hover {
         opacity: 1;
         border-color: var(--gold);
-        transform: translateY(-2px);
+        transform: translateY(1px);
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 4px 12px rgba(169, 126, 60, 0.16);
     }
     .handle-mark {
         font-family: var(--font-prose);
         color: var(--gold);
-        font-size: 0.85rem;
+        font-size: 0.95rem;
         line-height: 1;
-        transform: translateY(-1px);
     }
     .handle-count {
         font-family: var(--font-prose);
@@ -369,6 +366,12 @@
         letter-spacing: 0;
         text-transform: none;
         font-variant-numeric: tabular-nums;
+    }
+    @media (max-width: 540px) {
+        .history-handle {
+            top: calc(var(--safe-top, 0px) + 0.45rem);
+            left: max(0.6rem, var(--safe-left));
+        }
     }
 
     /* ---------- backdrop ---------- */

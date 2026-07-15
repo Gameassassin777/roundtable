@@ -1,5 +1,6 @@
 <script lang="ts">
     import { version } from '$app/environment';
+    import { playHover, playClick } from '$lib/audio/ambient';
     import * as sfx from '$lib/audio/sfx';
 
     type SavedSlot = {
@@ -55,6 +56,7 @@
         const checked = (e.currentTarget as HTMLInputElement).checked;
         const next = !checked;
         onAudioChange(next, audioVolume);
+        playClick();
         if (!next) sfx.play('turn-result');
     }
     function changeVolume(e: Event) {
@@ -67,8 +69,7 @@
     async function forceRefresh() {
         if (forceRefreshing) return;
         forceRefreshing = true;
-        // Nuke SW + caches but LEAVE IndexedDB (world state, character, codex).
-        // This evicts a stuck service worker without deleting game data.
+        playClick();
         try {
             if ('caches' in window) {
                 const keys = await caches.keys();
@@ -83,118 +84,238 @@
     }
 </script>
 
-<div class="settings-grid">
-    <div class="field">
-        <span class="field-label">World</span>
-        <div class="row">
-            <input type="text" value={roomId} oninput={(e) => onRoomIdChange((e.currentTarget as HTMLInputElement).value)} placeholder="realm code" />
-            <button class="btn-ghost" onclick={onSwitchRoom}>Join</button>
+<div class="settings-layout">
+    <!-- SECTION 1: SOUND & ATMOSPHERE -->
+    <fieldset class="setting-section">
+        <legend class="section-legend eyebrow">Sound & Atmosphere</legend>
+        
+        <div class="field toggle-field">
+            <span class="field-label">Ambient Audio</span>
+            <label class="switch-row" title="Toggle game audio on or off">
+                <input type="checkbox" checked={!audioMuted} onchange={toggleMute} />
+                <span class="slider-switch"></span>
+                <span class="switch-status">{audioMuted ? 'Muted' : 'Sound on'}</span>
+            </label>
         </div>
-        <span class="field-help">Share this code so friends join your world in real time.</span>
-        <button class="btn-ghost wide" onclick={onNewWorld}>+ New World</button>
-        {#if recentWorlds.length > 0}
-            <div class="recent-worlds">
-                {#each recentWorlds as w}
-                    <button class="chip {w === roomId ? 'current' : ''}" onclick={() => onJoinWorld(w)}>{w}</button>
-                {/each}
+
+        {#if !audioMuted}
+            <div class="field">
+                <label class="volume-row">
+                    <span class="field-label">Master Volume</span>
+                    <div class="slider-wrap">
+                        <span class="volume-glyph" aria-hidden="true">🔈</span>
+                        <input type="range" min="0" max="1" step="0.05" value={audioVolume} oninput={changeVolume} aria-label="Volume slider" />
+                        <span class="volume-glyph" aria-hidden="true">🔊</span>
+                    </div>
+                </label>
             </div>
         {/if}
-    </div>
+    </fieldset>
 
-    <label class="field">
-        <span class="field-label">Google AI Studio key</span>
-        <input type="password" value={apiKey} oninput={(e) => onApiKeyChange((e.currentTarget as HTMLInputElement).value)} placeholder="AIza…" />
-        <span class="field-help">Stored only in this browser.</span>
-    </label>
-
-    <div class="field">
-        <span class="field-label">Key sharing</span>
-        <div class="share-policy-row">
-            {#each POLICIES as [val, label, title]}
-                <button type="button" class="chip" class:selected={keySharePolicy === val} onclick={() => onPolicyChange(val)} {title}>{label}</button>
-            {/each}
+    <!-- SECTION 2: COGNITIVE REALMS -->
+    <fieldset class="setting-section">
+        <legend class="section-legend eyebrow">Aether Connection</legend>
+        
+        <div class="field">
+            <span class="field-label">Table Realm Code</span>
+            <div class="row">
+                <input 
+                    type="text" 
+                    value={roomId} 
+                    oninput={(e) => onRoomIdChange((e.currentTarget as HTMLInputElement).value)} 
+                    placeholder="realm code" 
+                    aria-label="Table code"
+                />
+                <button class="btn-ghost" onclick={() => { playClick(); onSwitchRoom(); }} onmouseenter={() => playHover()}>Join</button>
+            </div>
+            <span class="field-help">Share this code so friends join your world in real time.</span>
         </div>
-    </div>
 
-    <div class="field">
-        <span class="field-label">Sound</span>
-        <label class="toggle-row">
-            <input type="checkbox" checked={!audioMuted} onchange={toggleMute} />
-            <span>{audioMuted ? 'Muted' : 'Sound on'}</span>
-        </label>
-        {#if !audioMuted}
-            <label class="volume-row">
-                <span class="volume-label">Volume</span>
-                <input type="range" min="0" max="1" step="0.05" value={audioVolume} onchange={changeVolume} />
-            </label>
+        <button class="btn-ghost wide text-center" onclick={() => { playClick(); onNewWorld(); }} onmouseenter={() => playHover()}>
+            ✦ Create New World ✦
+        </button>
+
+        {#if recentWorlds.length > 0}
+            <div class="field">
+                <span class="field-label-sub">Recent Realms</span>
+                <div class="recent-worlds">
+                    {#each recentWorlds as w}
+                        <button 
+                            class="chip {w === roomId ? 'current' : ''}" 
+                            onclick={() => { playClick(); onJoinWorld(w); }}
+                            onmouseenter={() => playHover()}
+                        >
+                            {w}
+                        </button>
+                    {/each}
+                </div>
+            </div>
         {/if}
-    </div>
+    </fieldset>
 
-    <div class="field">
-        <span class="field-label">Character</span>
-        <button class="btn-ghost wide" onclick={onSaveCurrentCharacter}>Save "{characterName}" to roster</button>
+    <!-- SECTION 3: API KEY ATTUNEMENT -->
+    <fieldset class="setting-section">
+        <legend class="section-legend eyebrow">Gemini Key & Sharing</legend>
+        
+        <label class="field">
+            <span class="field-label">Google AI Studio key</span>
+            <input 
+                type="password" 
+                value={apiKey} 
+                oninput={(e) => onApiKeyChange((e.currentTarget as HTMLInputElement).value)} 
+                placeholder="AIza…" 
+            />
+            <span class="field-help">Stored locally in your browser. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free key →</a></span>
+        </label>
+
+        <div class="field">
+            <span class="field-label">Key Sharing Rules</span>
+            <div class="share-policy-row">
+                {#each POLICIES as [val, label, title]}
+                    <button 
+                        type="button" 
+                        class="chip" 
+                        class:selected={keySharePolicy === val} 
+                        onclick={() => { playClick(); onPolicyChange(val); }} 
+                        onmouseenter={() => playHover()}
+                        {title}
+                    >
+                        {label}
+                    </button>
+                {/each}
+            </div>
+        </div>
+    </fieldset>
+
+    <!-- SECTION 4: HERO ROSTER -->
+    <fieldset class="setting-section">
+        <legend class="section-legend eyebrow">Character & Roster</legend>
+        
+        <button class="btn-ghost wide text-center" onclick={() => { playClick(); onSaveCurrentCharacter(); }} onmouseenter={() => playHover()}>
+            Save "{characterName}" to Roster
+        </button>
+
         {#if savedCharacters.length > 0}
             <div class="saved-roster">
                 {#each savedCharacters as slot}
                     <div class="saved-slot" class:is-current={slot.name === characterName}>
-                        <span class="saved-name">{slot.name}</span>
-                        <span class="saved-class muted">{slot.class_title}</span>
-                        <button type="button" class="saved-delete" onclick={() => onDeleteSavedCharacter(slot.name)} aria-label="Remove" title="Remove">✕</button>
+                        <div class="saved-info">
+                            <span class="saved-name">{slot.name}</span>
+                            <span class="saved-class muted">{slot.class_title}</span>
+                        </div>
+                        <button 
+                            type="button" 
+                            class="saved-delete" 
+                            onclick={() => { playClick(); onDeleteSavedCharacter(slot.name); }} 
+                            onmouseenter={() => playHover()}
+                            aria-label="Remove from roster" 
+                            title="Remove"
+                        >
+                            ✕
+                        </button>
                     </div>
                 {/each}
             </div>
         {/if}
-    </div>
+    </fieldset>
 
-    <div class="field">
-        <span class="field-label">Export</span>
-        <button class="btn-ghost wide" onclick={onExportWeave} disabled={!hasChronicle}>Download .weave</button>
-        <button class="btn-ghost wide" onclick={onOpenReader}>Read a .weave file</button>
-    </div>
+    <!-- SECTION 5: SCROLLS & ARCHIVES -->
+    <fieldset class="setting-section">
+        <legend class="section-legend eyebrow">Archives & Premise</legend>
+        
+        <div class="field">
+            <span class="field-label">World Premise (North Star)</span>
+            <button class="btn-ghost wide" onclick={() => { playClick(); onOpenNorthStar(); }} onmouseenter={() => playHover()}>
+                {northStarPremise ? 'Edit North Star Settings' : 'Set North Star Premise'}
+            </button>
+            <span class="field-help">{northStarPremise ? 'Active Premise is set — DM and World Engine will honor it.' : 'Define the world\'s premise, tone, and opening hook.'}</span>
+        </div>
 
-    <div class="field">
-        <span class="field-label">World premise</span>
-        <button class="btn-ghost wide" onclick={onOpenNorthStar}>
-            {northStarPremise ? 'Edit North Star' : 'Set North Star'}
+        <div class="field">
+            <span class="field-label">Export / Import Weave</span>
+            <div class="row">
+                <button class="btn-ghost wide" onclick={() => { playClick(); onExportWeave(); }} onmouseenter={() => hasChronicle && playHover()} disabled={!hasChronicle}>Download .weave</button>
+                <button class="btn-ghost wide" onclick={() => { playClick(); onOpenReader(); }} onmouseenter={() => playHover()}>Read .weave</button>
+            </div>
+        </div>
+    </fieldset>
+
+    <!-- SAVE & ACTION SECTION -->
+    <div class="action-footer">
+        <button class="btn-primary wide save-btn" onclick={() => { playClick(); onSaveSettings(); }} onmouseenter={() => playHover()}>
+            Save Options
         </button>
-        <span class="field-help">{northStarPremise ? 'Premise is set — Director, DM, and World Engine all honor it.' : 'Define the world\'s premise, tone, and opening hook.'}</span>
     </div>
 
-    <button class="btn-primary wide" onclick={onSaveSettings}>Save</button>
-
-    <div class="field">
-        <span class="field-label">Troubleshoot</span>
-        <button class="btn-ghost wide" onclick={forceRefresh} disabled={forceRefreshing}>
-            {forceRefreshing ? 'Refreshing…' : 'Force refresh (clear cache)'}
-        </button>
-        <span class="field-help">Evicts a stuck service worker without losing your world or character.</span>
-    </div>
+    <!-- TROUBLESHOOTING & FOOTER -->
+    <fieldset class="setting-section troubleshoot">
+        <legend class="section-legend eyebrow">Maintenance</legend>
+        <div class="field">
+            <button class="btn-ghost wide text-center warning-btn" onclick={forceRefresh} disabled={forceRefreshing} onmouseenter={() => playHover()}>
+                {forceRefreshing ? 'Clearing Cache…' : 'Force Refresh (Clear Cache)'}
+            </button>
+            <span class="field-help">Unregisters stuck service workers and clears build cache. Does not affect game saves.</span>
+        </div>
+    </fieldset>
 
     <div class="build-info muted" aria-label="Build version">
-        <span class="build-label">Build</span>
-        <span class="build-version">{version}</span>
+        <span class="build-label">Build Version</span>
+        <span class="build-version">v{version}</span>
     </div>
 </div>
 
 <style>
-    .settings-grid {
+    .settings-layout {
         display: flex;
         flex-direction: column;
-        gap: 0.95rem;
+        gap: 1.1rem;
+        padding: 0.2rem 0;
     }
+
+    .setting-section {
+        border: 1px solid var(--line-soft);
+        border-radius: var(--radius);
+        background: rgba(252, 248, 237, 0.35);
+        padding: 0.9rem 1rem 1rem;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.8rem;
+    }
+
+    .setting-section.troubleshoot {
+        background: rgba(160, 70, 64, 0.02);
+        border-color: rgba(160, 70, 64, 0.15);
+    }
+
+    .section-legend {
+        padding: 0 0.4rem;
+        font-size: 10px !important;
+        letter-spacing: 0.18em;
+    }
+
     .field {
         display: flex;
         flex-direction: column;
         gap: 0.35rem;
     }
+
     .field-label {
         font-family: var(--font-display);
         font-size: 10px;
         font-weight: 600;
-        letter-spacing: 0.16em;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
         color: var(--gold);
     }
+
+    .field-label-sub {
+        font-family: var(--font-prose);
+        font-style: italic;
+        font-size: var(--t-xs);
+        color: var(--ink-soft);
+    }
+
     .field-help {
         font-size: var(--t-xs);
         color: var(--ink-soft);
@@ -202,6 +323,11 @@
         font-family: var(--font-prose);
         font-style: italic;
     }
+    .field-help a {
+        color: var(--accent);
+        text-decoration: underline;
+    }
+
     .row {
         display: flex;
         gap: 0.4rem;
@@ -213,6 +339,9 @@
         min-height: 44px;
         text-align: left;
         padding: 0.55rem 0.85rem;
+    }
+    .text-center {
+        text-align: center !important;
     }
 
     .share-policy-row, .recent-worlds {
@@ -226,6 +355,7 @@
         align-items: center;
         cursor: pointer;
     }
+    
     .chip.current {
         background: var(--gold-soft);
         border-color: var(--gold);
@@ -236,52 +366,149 @@
         color: #fdf6ec;
         border-color: var(--accent);
     }
-    .toggle-row {
-        display: flex;
+
+    /* CUSTOM TOGGLE SWITCH */
+    .toggle-field {
+        flex-direction: row;
         align-items: center;
-        gap: 0.55rem;
-        font-size: var(--t-sm);
+        justify-content: space-between;
         min-height: 44px;
-        cursor: pointer;
     }
+    .switch-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.65rem;
+        cursor: pointer;
+        position: relative;
+    }
+    .switch-row input {
+        position: absolute;
+        opacity: 0;
+        width: 0; height: 0;
+    }
+    .slider-switch {
+        width: 44px;
+        height: 22px;
+        background-color: var(--line);
+        border-radius: 22px;
+        position: relative;
+        transition: background-color 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+        box-shadow: inset 0 1px 3px rgba(60, 40, 20, 0.08);
+    }
+    .slider-switch::after {
+        content: '';
+        position: absolute;
+        width: 18px;
+        height: 18px;
+        left: 2px;
+        bottom: 2px;
+        background-color: var(--card);
+        border-radius: 50%;
+        box-shadow: 0 1px 3px rgba(60, 40, 20, 0.2);
+        transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    .switch-row input:checked + .slider-switch {
+        background-color: var(--gold);
+    }
+    .switch-row input:checked + .slider-switch::after {
+        transform: translateX(22px);
+    }
+    .switch-status {
+        font-family: var(--font-prose);
+        font-style: italic;
+        font-size: var(--t-sm);
+        color: var(--ink-soft);
+    }
+
+    /* CUSTOM VOLUME SLIDER */
     .volume-row {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        width: 100%;
+    }
+    .slider-wrap {
         display: flex;
         align-items: center;
         gap: 0.65rem;
-        font-size: var(--t-sm);
-        margin-top: 0.35rem;
+        width: 100%;
         min-height: 44px;
     }
-    .volume-label {
-        color: var(--muted);
-        font-family: var(--font-prose);
-        font-style: italic;
+    .volume-glyph {
+        font-size: 0.9rem;
+        opacity: 0.7;
+    }
+    input[type="range"] {
+        -webkit-appearance: none;
+        appearance: none;
+        flex: 1;
+        height: 6px;
+        background: var(--line-soft);
+        border-radius: 99px;
+        outline: none;
+        box-shadow: inset 0 1px 2px rgba(60, 40, 20, 0.05);
+    }
+    input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: var(--gold);
+        border: 1px solid var(--accent-deep);
+        box-shadow: 0 1px 3px rgba(60, 40, 20, 0.2);
+        cursor: pointer;
+        transition: transform 0.18s ease, background-color 0.18s ease;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover {
+        transform: scale(1.15);
+        background: var(--accent);
+    }
+    input[type="range"]::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+        border: 1px solid var(--accent-deep);
+        border-radius: 50%;
+        background: var(--gold);
+        box-shadow: 0 1px 3px rgba(60, 40, 20, 0.2);
+        cursor: pointer;
+        transition: transform 0.18s ease, background-color 0.18s ease;
+    }
+    input[type="range"]::-moz-range-thumb:hover {
+        transform: scale(1.15);
+        background: var(--accent);
     }
 
+    /* ROSTER SLOTS */
     .saved-roster {
         display: flex;
         flex-direction: column;
-        gap: 0.25rem;
-        margin-top: 0.45rem;
+        gap: 0.35rem;
     }
     .saved-slot {
-        display: grid;
-        grid-template-columns: 1fr auto auto;
-        gap: 0.6rem;
+        display: flex;
+        justify-content: space-between;
         align-items: center;
-        padding: 0.4rem 0.55rem;
+        padding: 0.5rem 0.7rem;
         background: var(--inset);
+        border: 1px solid var(--line-soft);
         border-radius: var(--radius-sm);
-        font-size: var(--t-sm);
         min-height: 44px;
+        transition: border-color 0.2s ease;
     }
     .saved-slot.is-current {
-        border-left: 2px solid var(--gold);
+        border-left: 3px solid var(--gold);
+        background: rgba(169, 126, 60, 0.03);
+    }
+    .saved-info {
+        display: flex;
+        flex-direction: column;
     }
     .saved-name {
         color: var(--ink);
-        font-weight: 500;
+        font-weight: 600;
         font-family: var(--font-ui);
+        font-size: var(--t-sm);
     }
     .saved-class {
         font-size: var(--t-xs);
@@ -295,9 +522,9 @@
         color: var(--muted);
         cursor: pointer;
         font-size: var(--t-sm);
-        width: 44px;
-        height: 44px;
-        min-height: 44px;
+        width: 36px;
+        height: 36px;
+        min-height: 36px;
         padding: 0;
         display: inline-flex;
         align-items: center;
@@ -306,14 +533,27 @@
     }
     .saved-delete:hover {
         color: var(--hp);
-        transform: scale(1.08);
+        transform: scale(1.12);
+    }
+
+    /* FOOTER */
+    .action-footer {
+        margin-top: 0.4rem;
+    }
+    .save-btn {
+        min-height: 48px;
+        font-size: var(--t-sm) !important;
+    }
+    .warning-btn:hover {
+        color: var(--hp) !important;
+        border-color: var(--hp) !important;
     }
 
     .build-info {
         display: flex;
         justify-content: space-between;
         align-items: baseline;
-        margin-top: 0.6rem;
+        margin-top: 0.5rem;
         padding-top: 0.7rem;
         border-top: 1px solid var(--gold-soft);
         font-size: var(--t-xs);
