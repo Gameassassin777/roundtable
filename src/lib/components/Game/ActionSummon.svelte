@@ -10,6 +10,7 @@
     // Escape / swipe-down on the handle.
 
     import { ACTION_TEMPLATES } from '$lib/actionTemplates';
+    import { playHover, playClick } from '$lib/audio/ambient';
     import { onMount, onDestroy } from 'svelte';
     import { DragGesture } from '@use-gesture/vanilla';
 
@@ -205,7 +206,8 @@
         class:breathing
         class:busy={isLoading || disabled}
         data-action-pill
-        onclick={expand}
+        onclick={() => { playClick(); expand(); }}
+        onmouseenter={() => playHover()}
         disabled={disabled && !isLoading}
         aria-label={isLoading ? 'World is responding' : 'Press to act'}
     >
@@ -222,7 +224,7 @@
 {/if}
 
 {#if open}
-    <div class="backdrop" onclick={collapse}></div>
+    <div class="backdrop" onclick={() => { playClick(); collapse(); }}></div>
 
     <form
         class="action-sheet"
@@ -242,7 +244,8 @@
                     <button
                         type="button"
                         class="tpl-chip"
-                        onclick={() => applyTemplate(tpl)}
+                        onclick={() => { playClick(); applyTemplate(tpl); }}
+                        onmouseenter={() => playHover()}
                     >
                         {tpl.label}
                     </button>
@@ -268,7 +271,8 @@
                 type="button"
                 class="btn-ghost text-btn"
                 class:active={showTemplates}
-                onclick={() => (showTemplates = !showTemplates)}
+                onclick={() => { playClick(); showTemplates = !showTemplates; }}
+                onmouseenter={() => playHover()}
                 title="Action templates"
                 aria-label="Action templates"
             >
@@ -278,7 +282,8 @@
                 type="button"
                 class="btn-ghost text-btn whisper-btn"
                 class:active={whisper}
-                onclick={() => (whisper = !whisper)}
+                onclick={() => { playClick(); whisper = !whisper; }}
+                onmouseenter={() => playHover()}
                 title="Whisper privately to the DM"
                 aria-pressed={whisper}
                 aria-label="Toggle whisper"
@@ -286,7 +291,7 @@
                 <span class="lbl">Whisper</span>
             </button>
             <div class="spacer"></div>
-            <button type="submit" class="btn-primary send-btn" disabled={disabled || !value.trim()} aria-label="Submit action">
+            <button type="submit" class="btn-primary send-btn" onclick={() => playClick()} onmouseenter={() => !disabled && value.trim() && playHover()} disabled={disabled || !value.trim()} aria-label="Submit action">
                 <span class="send-glyph">{whisperInFlight ? '…' : '↵'}</span>
             </button>
         </div>
@@ -300,23 +305,26 @@
         align-items: center;
         gap: 0.55rem;
         padding: 0.6rem 1.1rem;
-        background: var(--card);
-        border: 1px solid var(--line);
+        background: rgba(252, 248, 237, 0.9);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        border: 1px solid var(--gold-soft);
         border-radius: 999px;
         font-family: var(--font-prose);
         font-style: italic;
         font-size: var(--t-sm);
         color: var(--ink-soft);
         cursor: pointer;
-        box-shadow: 0 2px 10px rgba(60, 40, 20, 0.07);
-        opacity: 0.82;
-        transition: opacity 0.22s ease, transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7), 0 2px 10px rgba(60, 40, 20, 0.08);
+        opacity: 0.85;
+        transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.22s ease, border-color 0.22s ease;
+        pointer-events: auto;
     }
     .action-pill:hover, .action-pill:focus-visible {
         opacity: 1;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 16px rgba(60, 40, 20, 0.12);
-        border-color: var(--gold-soft);
+        transform: translateY(-2px);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 6px 18px rgba(169, 126, 60, 0.16);
+        border-color: var(--gold);
         color: var(--ink);
         outline: none;
     }
@@ -378,19 +386,19 @@
         padding-left: max(0.9rem, var(--safe-left));
         padding-right: max(0.9rem, var(--safe-right));
         background: var(--card);
-        border-top: 1px solid var(--line);
-        border-radius: 6px 6px 0 0;
-        box-shadow: 0 -8px 32px rgba(60, 40, 20, 0.16);
+        border-top: 3px double var(--gold);
+        box-shadow: inset 0 0 0 1px var(--gold-soft), 0 -8px 32px rgba(60, 40, 20, 0.16);
+        border-radius: 8px 8px 0 0;
         z-index: 31;
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
-        animation: sheet-in 0.36s cubic-bezier(0.2, 0.7, 0.2, 1);
+        animation: sheet-in 0.36s cubic-bezier(0.2, 0.8, 0.2, 1);
         transition: transform 0.18s ease-out;
     }
     .action-sheet[data-whisper='true'] {
         background: linear-gradient(180deg, rgba(110, 79, 168, 0.07), var(--card) 60%);
-        border-top-color: var(--corruption);
+        border-top: 3px double var(--corruption);
     }
     @keyframes sheet-in {
         from { transform: translateY(100%); opacity: 0.4; }

@@ -19,6 +19,7 @@
     import Codex from './Codex.svelte';
     import { version } from '$app/environment';
     import type { CodexSlice } from '$lib/stores/gameStore';
+    import { playHover, playClick } from '$lib/audio/ambient';
 
     type ChatEntry = {
         author: string;
@@ -249,7 +250,7 @@
         <button
             class="corner-glyph"
             data-more-toggle
-            onclick={toggleMoreMenu}
+            onclick={() => { playClick(); toggleMoreMenu(); }}
             aria-label="Menu"
             aria-expanded={moreMenuOpen}
         >◈</button>
@@ -257,7 +258,7 @@
         {#if moreMenuOpen}
             <div class="more-menu" data-more-menu role="menu">
                 <div class="more-section">
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => { onCodexToggle(); closeMoreMenu(); }}>Codex</button>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); onCodexToggle(); closeMoreMenu(); }} onmouseenter={() => playHover()}>Codex</button>
                 </div>
 
                 <div class="more-section">
@@ -265,31 +266,31 @@
                     <div class="more-row">
                         {#if enginePaused}
                             <span class="chip paused">Paused</span>
-                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('resume')}>Resume</button>
+                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => { playClick(); engineAction('resume'); }} onmouseenter={() => playHover()}>Resume</button>
                         {:else if engineSecondsLeft !== null}
                             <span class="chip">◷ {engineSecondsLeft}s</span>
-                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('pause')}>Pause</button>
+                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => { playClick(); engineAction('pause'); }} onmouseenter={() => playHover()}>Pause</button>
                         {:else}
                             <span class="chip muted">Idle</span>
                         {/if}
                     </div>
                     <div class="more-row">
-                        <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('tick-now')}>Tick now</button>
-                        <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => engineAction('step-time')}>Step time</button>
+                        <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => { playClick(); engineAction('tick-now'); }} onmouseenter={() => playHover()}>Tick now</button>
+                        <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => { playClick(); engineAction('step-time'); }} onmouseenter={() => playHover()}>Step time</button>
                     </div>
                 </div>
 
                 <div class="more-section">
                     <div class="more-label eyebrow">World</div>
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('map')}>Map</button>
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('audit')}>Audit Log</button>
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('northstar')}>North Star</button>
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('weave')}>Weave</button>
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => openModalFromMenu('shortcuts')}>Shortcuts</button>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('map'); }} onmouseenter={() => playHover()}>Map</button>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('audit'); }} onmouseenter={() => playHover()}>Audit Log</button>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('northstar'); }} onmouseenter={() => playHover()}>North Star</button>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('weave'); }} onmouseenter={() => playHover()}>Weave</button>
+                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('shortcuts'); }} onmouseenter={() => playHover()}>Shortcuts</button>
                 </div>
 
                 <div class="more-section">
-                    <button class="btn-primary wide" role="menuitem" onclick={() => openModalFromMenu('settings')}>Settings</button>
+                    <button class="btn-primary wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('settings'); }} onmouseenter={() => playHover()}>Settings</button>
                 </div>
             </div>
         {/if}
@@ -358,7 +359,7 @@
         pointer-events: none; /* let diorama show through; children re-enable */
     }
     /* Make interactive elements receive pointer events */
-    .shell > * { pointer-events: auto; }
+    .shell > :global(*) { pointer-events: auto; }
 
     /* ---------- floating chrome ---------- */
     .floating-chrome {
@@ -404,44 +405,69 @@
         z-index: 5;
     }
     .corner-glyph {
-        width: 44px; height: 44px;
-        min-height: 44px;
+        width: 36px; height: 36px;
+        min-height: 36px;
         padding: 0;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        background: transparent;
-        border: none;
+        background: var(--card);
+        border: 1px solid var(--gold);
+        border-radius: 50%;
         color: var(--gold);
+        box-shadow: inset 0 0 0 1px var(--gold-soft), 0 2px 8px rgba(60, 40, 20, 0.1);
         cursor: pointer;
         line-height: 1;
         font-size: 1.15rem;
         letter-spacing: 0;
-        transition: color 0.22s ease, transform 0.22s ease;
+        transition: color 0.22s ease, transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
     }
     .corner-glyph:hover, .corner-glyph:focus-visible {
         color: var(--ink);
-        transform: scale(1.08);
+        border-color: var(--ink-soft);
+        transform: rotate(45deg) scale(1.05);
+        box-shadow: inset 0 0 0 1px var(--gold), 0 4px 12px rgba(60, 40, 20, 0.16);
         outline: none;
     }
 
     .more-menu {
         position: absolute;
-        top: calc(100% + 4px);
+        top: calc(100% + 8px);
         right: 0;
         min-width: 220px;
         padding: 0.6rem 0.5rem;
         background: var(--card);
-        border: 1px solid var(--line);
-        border-top: 1px solid var(--gold-soft);
+        border: 3px double var(--gold);
+        box-shadow: inset 0 0 0 1px var(--gold-soft), 0 8px 32px rgba(60, 40, 20, 0.18);
         border-radius: var(--radius);
-        box-shadow: 0 6px 24px rgba(60, 40, 20, 0.14);
         z-index: 40;
         display: flex;
         flex-direction: column;
         gap: 0.4rem;
-        animation: menu-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
+        animation: menu-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
         opacity: 1;
+    }
+    .more-menu button.wide {
+        text-align: left;
+        padding-left: 1.8rem !important;
+        position: relative;
+        background: transparent;
+        border: none;
+        box-shadow: none;
+    }
+    .more-menu button.wide::before {
+        content: '✦';
+        position: absolute;
+        left: 0.6rem;
+        top: 50%;
+        transform: translateY(-50%) scale(0.6);
+        color: var(--gold);
+        opacity: 0;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .more-menu button.wide:hover::before {
+        opacity: 1;
+        transform: translateY(-50%) scale(1);
     }
     @keyframes menu-in {
         from { opacity: 0; transform: translateY(-6px); }
@@ -486,6 +512,7 @@
         align-items: center;
         gap: 0.55rem;
         pointer-events: none;
+        z-index: 20;
     }
     .bottom-stack > * { pointer-events: auto; }
 

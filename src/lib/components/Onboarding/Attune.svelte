@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { playHover, playClick } from '$lib/audio/ambient';
+
     type Props = {
         apiKey: string;
         keySharePolicy: 'table' | 'solo' | 'host';
@@ -23,7 +25,7 @@
     ];
 </script>
 
-<div class="wizard-card panel">
+<div class="wizard-card panel diegetic-frame">
     <header class="wizard-head">
         <span class="eyebrow">Step 1 of 2</span>
         <h2 class="display">Attune the Aether</h2>
@@ -56,7 +58,8 @@
                     type="button"
                     class="policy-chip"
                     class:selected={keySharePolicy === p.id}
-                    onclick={() => onPolicy(p.id)}
+                    onclick={() => { playClick(); onPolicy(p.id); }}
+                    onmouseenter={() => playHover()}
                     title={p.title}
                 >
                     {p.label}
@@ -86,8 +89,8 @@
     </label>
 
     <div class="wizard-actions">
-        <button class="btn-ghost" onclick={onBack}>Back</button>
-        <button class="btn-primary" disabled={!apiKey.trim()} onclick={onContinue}>Continue</button>
+        <button class="btn-ghost" onclick={() => { playClick(); onBack(); }} onmouseenter={() => playHover()}>Back</button>
+        <button class="btn-primary" disabled={!apiKey.trim()} onclick={() => { playClick(); onContinue(); }} onmouseenter={() => apiKey.trim() && playHover()}>Continue</button>
     </div>
 </div>
 

@@ -7,6 +7,7 @@
     // standalone). Rendering is delegated to ChronicleBeat.
 
     import ChronicleBeat from './ChronicleBeat.svelte';
+    import { playHover, playClick } from '$lib/audio/ambient';
 
     type ChatEntry = {
         author: string;
@@ -194,7 +195,8 @@
          corner, away from the action-pill axis. -->
     <button
         class="history-handle"
-        onclick={open_}
+        onclick={() => { playClick(); open_(); }}
+        onmouseenter={() => playHover()}
         aria-label="Open chronicle"
         title="Past beats"
     >
@@ -204,7 +206,7 @@
 {/if}
 
 {#if open}
-    <div class="backdrop" onclick={close}></div>
+    <div class="backdrop" onclick={() => { playClick(); close(); }}></div>
 
     <section
         class="chronicle-drawer"
@@ -254,7 +256,7 @@
             <div class="drawer-title-row">
                 <span class="eyebrow">Chronicle</span>
                 <span class="beat-count">{beatCount}</span>
-                <button class="done-link" onclick={close}>Done</button>
+                <button class="done-link" onclick={() => { playClick(); close(); }} onmouseenter={() => playHover()}>Done</button>
             </div>
             <div class="toolbar">
                 <div class="find-row">
@@ -269,7 +271,8 @@
                 <button
                     class="filter-pill"
                     class:active={whisperOnly}
-                    onclick={() => (whisperOnly = !whisperOnly)}
+                    onclick={() => { playClick(); whisperOnly = !whisperOnly; }}
+                    onmouseenter={() => playHover()}
                     title="Whispers only"
                 >
                     Whispers
@@ -334,20 +337,22 @@
         align-items: center;
         gap: 0.3rem;
         padding: 0.3rem 0.65rem 0.3rem 0.45rem;
-        background: rgba(252, 248, 237, 0.62);
+        background: rgba(252, 248, 237, 0.75);
         backdrop-filter: blur(6px);
         -webkit-backdrop-filter: blur(6px);
-        border: none;
+        border: 1px solid var(--gold-soft);
         border-radius: var(--radius-sm);
-        box-shadow: 0 1px 3px rgba(60, 40, 20, 0.08);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7), 0 2px 8px rgba(60, 40, 20, 0.1);
         cursor: pointer;
         z-index: 20;
-        opacity: 0.62;
-        transition: opacity 0.22s ease, transform 0.22s ease, color 0.22s ease;
+        opacity: 0.85;
+        transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.22s ease, box-shadow 0.22s ease;
     }
     .history-handle:hover {
         opacity: 1;
-        transform: translateY(-1px);
+        border-color: var(--gold);
+        transform: translateY(-2px);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 4px 12px rgba(169, 126, 60, 0.16);
     }
     .handle-mark {
         font-family: var(--font-prose);
@@ -375,6 +380,7 @@
         -webkit-backdrop-filter: blur(2px);
         z-index: 32;
         animation: backdrop-in 0.28s ease-out;
+        pointer-events: auto;
     }
     @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 
@@ -386,14 +392,15 @@
         margin: 0 auto;
         height: 75vh;
         background: var(--card);
-        border-top: 1px solid var(--line);
-        border-radius: 6px 6px 0 0;
-        box-shadow: 0 -8px 32px rgba(60, 40, 20, 0.18);
+        border-top: 3px double var(--gold);
+        box-shadow: inset 0 0 0 1px var(--gold-soft), 0 -8px 32px rgba(60, 40, 20, 0.18);
+        border-radius: 8px 8px 0 0;
         z-index: 33;
         display: flex;
         flex-direction: column;
-        animation: drawer-in 0.4s cubic-bezier(0.2, 0.7, 0.2, 1);
+        animation: drawer-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
         transition: transform 0.18s ease-out;
+        pointer-events: auto;
     }
     @keyframes drawer-in {
         from { transform: translateY(100%); opacity: 0.4; }

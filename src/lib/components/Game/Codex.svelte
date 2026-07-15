@@ -4,6 +4,7 @@
     // Desktop: pinned right rail.
 
     import type { CodexSlice } from '$lib/stores/gameStore';
+    import { playHover, playClick } from '$lib/audio/ambient';
     import Bar from './Bar.svelte';
     import { DragGesture } from '@use-gesture/vanilla';
     import { onMount, onDestroy } from 'svelte';
@@ -143,7 +144,7 @@
     <header class="codex-head">
         <div class="head-row">
             <span class="head-eyebrow">Codex</span>
-            <button class="close-btn" onclick={onclose} aria-label="Close codex">×</button>
+            <button class="close-btn" onclick={() => { playClick(); onclose(); }} onmouseenter={() => playHover()} aria-label="Close codex">×</button>
         </div>
         <div class="find-row">
             <span class="find-glyph" aria-hidden="true">§</span>
@@ -158,7 +159,8 @@
             class:active={activeTab === 'hero'}
             role="tab"
             aria-selected={activeTab === 'hero'}
-            onclick={() => (activeTab = 'hero')}
+            onclick={() => { playClick(); activeTab = 'hero'; }}
+            onmouseenter={() => playHover()}
         >
             <span class="tab-label">Hero</span>
         </button>
@@ -167,7 +169,8 @@
             class:active={activeTab === 'party'}
             role="tab"
             aria-selected={activeTab === 'party'}
-            onclick={() => (activeTab = 'party')}
+            onclick={() => { playClick(); activeTab = 'party'; }}
+            onmouseenter={() => playHover()}
         >
             <span class="tab-label">Party</span>
             {#if tabBadge('party')}<span class="tab-badge">{tabBadge('party')}</span>{/if}
@@ -177,7 +180,8 @@
             class:active={activeTab === 'world'}
             role="tab"
             aria-selected={activeTab === 'world'}
-            onclick={() => (activeTab = 'world')}
+            onclick={() => { playClick(); activeTab = 'world'; }}
+            onmouseenter={() => playHover()}
         >
             <span class="tab-label">World</span>
             {#if tabBadge('world')}<span class="tab-badge">{tabBadge('world')}</span>{/if}
@@ -262,7 +266,7 @@
                     <ul class="roster-list">
                         {#each partyRoster as name}
                             <li class="roster-item">
-                                <button class="row-btn" onclick={() => toggle(key('party', name))}>
+                                <button class="row-btn" onclick={() => { playClick(); toggle(key('party', name)); }} onmouseenter={() => playHover()}>
                                     <span class="row-name">{name}</span>
                                     <span class="row-meta muted">{codex.party[name]?.class_title || ''}</span>
                                     <span class="chevron">{expanded[key('party', name)] ? '−' : '+'}</span>
@@ -297,7 +301,7 @@
                     <ul class="roster-list">
                         {#each filteredNpcs as [name, val]}
                             <li class="roster-item">
-                                <button class="row-btn" onclick={() => toggle(key('npc', name))}>
+                                <button class="row-btn" onclick={() => { playClick(); toggle(key('npc', name)); }} onmouseenter={() => playHover()}>
                                     <span class="row-name">{name}</span>
                                     <span class="row-meta muted">{(val as any)?.role || ''}</span>
                                     <span class="chevron">{expanded[key('npc', name)] ? '−' : '+'}</span>
@@ -323,7 +327,7 @@
                     <ul class="roster-list">
                         {#each filteredFactions as [name, val]}
                             <li class="roster-item">
-                                <button class="row-btn" onclick={() => toggle(key('fac', name))}>
+                                <button class="row-btn" onclick={() => { playClick(); toggle(key('fac', name)); }} onmouseenter={() => playHover()}>
                                     <span class="row-name">{name}</span>
                                     <span class="row-meta muted">{(val as any)?.type || ''}</span>
                                     <span class="chevron">{expanded[key('fac', name)] ? '−' : '+'}</span>
@@ -347,7 +351,7 @@
                     <ul class="roster-list">
                         {#each filteredThreads as t}
                             <li class="roster-item">
-                                <button class="row-btn" onclick={() => toggle(key('thr', (t as any).id))}>
+                                <button class="row-btn" onclick={() => { playClick(); toggle(key('thr', (t as any).id)); }} onmouseenter={() => playHover()}>
                                     <span class="row-name">{(t as any).name || (t as any).id}</span>
                                     <span class="row-meta muted">{(t as any).status}</span>
                                     <span class="chevron">{expanded[key('thr', (t as any).id)] ? '−' : '+'}</span>
@@ -369,7 +373,7 @@
                     <ul class="roster-list">
                         {#each filteredLocations as [name, val]}
                             <li class="roster-item">
-                                <button class="row-btn" onclick={() => toggle(key('loc', name))}>
+                                <button class="row-btn" onclick={() => { playClick(); toggle(key('loc', name)); }} onmouseenter={() => playHover()}>
                                     <span class="row-name">{name}</span>
                                     <span class="row-meta muted">{(val as any)?.biome || ''}</span>
                                     <span class="chevron">{expanded[key('loc', name)] ? '−' : '+'}</span>
@@ -407,6 +411,7 @@
         height: 100%;
         background: var(--page);
         border-left: 1px solid var(--line);
+        pointer-events: auto;
         
         /* Desktop positioning — slides from right when sheetOpen */
         position: fixed;
@@ -438,6 +443,7 @@
         -webkit-backdrop-filter: blur(2px);
         z-index: 32;
         animation: backdrop-in 0.24s ease-out;
+        pointer-events: auto;
     }
     @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 
@@ -487,12 +493,19 @@
     .find-row {
         display: flex;
         align-items: center;
-        gap: 0.4rem;
-        padding: 0.2rem 0;
-        border-bottom: 1px solid var(--line-soft);
-        transition: border-color 0.2s ease;
+        gap: 0.5rem;
+        padding: 0.35rem 0.7rem;
+        background: var(--inset);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--radius-sm);
+        box-shadow: inset 0 1px 3px rgba(60, 40, 20, 0.05);
+        transition: border-color 0.22s ease, box-shadow 0.22s ease, background 0.22s ease;
     }
-    .find-row:focus-within { border-bottom-color: var(--gold); }
+    .find-row:focus-within {
+        border-color: var(--gold);
+        box-shadow: 0 0 0 2px var(--gold-soft), inset 0 1px 3px rgba(60, 40, 20, 0.08);
+        background: #fffdf9;
+    }
     .find-glyph {
         color: var(--gold);
         font-family: var(--font-display);
@@ -510,7 +523,7 @@
         background: transparent;
         border: none;
         outline: none;
-        padding: 0.3rem 0;
+        padding: 0.2rem 0;
         border-radius: 0;
     }
     .find-row input::placeholder { color: var(--muted); font-style: italic; }
@@ -528,7 +541,7 @@
     .tab-btn {
         background: transparent;
         border: none;
-        border-bottom: 2px solid transparent;
+        border-bottom: 3px solid transparent;
         padding: 0.55rem 0.4rem;
         font-family: var(--font-display);
         font-size: var(--t-xs);
@@ -542,12 +555,13 @@
         gap: 0.3rem;
         cursor: pointer;
         text-transform: uppercase;
-        transition: color 0.18s ease, border-color 0.18s ease;
+        transition: color 0.22s ease, border-color 0.22s ease, background 0.22s ease;
     }
-    .tab-btn:hover { color: var(--ink); background: transparent; }
+    .tab-btn:hover { color: var(--ink); background: rgba(169, 126, 60, 0.03); }
     .tab-btn.active {
         color: var(--ink);
         border-bottom-color: var(--gold);
+        background: rgba(169, 126, 60, 0.05);
     }
     .tab-badge {
         font-family: var(--font-ui);
@@ -658,16 +672,21 @@
         grid-template-columns: 1fr auto auto;
         gap: 0.5rem;
         align-items: baseline;
-        padding: 0.6rem 0.2rem;
+        padding: 0.6rem 0.4rem;
         text-align: left;
         background: transparent;
         border: none;
         font-family: var(--font-ui);
         min-height: 44px;
         cursor: pointer;
-        transition: background 0.15s ease;
+        transition: background 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+                    padding-left 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+        border-radius: var(--radius-sm);
     }
-    .row-btn:hover { background: var(--gold-soft); }
+    .row-btn:hover {
+        background: var(--gold-soft);
+        padding-left: 0.75rem;
+    }
     .row-name {
         font-size: var(--t-sm);
         color: var(--ink);

@@ -326,7 +326,7 @@
             {/if}
 
             {#if recentWorlds.length > 0 && !showJoin}
-                <button class="btn-tiny btn-ghost link-btn" onclick={() => (showJoin = true)}>
+                <button class="btn-tiny btn-ghost link-btn" onclick={() => { playClick(); showJoin = true; }} onmouseenter={() => playHover()}>
                     Join a world by code
                 </button>
             {/if}
@@ -339,16 +339,17 @@
                         placeholder="table code"
                         onkeydown={(e) => e.key === 'Enter' && joinCode.trim() && handleJoinWorld(joinCode.trim())}
                     />
-                    <button class="btn-tiny btn-ghost" onclick={() => (showJoin = false)}>Cancel</button>
+                    <button class="btn-tiny btn-ghost" onclick={() => { playClick(); showJoin = false; }} onmouseenter={() => playHover()}>Cancel</button>
                     <button
                         class="btn-tiny btn-primary"
                         disabled={!joinCode.trim()}
-                        onclick={() => handleJoinWorld(joinCode.trim())}
+                        onclick={() => { playClick(); handleJoinWorld(joinCode.trim()); }}
+                        onmouseenter={() => joinCode.trim() && playHover()}
                     >Join</button>
                 </div>
             {/if}
 
-            <button class="btn-tiny btn-ghost link-btn" onclick={onOpenSettings}>Settings</button>
+            <button class="btn-tiny btn-ghost link-btn" onclick={() => { playClick(); onOpenSettings(); }} onmouseenter={() => playHover()}>Settings</button>
         </div>
 
         {#if savedCharacters.length > 1}
@@ -716,15 +717,33 @@
         background: transparent;
         border: none;
         color: var(--muted);
-        text-decoration: underline;
-        text-underline-offset: 4px;
         font-size: var(--t-xs);
         min-height: 32px;
         padding: 0.3rem 0.5rem;
+        font-family: var(--font-display);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        text-decoration: none;
     }
+    .link-btn::before, .link-btn::after {
+        content: '✦';
+        color: var(--gold);
+        font-size: 7px;
+        opacity: 0;
+        transition: opacity 0.22s ease, transform 0.22s ease;
+    }
+    .link-btn::before { transform: translateX(3px); }
+    .link-btn::after { transform: translateX(-3px); }
     .link-btn:hover {
         color: var(--ink);
         background: transparent;
+    }
+    .link-btn:hover::before, .link-btn:hover::after {
+        opacity: 0.8;
+        transform: translateX(0);
     }
 
     .join-row {

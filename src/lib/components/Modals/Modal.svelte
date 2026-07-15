@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { playHover, playClick } from '$lib/audio/ambient';
+
     type Props = {
         title: string;
         onClose: () => void;
@@ -20,15 +22,15 @@
     role="button"
     tabindex="-1"
     aria-label="Close modal"
-    onclick={onClose}
+    onclick={() => { playClick(); onClose(); }}
 >
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="modal panel" role="document" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+    <div class="modal panel diegetic-frame" style="width: min({width}, 94vw)" role="document" tabindex="-1" onclick={(e) => e.stopPropagation()}>
         <header class="modal-head">
             <span class="head-eyebrow">Chapter</span>
             <h3 class="display">{title}</h3>
-            <button class="close-btn" onclick={onClose} aria-label="Close">×</button>
+            <button class="close-btn" onclick={() => { playClick(); onClose(); }} onmouseenter={() => playHover()} aria-label="Close">×</button>
         </header>
         <div class="modal-body">
             {@render children()}
@@ -115,11 +117,11 @@
         line-height: 1;
         cursor: pointer;
         align-self: center;
-        transition: color 0.18s ease, transform 0.18s ease;
+        transition: color 0.22s ease, transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
     }
     .close-btn:hover, .close-btn:focus-visible {
         color: var(--accent);
-        transform: scale(1.08);
+        transform: rotate(90deg) scale(1.15);
         outline: none;
     }
 
