@@ -756,9 +756,11 @@
     @media (max-width: 899px) {
         .codex {
             position: fixed;
+            top: auto;
             bottom: 0;
             left: 0;
             right: 0;
+            width: 100%;
             max-width: 760px;
             margin: 0 auto;
             height: 75dvh;
