@@ -138,7 +138,7 @@
     aria-label="World codex"
     bind:this={sheetEl}
     use:draggable
-    style="transform: translateY({dragOffset}px)"
+    style={dragOffset > 0 ? `transform: translateY(${dragOffset}px)` : undefined}
 >
     <header class="codex-head">
         <div class="head-row">
