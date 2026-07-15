@@ -35,6 +35,7 @@
         onOpenReader: () => void;
         onOpenNorthStar: () => void;
         onSaveSettings: () => void;
+        onReplayTutorial: () => void;
     };
 
     let {
@@ -43,7 +44,8 @@
         onRoomIdChange, onApiKeyChange, onPolicyChange, onAudioChange,
         onSwitchRoom, onNewWorld, onJoinWorld,
         onSaveCurrentCharacter, onDeleteSavedCharacter,
-        onExportWeave, onOpenReader, onOpenNorthStar, onSaveSettings
+        onExportWeave, onOpenReader, onOpenNorthStar, onSaveSettings,
+        onReplayTutorial
     }: Props = $props();
 
     const POLICIES: Array<['table' | 'solo' | 'host', string, string]> = [
@@ -250,6 +252,12 @@
     <!-- TROUBLESHOOTING & FOOTER -->
     <fieldset class="setting-section troubleshoot">
         <legend class="section-legend eyebrow">Maintenance</legend>
+        <div class="field">
+            <button class="btn-ghost wide text-center" onclick={() => { playClick(); onReplayTutorial(); }} onmouseenter={() => playHover()}>
+                Replay Guidance Tutorial
+            </button>
+            <span class="field-help">Relive the visual walkthrough explaining interface controls.</span>
+        </div>
         <div class="field">
             <button class="btn-ghost wide text-center warning-btn" onclick={forceRefresh} disabled={forceRefreshing} onmouseenter={() => playHover()}>
                 {forceRefreshing ? 'Clearing Cache…' : 'Force Refresh (Clear Cache)'}

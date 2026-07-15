@@ -17,6 +17,7 @@
     import Toasts from '$lib/components/Toasts.svelte';
     import Modal from '$lib/components/Modals/Modal.svelte';
     import SettingsBody from '$lib/components/Modals/SettingsBody.svelte';
+    import TutorialOverlay from '$lib/components/Game/TutorialOverlay.svelte';
     import NorthStarBody from '$lib/components/Modals/NorthStarBody.svelte';
     import WeaveReaderBody from '$lib/components/Modals/WeaveReaderBody.svelte';
     import AuditLogBody from '$lib/components/Modals/AuditLogBody.svelte';
@@ -67,6 +68,19 @@
     let characterSelected = $state(localStorage.getItem('rt_character_selected') === 'true');
     let selectedArc = $state(localStorage.getItem('rt_char_arc') || 'warrior');
     let classTitle = $state('');
+    let tutorialOpen = $state(false);
+
+    $effect(() => {
+        if (characterSelected && isReady && characterName) {
+            const hasSeen = localStorage.getItem(`rt_tutorial_seen_${characterName}`) === 'true';
+            if (!hasSeen) {
+                const t = setTimeout(() => {
+                    tutorialOpen = true;
+                }, 800);
+                return () => clearTimeout(t);
+            }
+        }
+    });
 
     // ---------- Chat + UI state ----------
     let chatLog = $state<ChatEntry[]>([]);
@@ -851,6 +865,7 @@
                 onOpenReader={openReader}
                 onOpenNorthStar={openNorthStar}
                 onSaveSettings={saveSettings}
+                onReplayTutorial={() => { ui.closeModal(); tutorialOpen = true; }}
             />
         {:else if ui.openModal === 'northstar'}
             <NorthStarBody
@@ -880,6 +895,10 @@
 {/if}
 
 <Toasts />
+
+{#if tutorialOpen}
+    <TutorialOverlay characterName={characterName} onClose={() => { tutorialOpen = false; }} />
+{/if}
 
 <style>
     .onboarding-frame {
