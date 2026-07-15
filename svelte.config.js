@@ -20,7 +20,7 @@ export default {
     // gets pinned by GH Pages' CDN max-age=600. Manual bump guarantees the
     // SW sees a different string and triggers the update flow.
     version: {
-      name: '16',
+      name: '17',
       pollInterval: 60000
     }
   }

@@ -407,6 +407,27 @@
         height: 100%;
         background: var(--page);
         border-left: 1px solid var(--line);
+        
+        /* Desktop positioning — slides from right when sheetOpen */
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        right: 0;
+        width: 320px;
+        z-index: 33;
+        transform: translateX(100%);
+        transition: transform 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
+        box-shadow: -4px 0 24px rgba(60, 40, 20, 0.12);
+    }
+
+    .codex.sheet-open {
+        transform: translateX(0);
+        animation: desktop-slide-in 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
+    }
+
+    @keyframes desktop-slide-in {
+        from { transform: translateX(100%); }
+        to { transform: translateX(0); }
     }
 
     .codex-backdrop {
@@ -452,7 +473,7 @@
         font-size: 1.4rem;
         line-height: 1;
         cursor: pointer;
-        display: none;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
         transition: color 0.18s ease, transform 0.18s ease;
