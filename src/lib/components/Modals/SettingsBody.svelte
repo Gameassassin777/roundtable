@@ -35,7 +35,6 @@
         onOpenReader: () => void;
         onOpenNorthStar: () => void;
         onSaveSettings: () => void;
-        onReplayTutorial: () => void;
     };
 
     let {
@@ -45,7 +44,6 @@
         onSwitchRoom, onNewWorld, onJoinWorld,
         onSaveCurrentCharacter, onDeleteSavedCharacter,
         onExportWeave, onOpenReader, onOpenNorthStar, onSaveSettings,
-        onReplayTutorial
     }: Props = $props();
 
     const POLICIES: Array<['table' | 'solo' | 'host', string, string]> = [
@@ -105,9 +103,9 @@
                 <label class="volume-row">
                     <span class="field-label">Master Volume</span>
                     <div class="slider-wrap">
-                        <span class="volume-glyph" aria-hidden="true">🔈</span>
+                        <span class="volume-glyph" aria-hidden="true">Off</span>
                         <input type="range" min="0" max="1" step="0.05" value={audioVolume} oninput={changeVolume} aria-label="Volume slider" />
-                        <span class="volume-glyph" aria-hidden="true">🔊</span>
+                        <span class="volume-glyph" aria-hidden="true">Max</span>
                     </div>
                 </label>
             </div>
@@ -134,7 +132,7 @@
         </div>
 
         <button class="btn-ghost wide text-center" onclick={() => { playClick(); onNewWorld(); }} onmouseenter={() => playHover()}>
-            ✦ Create New World ✦
+            Create New World
         </button>
 
         {#if recentWorlds.length > 0}
@@ -253,9 +251,6 @@
     <fieldset class="setting-section troubleshoot">
         <legend class="section-legend eyebrow">Maintenance</legend>
         <div class="field">
-            <button class="btn-ghost wide text-center" onclick={() => { playClick(); onReplayTutorial(); }} onmouseenter={() => playHover()}>
-                Replay Guidance Tutorial
-            </button>
             <span class="field-help">Relive the visual walkthrough explaining interface controls.</span>
         </div>
         <div class="field">

@@ -217,7 +217,6 @@
         {:else if whisperInFlight}
             <span class="pill-text">Whisper in flight…</span>
         {:else}
-            <span class="pill-glyph" aria-hidden="true">✦</span>
             <span class="pill-text">Press to act</span>
         {/if}
     </button>
@@ -227,7 +226,7 @@
     <div class="backdrop" onclick={() => { playClick(); collapse(); }}></div>
 
     <form
-        class="action-sheet"
+        class="action-sheet film-surface"
         data-action-sheet
         data-whisper={whisper}
         style="transform: translateY({dragOffset}px)"
@@ -305,33 +304,36 @@
         align-items: center;
         gap: 0.55rem;
         padding: 0.6rem 1.1rem;
-        background: rgba(252, 248, 237, 0.9);
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
-        border: 1px solid var(--gold-soft);
+        /* Black, not parchment. A cream pill floating over a real stage reads
+           as a web button pasted onto a film frame. It sits in the scrim now,
+           so it belongs to the scrim. */
+        background: rgba(10, 12, 14, 0.55);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(224, 178, 99, 0.28);
         border-radius: 999px;
         font-family: var(--font-prose);
         font-style: italic;
         font-size: var(--t-sm);
-        color: var(--ink-soft);
+        color: #ddd5c4;
         cursor: pointer;
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7), 0 2px 10px rgba(60, 40, 20, 0.08);
-        opacity: 0.85;
+        box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
+        opacity: 0.92;
         transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.22s ease, border-color 0.22s ease;
         pointer-events: auto;
     }
     .action-pill:hover, .action-pill:focus-visible {
         opacity: 1;
         transform: translateY(-2px);
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 6px 18px rgba(169, 126, 60, 0.16);
-        border-color: var(--gold);
-        color: var(--ink);
+        box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55);
+        border-color: rgba(224, 178, 99, 0.7);
+        color: #f4efe3;
         outline: none;
     }
     .action-pill.breathing {
         animation: pill-breathe 1.2s ease-out;
         opacity: 1;
-        border-color: var(--gold);
+        border-color: rgba(224, 178, 99, 0.7);
     }
     .action-pill.busy {
         cursor: default;

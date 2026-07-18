@@ -26,7 +26,7 @@
 >
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="modal panel diegetic-frame" style="width: min({width}, 94vw)" role="document" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+    <div class="modal panel diegetic-frame film-surface" style="width: min({width}, 94vw)" role="document" tabindex="-1" onclick={(e) => e.stopPropagation()}>
         <header class="modal-head">
             <span class="head-eyebrow">Chapter</span>
             <h3 class="display">{title}</h3>

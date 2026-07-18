@@ -134,7 +134,7 @@
 {/if}
 
 <aside
-    class="codex"
+    class="codex film-surface"
     class:sheet-open={sheetOpen}
     aria-label="World codex"
     bind:this={sheetEl}
@@ -232,7 +232,6 @@
                 </section>
             {:else}
                 <div class="empty">
-                    <p class="empty-mark" aria-hidden="true">✦</p>
                     <p class="empty-eyebrow">No hero yet</p>
                     <p class="empty-hint">Forge one to begin.</p>
                 </div>
@@ -286,7 +285,6 @@
                 </section>
             {:else}
                 <div class="empty">
-                    <p class="empty-mark" aria-hidden="true">✦</p>
                     <p class="empty-eyebrow">You ride alone</p>
                     <p class="empty-hint">Share the world code to gather a party.</p>
                 </div>
@@ -395,7 +393,6 @@
 
             {#if !filteredNpcs.length && !filteredFactions.length && !filteredThreads.length && !filteredLocations.length}
                 <div class="empty">
-                    <p class="empty-mark" aria-hidden="true">✦</p>
                     <p class="empty-eyebrow">The world is uncharted</p>
                     <p class="empty-hint">Play to discover its people and places.</p>
                 </div>

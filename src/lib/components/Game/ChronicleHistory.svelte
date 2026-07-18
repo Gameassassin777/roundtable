@@ -199,8 +199,7 @@
         aria-label="Open chronicle"
         title="Past beats"
     >
-        <span class="handle-mark" aria-hidden="true">📖</span>
-        <span class="handle-count">{beatCount} {beatCount === 1 ? 'beat' : 'beats'}</span>
+        <span class="handle-count">{beatCount}</span>
     </button>
 {/if}
 
@@ -208,7 +207,7 @@
     <div class="backdrop" onclick={() => { playClick(); close(); }}></div>
 
     <section
-        class="chronicle-drawer"
+        class="chronicle-drawer film-surface"
         role="dialog"
         aria-label="Chronicle history"
         style="transform: translateY({dragOffset}px)"
@@ -327,23 +326,37 @@
 {/if}
 
 <style>
-    /* ---------- handle (collapsed affordance — bottom-left margi    .history-handle {
+    /* ---------- handle (collapsed affordance — top-left marginalia) ---------- */
+    /* This comment was left UNTERMINATED in 507a28d (v8) and swallowed every
+       rule down to line ~376 — .history-handle rendered as raw unstyled text
+       for 19 versions and nobody noticed. Do not "tidy" this into one line. */
+    .history-handle {
         position: fixed;
         top: calc(var(--safe-top, 0px) + 0.6rem);
         left: max(0.7rem, var(--safe-left));
         display: inline-flex;
         align-items: center;
+        justify-content: center;
         gap: 0.35rem;
-        padding: 0.3rem 0.65rem 0.3rem 0.5rem;
-        background: rgba(252, 248, 237, 0.75);
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
-        border: 1px solid var(--gold-soft);
-        border-radius: var(--radius-sm);
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7), 0 2px 8px rgba(60, 40, 20, 0.1);
+        min-width: 40px;
+        min-height: 40px;
+        padding: 0 0.5rem;
+        /* Mirrors the menu glyph opposite it: a dark mark, not a labelled chip.
+           Boxed cream chrome fights the stage; two matching marks frame it. */
+        background: rgba(8, 10, 12, 0.34);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: none;
+        border-radius: 50%;
+        color: rgba(232, 224, 206, 0.82);
+        font-family: var(--font-display);
+        font-size: var(--t-xs);
+        letter-spacing: 0.04em;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.32);
         cursor: pointer;
         z-index: 20;
-        opacity: 0.85;
+        opacity: 0.72;
         transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.22s ease, box-shadow 0.22s ease;
     }
     .history-handle:hover {

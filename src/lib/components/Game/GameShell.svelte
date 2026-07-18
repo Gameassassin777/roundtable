@@ -54,6 +54,7 @@
         peers: number;
         connectionStatus: string;
         worldClock: { turn: number; day: number; time_of_day: string };
+        worldSeed: string;
         engineSecondsLeft: number | null;
         enginePaused: boolean;
         onsubmit: (text: string, whisper: boolean) => void;
@@ -68,7 +69,7 @@
     let {
         chatLog, localWhispers, isLoading, turnStageLabel, lastTurnError,
         whisperInFlight, codex, characterName, peers, connectionStatus,
-        worldClock, engineSecondsLeft, enginePaused,
+        worldClock, worldSeed, engineSecondsLeft, enginePaused,
         onsubmit, onCodexToggle, onOpenModal, onEngineControl,
         codexSheetOpen, showLevelUp, levelUpName
     }: Props = $props();
@@ -150,6 +151,29 @@
     let moodClass = $derived(classifyMood(scene.mood));
     let weatherClass = $derived(classifyWeather(scene.weather));
 
+    // The stage gets NORMALISED tags, never raw scene_tags. The AI emits free
+    // text ("misty woodland", "unsettled") and time_of_day lives in world_clock,
+    // not scene_tags — so passing scene_tags straight through meant the diorama
+    // never saw a time of day at all and silently rendered eternal noon.
+    // `location` seeds the generator's RNG so a place stays the same place.
+    // biome is left EMPTY when the AI invents something outside the known
+    // families — that's the signal to synthesize a palette from biomeRaw rather
+    // than collapse a brand-new place onto the default crossroads.
+    // worldSeed + location make every world's forest its own forest.
+    let stageTags = $derived({
+        biome: (typeof localStorage !== 'undefined' && localStorage.getItem('rt_dbg_biome')) || biomeClass,
+        biomeRaw: (typeof localStorage !== 'undefined' && localStorage.getItem('rt_dbg_biome')) || scene.biome || '',
+        time_of_day: timeClass || 'day',
+        mood: moodClass || '',
+        weather: weatherClass || 'clear',
+        location: codex?.location || '',
+        worldSeed: worldSeed || '',
+        // The DM's own visual direction for invented scenes — see SceneVisual.
+        visual: (typeof localStorage !== 'undefined' && localStorage.getItem('rt_dbg_visual'))
+            ? JSON.parse(localStorage.getItem('rt_dbg_visual')!)
+            : ((scene as any).visual ?? null)
+    });
+
     // ---- Latest beat for SubtitleOverlay ----
     // Pull the most recent DM narration from chatLog (skips System/Warning entries).
     let latestBeat = $derived.by<Beat | null>(() => {
@@ -226,7 +250,7 @@
 />
 
 <!-- Foreground stage: live diorama fills the viewport behind everything -->
-<CinematicDiorama sceneTags={scene} />
+<CinematicDiorama sceneTags={stageTags} />
 
 <div
     class="shell"
@@ -405,22 +429,33 @@
         z-index: 5;
     }
     .corner-glyph {
-        width: 36px; height: 36px;
-        min-height: 36px;
+        width: 40px; height: 40px;
+        min-height: 40px;
         padding: 0;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        background: var(--card);
-        border: 1px solid var(--gold);
+        /* Barely-there dark mark. Per CLAUDE.md the idle view is diorama + a
+           status dot + one glyph; a filled cream disc with a gold ring is a
+           web button pasted onto a film frame. */
+        background: rgba(8, 10, 12, 0.34);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: none;
         border-radius: 50%;
-        color: var(--gold);
-        box-shadow: inset 0 0 0 1px var(--gold-soft), 0 2px 8px rgba(60, 40, 20, 0.1);
+        color: rgba(232, 224, 206, 0.82);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.32);
         cursor: pointer;
         line-height: 1;
         font-size: 1.15rem;
         letter-spacing: 0;
-        transition: color 0.22s ease, transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
+        transition: color 0.22s ease, transform 0.22s ease, background 0.22s ease;
+    }
+    .corner-glyph:hover, .corner-glyph:focus-visible {
+        background: rgba(8, 10, 12, 0.55);
+        color: #f4efe3;
+        outline: none;
     }
     .corner-glyph:hover, .corner-glyph:focus-visible {
         color: var(--ink);
@@ -454,16 +489,6 @@
         background: transparent;
         border: none;
         box-shadow: none;
-    }
-    .more-menu button.wide::before {
-        content: '✦';
-        position: absolute;
-        left: 0.6rem;
-        top: 50%;
-        transform: translateY(-50%) scale(0.6);
-        color: var(--gold);
-        opacity: 0;
-        transition: opacity 0.2s ease, transform 0.2s ease;
     }
     .more-menu button.wide:hover::before {
         opacity: 1;
@@ -507,6 +532,7 @@
         left: 0; right: 0;
         bottom: 0;
         padding-bottom: var(--safe-bottom, 0px);
+        isolation: isolate;
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -514,7 +540,28 @@
         pointer-events: none;
         z-index: 20;
     }
-    .bottom-stack > * { pointer-events: auto; }
+    .bottom-stack > * { pointer-events: auto; position: relative; z-index: 1; }
+
+    /* The scrim belongs HERE, not inside SubtitleOverlay. Scoped to the
+       subtitle it stopped short of the action pill, the flex gap and the
+       safe-area padding — so the page background resurfaced as a bar of beige
+       across the bottom of the phone. This runs to the true bottom edge. */
+    .bottom-stack::before {
+        content: '';
+        position: absolute;
+        left: 0; right: 0; bottom: 0;
+        top: -120px;
+        background: linear-gradient(
+            180deg,
+            rgba(6, 8, 10, 0) 0%,
+            rgba(6, 8, 10, 0.30) 26%,
+            rgba(6, 8, 10, 0.66) 56%,
+            rgba(6, 8, 10, 0.88) 80%,
+            rgba(6, 8, 10, 0.96) 100%
+        );
+        pointer-events: none;
+        z-index: 0;
+    }
 
     /* ---------- level toast ---------- */
     .level-toast {

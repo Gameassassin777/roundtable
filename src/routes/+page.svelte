@@ -17,7 +17,6 @@
     import Toasts from '$lib/components/Toasts.svelte';
     import Modal from '$lib/components/Modals/Modal.svelte';
     import SettingsBody from '$lib/components/Modals/SettingsBody.svelte';
-    import TutorialOverlay from '$lib/components/Game/TutorialOverlay.svelte';
     import NorthStarBody from '$lib/components/Modals/NorthStarBody.svelte';
     import WeaveReaderBody from '$lib/components/Modals/WeaveReaderBody.svelte';
     import AuditLogBody from '$lib/components/Modals/AuditLogBody.svelte';
@@ -68,19 +67,6 @@
     let characterSelected = $state(localStorage.getItem('rt_character_selected') === 'true');
     let selectedArc = $state(localStorage.getItem('rt_char_arc') || 'warrior');
     let classTitle = $state('');
-    let tutorialOpen = $state(false);
-
-    $effect(() => {
-        if (characterSelected && isReady && characterName) {
-            const hasSeen = localStorage.getItem(`rt_tutorial_seen_${characterName}`) === 'true';
-            if (!hasSeen) {
-                const t = setTimeout(() => {
-                    tutorialOpen = true;
-                }, 800);
-                return () => clearTimeout(t);
-            }
-        }
-    });
 
     // ---------- Chat + UI state ----------
     let chatLog = $state<ChatEntry[]>([]);
@@ -182,11 +168,28 @@
         localStorage.setItem('rt_world', code);
     }
 
+    // Reaps a turn whose terminal event never arrives — a socket dropped after
+    // the send was acked, or the pipeline died mid-flight (429 between
+    // turn-start and turn-result). Nothing else clears the spinner in those
+    // cases, so without this the player is stuck on "The world responds…"
+    // forever. Verified missing via the turn-lifecycle audit (GLM, 2026-07-15).
+    let turnWatchdog: ReturnType<typeof setTimeout> | null = null;
+    function clearTurnWatchdog() { if (turnWatchdog) { clearTimeout(turnWatchdog); turnWatchdog = null; } }
+    // Dedupe the pipeline's multi-stage turn-error emits (see the turn-error handler).
+    let lastErrorText = '';
+    let lastErrorAt = 0;
+
     function handleSubmit(text: string, whisper: boolean) {
         if (!characterName) return;
+        // One action in flight at a time. Without this guard a second submit
+        // re-arms the spinner and the two turns' results cross-clear each other.
+        if (isLoading || whisperInFlight) return;
         if (whisper) {
+            // Whisper is a private side-channel — it must touch ONLY
+            // whisperInFlight. If it also set isLoading, an arriving
+            // whisper-result would clear a pending NORMAL turn's spinner and the
+            // UI would show idle while the world is still resolving your action.
             whisperInFlight = true;
-            isLoading = true;
         } else {
             isLoading = true;
             addChatEntry({ author: characterName, text, type: 'player' });
@@ -196,8 +199,19 @@
             isLoading = false;
             whisperInFlight = false;
             lastTurnError = 'Not connected to the world server.';
+            return;
         }
         turnStageLabel = whisper ? 'Whispering to the DM…' : 'The world responds…';
+        clearTurnWatchdog();
+        turnWatchdog = setTimeout(() => {
+            if (isLoading || whisperInFlight) {
+                isLoading = false;
+                whisperInFlight = false;
+                turnStageLabel = '';
+                lastTurnError = 'The world fell silent. Try again.';
+                pushToast('The world fell silent', { kind: 'error', detail: 'No response from the world — try again.', ttl: 5000 });
+            }
+        }, 45000);
     }
 
     function broadcastQTE(q: any) {
@@ -400,6 +414,7 @@
         } else if (evt.type === 'turn-stage') {
             turnStageLabel = evt.label || 'The world responds…';
         } else if (evt.type === 'turn-result') {
+            clearTurnWatchdog();
             isLoading = false;
             whisperInFlight = false;
             turnStageLabel = '';
@@ -424,24 +439,32 @@
             }
             sfx.play('turn-result');
         } else if (evt.type === 'turn-error') {
+            clearTurnWatchdog();
             isLoading = false;
             whisperInFlight = false;
             turnStageLabel = '';
             const errText = evt.message || 'The world hesitates.';
             lastTurnError = errText;
+            // The server's Director→DM→Critic pipeline can emit a turn-error at
+            // EACH stage for one dead-key action — observed live as 3 stacked
+            // identical toasts. Collapse duplicates within a short window so one
+            // failed action reads as one failure, not a pile-up.
+            const now = Date.now();
+            const dup = errText === lastErrorText && (now - lastErrorAt) < 4000;
+            lastErrorText = errText; lastErrorAt = now;
             // Genesis failure: drop the threshold but let the user proceed —
             // their first action will trigger a normal DM turn.
             if (thresholdOpen) {
                 thresholdStage = 'failed';
                 setTimeout(() => { thresholdOpen = false; }, 1800);
-            } else {
+            } else if (!dup) {
                 addChatEntry({ author: 'System', text: errText, type: 'dm' });
                 pushToast('The world hesitates', { kind: 'error', detail: errText, ttl: 5000 });
             }
-            sfx.play('turn-error');
+            if (!dup) sfx.play('turn-error');
         } else if (evt.type === 'whisper-result') {
-            isLoading = false;
-            whisperInFlight = false;
+            clearTurnWatchdog();
+            whisperInFlight = false;   // NOT isLoading — see handleSubmit
             if (evt.ui_update?.qte) broadcastQTE(evt.ui_update.qte);
             addLocalWhisper({
                 author: 'DM (whisper)',
@@ -451,6 +474,7 @@
             });
             sfx.play('whisper');
         } else if (evt.type === 'whisper-error') {
+            clearTurnWatchdog();
             whisperInFlight = false;
             addLocalWhisper({
                 author: 'System',
@@ -774,6 +798,7 @@
         peers={peers}
         connectionStatus={connectionStatus}
         worldClock={worldClock}
+        worldSeed={roomId}
         engineSecondsLeft={engineSecondsLeft}
         enginePaused={enginePaused}
         onsubmit={handleSubmit}
@@ -865,7 +890,6 @@
                 onOpenReader={openReader}
                 onOpenNorthStar={openNorthStar}
                 onSaveSettings={saveSettings}
-                onReplayTutorial={() => { ui.closeModal(); tutorialOpen = true; }}
             />
         {:else if ui.openModal === 'northstar'}
             <NorthStarBody
@@ -896,9 +920,6 @@
 
 <Toasts />
 
-{#if tutorialOpen}
-    <TutorialOverlay characterName={characterName} onClose={() => { tutorialOpen = false; }} />
-{/if}
 
 <style>
     .onboarding-frame {

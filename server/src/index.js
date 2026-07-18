@@ -4,6 +4,7 @@ import { buildDmPrompt, buildBatchPrompt, buildRequestBody, buildGenesisPrompt }
 import { buildDirectorPrompt, buildDirectorRequestBody } from './lib/director.js';
 import { lintProse, deriveLintProfile } from './lib/proseLint.js';
 import { buildCriticPrompt, buildCriticRequestBody } from './lib/critic.js';
+import { buildSceneSyncPrompt, buildSceneSyncRequestBody, sanitizeSyncChange } from './lib/sceneSync.js';
 import { buildWorldEnginePrompt, buildWorldEngineRequestBody, tickWorldClock } from './lib/worldEngine.js';
 
 // ---------------------------------------------------------------------------
@@ -793,9 +794,34 @@ export class SignalingRoom {
             }
           }
 
+          // Scene Sync: cost-guarded exactly like the Critic (spare key only,
+          // silent skip otherwise). The Director only emits scene tags when a
+          // render triggers, so if the narration walked the party somewhere
+          // the current tags no longer describe, the stage stays wrong until
+          // the next trigger. This judge closes the gap; its change flows
+          // through the same scene_tags merge/whitelist as a Director ruling.
+          let sceneTags = ruling.scene_tags_change || null;
+          const syncKey = this.keyPool.next();
+          if (syncKey && syncKey.value !== keyEntry.value) {
+            this.broadcast({ type: 'turn-stage', stage: 'scene-sync', label: 'Reading the air…' });
+            const syncResult = await this.callWithFallback(
+              buildSceneSyncRequestBody(buildSceneSyncPrompt(
+                finalNarration,
+                codexObj.location,
+                { ...(codexObj.scene_tags || {}), ...(sceneTags || {}) },
+                northStar
+              )),
+              syncKey
+            );
+            if (syncResult.ok) {
+              const syncChange = sanitizeSyncChange(parseJsonLoose(extractText(syncResult.data)));
+              if (syncChange) sceneTags = { ...(sceneTags || {}), ...syncChange };
+            }
+          }
+
           turn = {
             narration: finalNarration,
-            scene_tags: ruling.scene_tags_change || null,
+            scene_tags: sceneTags,
             ui_update: ruling.qte ? { qte: ruling.qte } : null,
             new_codex: ruling.codex_writes || {},
             npc_changes: ruling.npc_changes || null,
@@ -918,7 +944,7 @@ export class SignalingRoom {
       if (turn.scene_tags) {
         const cur = yCodex.get('scene_tags') || {};
         const merged = { ...cur };
-        for (const k of ['biome', 'weather', 'mood']) {
+        for (const k of ['biome', 'weather', 'mood', 'visual']) {
           if (turn.scene_tags[k]) merged[k] = turn.scene_tags[k];
         }
         yCodex.set('scene_tags', merged);

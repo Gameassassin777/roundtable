@@ -65,7 +65,6 @@
 </script>
 
 <div class="subtitle-stage" data-phase={phase} role="region" aria-label="Story narration">
-    <div class="subtitle-fade" aria-hidden="true"></div>
 
     {#if error}
         <div class="subtitle error" role="alert">
@@ -96,7 +95,6 @@
                 </div>
             {:else if incoming.beat_profile === 'world_ambient'}
                 <div class="ambient-frame">
-                    <span class="ambient-mark" aria-hidden="true">◍</span>
                     <p class="prose prose-ambient selectable">{incoming.narration}</p>
                 </div>
             {:else}
@@ -105,7 +103,6 @@
         </div>
     {:else if !isLoading && !incoming}
         <div class="subtitle idle">
-            <span class="idle-mark" aria-hidden="true">✦</span>
             <span class="idle-hint">The world holds its breath</span>
         </div>
     {/if}
@@ -147,27 +144,8 @@
         justify-content: flex-end;
     }
 
-    /* Cinematic scrim — builds from transparent at top through ink-tinted
-       depth into solid parchment at the bottom. The ink mid-stop creates
-       actual legibility contrast against the warm diorama (which is itself
-       parchment-tinted, so a pure-parchment gradient is invisible). */
-    .subtitle-fade {
-        position: absolute;
-        inset: 0;
-        top: -56px;
-        height: calc(100% + 56px);
-        background:
-            linear-gradient(
-                180deg,
-                rgba(237, 228, 208, 0) 0%,
-                rgba(42, 36, 32, 0.10) 35%,
-                rgba(42, 36, 32, 0.22) 60%,
-                rgba(237, 228, 208, 0.78) 88%,
-                var(--page) 100%
-            );
-        pointer-events: none;
-        z-index: 0;
-    }
+    /* Scrim moved to GameShell .bottom-stack::before so it reaches the true
+       bottom edge of the screen (past the action pill + safe area). */
 
     .subtitle {
         position: relative;
@@ -192,21 +170,20 @@
     /* ---------- prose variants ---------- */
     .prose {
         font-family: var(--font-prose);
-        color: var(--ink);
+        color: #f4efe3;
         margin: 0;
         text-wrap: pretty;
-        /* Dark drop shadow creates contrast against the warm diorama;
-           light halo creates contrast against the ink-tinted mid-stop. */
+        /* Light text + dark shadow — the film subtitle treatment. Legible over
+           a bright desert AND a black void without knowing the scene. */
         text-shadow:
-            0 1px 2px rgba(42, 36, 32, 0.45),
-            0 0 14px rgba(252, 248, 237, 0.92),
-            0 0 28px rgba(252, 248, 237, 0.7);
+            0 1px 3px rgba(0, 0, 0, 0.9),
+            0 0 16px rgba(0, 0, 0, 0.55);
     }
     .prose-scene {
         font-size: 1.14rem;
         line-height: 1.62;
         font-style: italic;
-        color: var(--ink);
+        color: #f7f2e6;
     }
     .prose-action {
         font-size: 1.06rem;
@@ -221,12 +198,12 @@
         font-size: 1.0rem;
         line-height: 1.5;
         font-style: italic;
-        color: var(--ink-soft);
+        color: #cfc7b6;
     }
     .prose-error {
         font-family: var(--font-ui);
         font-size: var(--t-sm);
-        color: var(--hp);
+        color: #ff9b91;
         margin: 0;
     }
 
@@ -241,23 +218,23 @@
         font-size: var(--t-xs);
         font-weight: 600;
         letter-spacing: 0.22em;
-        color: var(--gold);
+        color: #e0b263;
         text-transform: uppercase;
         text-shadow:
-            0 1px 2px rgba(42, 36, 32, 0.5),
-            0 0 12px rgba(252, 248, 237, 0.85);
+            0 1px 3px rgba(0, 0, 0, 0.9),
+            0 0 14px rgba(0, 0, 0, 0.5);
     }
     .scene-frame .hr-gold {
         margin: 0.4rem 0 0;
         width: 56px;
         border: none;
-        border-top: 1px solid var(--gold);
+        border-top: 1px solid #e0b263;
         opacity: 0.7;
     }
 
     /* ---------- social ---------- */
     .social-frame {
-        border-left: 2px solid var(--gold);
+        border-left: 2px solid #e0b263;
         padding-left: 1rem;
         margin-left: 0.15rem;
     }
@@ -268,11 +245,11 @@
         align-items: flex-start;
         gap: 0.55rem;
         padding: 0.3rem 0 0.3rem 0.65rem;
-        border-left: 1px solid var(--gold);
+        border-left: 1px solid #e0b263;
     }
     .ambient-mark {
         font-size: 0.85rem;
-        color: var(--gold);
+        color: #e0b263;
         line-height: 1.6;
         flex-shrink: 0;
     }
@@ -295,7 +272,7 @@
         font-size: var(--t-xs);
         font-weight: 600;
         letter-spacing: 0.2em;
-        color: var(--muted);
+        color: #b3ab99;
         text-transform: uppercase;
     }
     .breath-dots {
@@ -339,17 +316,17 @@
         opacity: 0.82;
     }
     .idle-mark {
-        color: var(--gold);
+        color: #e0b263;
         font-size: 0.9rem;
         text-shadow:
-            0 1px 2px rgba(42, 36, 32, 0.5),
-            0 0 12px rgba(252, 248, 237, 0.85);
+            0 1px 3px rgba(0, 0, 0, 0.9),
+            0 0 14px rgba(0, 0, 0, 0.5);
         animation: idle-twinkle 3s ease-in-out infinite;
     }
     .idle-hint {
         font-family: var(--font-prose);
         font-style: italic;
-        color: var(--ink-soft);
+        color: #d6cfc0;
         font-size: var(--t-sm);
         text-shadow:
             0 1px 2px rgba(42, 36, 32, 0.45),
