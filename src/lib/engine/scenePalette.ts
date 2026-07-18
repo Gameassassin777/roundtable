@@ -146,6 +146,7 @@ export type ScenePalette = {
     gradeCon: number;     // bake grade: S-curve contrast (~0.10..0.26)
     gradeLift: number;    // bake grade: shadow tint colour (hex), black = no lift
     bloom: number;        // bake bloom strength (~0.25..1.0)
+    prismatic?: boolean;  // hint says rainbow/prismatic — glasslight surfaces may band
 };
 
 // ---------- colour helpers (operate on 0xRRGGBB ints) ----------
@@ -401,7 +402,7 @@ const TIMES: Record<string, TimeXform> = {
         horizonGlow: 0.70, starAmount: 0, exposure: 1.06, cloudColor: 0xfff0dc
     },
     day: {
-        tint: 0xffffff, skyTint: 0xffffff, t: 0.00, bright: 1.00, skyBright: 1.00,
+        tint: 0xffffff, skyTint: 0x9ec8e8, t: 0.00, bright: 1.00, skyBright: 1.00,
         keyK: 1.00, hemiK: 1.00, ambK: 0.80, sat: 1.00, emissiveBoost: false,
         sunDir: norm([0.40, 0.92, 0.22]), sunColor: 0xfff6e2, sunSize: 0.020, sunGlow: 0.30,
         horizonGlow: 0.30, starAmount: 0, exposure: 1.00, cloudColor: 0xffffff
@@ -449,7 +450,7 @@ const WEATHER: Record<string, { fogK: number; fogTint: number; t: number; keyK: 
     snow:     { fogK: 1.5, fogTint: 0xd8e0e8, t: 0.35, keyK: 0.75, cloud: 0.85 },
     fog:      { fogK: 3.0, fogTint: 0xb8b8a8, t: 0.45, keyK: 0.55, cloud: 0.55 },
     overcast: { fogK: 1.3, fogTint: 0x8a8a78, t: 0.25, keyK: 0.65, cloud: 1.0 },
-    clear:    { fogK: 1.0, fogTint: 0x000000, t: 0.00, keyK: 1.00, cloud: 0.30 },
+    clear:    { fogK: 0.60, fogTint: 0x000000, t: 0.00, keyK: 1.00, cloud: 0.30 },
     none:     { fogK: 1.0, fogTint: 0x000000, t: 0.00, keyK: 1.00, cloud: 0.30 }
 };
 
@@ -583,6 +584,17 @@ export function resolveScene(tags: SceneTags | undefined | null): ScenePalette {
         // enough that glow pools and crystals can actually carry the room.
         base = { ...base, sky: 0x0a0908, fog: shade(base.fog, 0.55), fogDensity: base.fogDensity * 0.55 };
     }
+    // A BUILT interior is not a cave: someone lights it. Palaces, libraries
+    // and cathedrals carry warm designed light — key lift, wall bounce, warm
+    // air — so their architecture reads instead of drowning in cave-dark (the
+    // opera-dimension murk). Natural caves keep the dark.
+    if (traits.enclosed && t.visual?.order === 'artificial') {
+        base = { ...base,
+                 key: mix(base.key, 0xffd9a8, 0.45),
+                 ambient: mix(base.ambient, 0x8a6a4a, 0.40),
+                 hemiSky: mix(base.hemiSky, 0xc8a878, 0.45),
+                 fog: mix(base.fog, 0x6a5648, 0.30) };
+    }
     if (traits.glowing || traits.crystals) {
         const em = traits.glowColor ?? base.emissive;
         base = { ...base, emissiveOn: true, emissive: em };
@@ -604,14 +616,17 @@ export function resolveScene(tags: SceneTags | undefined | null): ScenePalette {
     }
     // The DM's signature hue recolours the place's solids and the air between
     // them — a flesh-red planet is red to the horizon. The sky takes only a
-    // whisper, so the place still belongs to its world.
+    // whisper, so the place still belongs to its world. Foliage keeps more of
+    // its complementary hue than the solids: fully crushed, every hinted
+    // scene collapses back into the one-colour wash the hint was meant to
+    // enrich (the all-violet opera dimension).
     const hint = parseHint(t.visual?.palette_hint);
     if (hint !== null) {
         base = { ...base,
                  sky: mix(base.sky, hint, 0.15),
                  ground: mix(base.ground, hint, 0.42),
-                 structure: mix(base.structure, hint, 0.68),
-                 foliage: mix(base.foliage, hint, 0.55),
+                 structure: mix(base.structure, hint, 0.60),
+                 foliage: mix(base.foliage, hint, 0.32),
                  fog: mix(base.fog, hint, 0.18),
                  key: mix(base.key, hint, 0.25) };
     }
@@ -625,7 +640,16 @@ export function resolveScene(tags: SceneTags | undefined | null): ScenePalette {
 
     const tone = (c: number) => saturate(shade(mix(c, time.tint, time.t), time.bright), time.sat * (mood?.sat ?? 1));
 
-    let sky = saturate(shade(mix(base.sky, time.skyTint, time.t), time.skyBright), time.sat);
+    // Sky belongs to the AIR, not the biome: a forest's noon sky is the same
+    // sky as a desert's, only hazier. `time.t` is 0 at clear day, which used
+    // to hand the whole sky to the biome preset — one hue across sky, fog,
+    // ground and trees, the all-green forest wash. The atmosphere always
+    // carries at least 55% of the sky; the biome keeps a haze voice. Only
+    // under an open sky, though — a moon's black dome, a cave ceiling and the
+    // water column are not air.
+    const openSky = !traits.space && !traits.enclosed && !traits.submerged;
+    const skyVoice = openSky ? Math.max(time.t, 0.55) : time.t;
+    let sky = saturate(shade(mix(base.sky, time.skyTint, skyVoice), time.skyBright), time.sat);
     // Fog is scattered skylight — it belongs between ground and sky brightness,
     // not down at ground level, or distant mass fades to black instead of into
     // the horizon (which is what atmospheric perspective actually looks like).
@@ -704,7 +728,10 @@ export function resolveScene(tags: SceneTags | undefined | null): ScenePalette {
         gradeSat,
         gradeCon,
         gradeLift,
-        bloom
+        bloom,
+        // "a solidified rainbow", "prismatic bridge": the hint isn't one hue,
+        // it's ALL of them. Glasslight surfaces (arches, shards) may band.
+        prismatic: /rainbow|prismatic|iridescent/i.test(t.visual?.palette_hint ?? '')
     };
 }
 
