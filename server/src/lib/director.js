@@ -67,12 +67,15 @@ Also decide at the round level:
 - scene_tags_change: only if biome/weather/mood actually shift — null otherwise
 - scene_tags_change.visual: when the party enters a STRIKING or UNUSUAL location, direct the 3D stage
   in renderer terms: { "openness": "enclosed"|"open"|"space"|"submerged", "silhouette": "spires"|"blobs"|
-  "blocks"|"arches"|"shards"|"fungus"|"columns"|"tendrils"|"orbs"|"none", "density": 0.0-1.0,
+  "blocks"|"arches"|"shards"|"fungus"|"columns"|"tendrils"|"orbs"|"hoodoos"|"plates"|"needles"|"none",
+  "density": 0.0-1.0,
   "terrain": "flat"|"rolling"|"jagged"|"cratered", "glow": "#rrggbb"|null, "order": "natural"|"artificial",
   "palette_hint": "#rrggbb"|"<hue word>"|null }.
   Vocabulary: submerged = underwater (drowned ruins, coral reefs, the seafloor). fungus = giant mushrooms.
   columns = colonnades/pillars (temples, libraries). tendrils = organic growths (living interiors, alien
-  thickets). orbs = floating spheres (dreamscapes, astral places). "none" = a place EMPTY of large masses
+  thickets). orbs = floating spheres (dreamscapes, astral places). hoodoos = stacked eroded rock towers
+  (badlands, canyons). plates = flat tilted sedimentary slabs (strata fields, shale). needles = dense
+  clumps of thin spikes (crystal forests, thorn fields, urchin beds). "none" = a place EMPTY of large masses
   (barren flats). Built spaces → "order":"artificial"; artificial places never sprout growth, so still set
   density for mass count. Glowing places MUST set glow (the light colour).
   Rules of direction:

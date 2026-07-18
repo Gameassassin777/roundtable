@@ -345,6 +345,23 @@ function makeRoadMask(noise2D: (x: number, y: number) => number): RoadMask {
 
 // ---------- ground ----------
 
+/**
+ * Ground micro-detail: CC0 photo textures (ambientCG Ground054/048, downscaled
+ * to 512) used as BUMP only — never albedo. The palette owns the hue; the
+ * texture just breaks the vinyl-flat light response that made every floor a
+ * carpet. Lush places get leaf litter, everything else gets packed dirt.
+ */
+let _groundTex: Record<string, THREE.Texture> = {};
+function groundBump(kind: 'litter' | 'dirt'): THREE.Texture {
+    if (!_groundTex[kind]) {
+        const t = new THREE.TextureLoader().load(`/textures/ground-${kind}.jpg`);
+        t.wrapS = t.wrapT = THREE.RepeatWrapping;
+        t.repeat.set(18, 18);
+        _groundTex[kind] = t;
+    }
+    return _groundTex[kind];
+}
+
 function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: number) => number, roadMask?: RoadMask, traits?: SceneTraits, visual?: SceneVisual | null) {
     if (biome === 'void') return null;              // the void has no floor — that's the point
 
@@ -403,8 +420,10 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
         // Level clearing under the camera, easing out to full relief. Without it
         // a high-amplitude biome (mountain) puts the camera INSIDE a hill and
         // fills the lower half of the frame with an unreadable black mass.
+        // Kept small (4.5): a 7-unit dead-flat disc around the viewer reads as
+        // a billiard table from the lowered camera — the float complaint.
         const d = Math.hypot(x, y);
-        h *= Math.min(1, Math.max(0, (d - 7) / 11));
+        h *= Math.min(1, Math.max(0, (d - 4.5) / 9));
         pos.setZ(i, h);
     }
     pos.needsUpdate = true;
@@ -446,6 +465,7 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
+    const LUSH = biome === 'forest' || biome === 'swamp' || biome === 'plains' || biome === 'crossroads';
     const mat = new THREE.MeshStandardMaterial({
         // white base: vertexColors MULTIPLY the material colour, so the ground
         // tint is baked into the attribute instead of double-applied here.
@@ -453,7 +473,9 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
         vertexColors: true,
         roughness: pal.groundRough,
         metalness: biome === 'sea' ? 0.35 : 0.0,
-        flatShading: biome === 'mountain' || biome === 'fire' || visual?.terrain === 'jagged'
+        flatShading: biome === 'mountain' || biome === 'fire' || visual?.terrain === 'jagged',
+        bumpMap: groundBump(LUSH ? 'litter' : 'dirt'),
+        bumpScale: 0.015
     });
     const floor = new THREE.Mesh(geo, mat);
     floor.rotation.x = -Math.PI / 2;
@@ -916,6 +938,69 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
             m.position.set(p.x, 2 + p.j * 7, p.z);
             m.scale.setScalar(0.35 + p.j * 1.1);
         }));
+    },
+    // Hoodoos: stacked, tapering rock towers — badlands, eroded canyons,
+    // termite-cathedral deserts. Distinct from spires (clean slabs) and
+    // columns (built shafts): these read as EROSION, not construction.
+    hoodoos: ({ scene, at, pal, rnd }) => {
+        const stack: THREE.BufferGeometry[] = [];
+        let y = 0;
+        for (let i = 0; i < 3; i++) {
+            const r = 1.1 - i * 0.26;
+            const h = 1.9 - i * 0.3;
+            const seg = new THREE.CylinderGeometry(r * 0.75, r, h, 7);
+            jitterGeometry(seg, 0.10, rnd);
+            seg.translate((rnd() - 0.5) * 0.2, y + h / 2, (rnd() - 0.5) * 0.2);
+            stack.push(seg);
+            y += h * 0.92;
+        }
+        const geo = bakeGradient(mergeGeometries(stack)!,
+            mix(pal.structure, 0x000000, 0.30), mix(pal.structure, pal.key, 0.28), rnd);
+        scene.add(scatterAt(geo, paintMat(), at, (m, p) => {
+            m.position.set(p.x, 0, p.z);
+            m.scale.set(p.s, p.s * (1.0 + p.j * 1.1), p.s);
+            m.rotation.y = p.r;
+        }));
+    },
+    // Plates: flat sedimentary slabs, tilted and stacked — strata fields,
+    // shale badlands, a giant's crockery pile.
+    plates: ({ scene, at, pal, rnd }) => {
+        const stack: THREE.BufferGeometry[] = [];
+        for (let i = 0; i < 4; i++) {
+            const slab = new THREE.CylinderGeometry(1.15 - i * 0.14, 1.25 - i * 0.14, 0.22, 8);
+            jitterGeometry(slab, 0.06, rnd);
+            slab.translate((rnd() - 0.5) * 0.3, 0.16 + i * 0.24, (rnd() - 0.5) * 0.3);
+            stack.push(slab);
+        }
+        const geo = bakeGradient(mergeGeometries(stack)!,
+            mix(pal.structure, 0x000000, 0.32), mix(pal.structure, pal.key, 0.26), rnd);
+        scene.add(scatterAt(geo, paintMat(), at, (m, p) => {
+            m.position.set(p.x, 0, p.z);
+            m.scale.set(p.s * (0.9 + p.j * 0.6), p.s * (0.7 + p.j * 0.8), p.s * (0.9 + p.j * 0.6));
+            m.rotation.set((p.j - 0.5) * 0.14, p.r, (p.j - 0.5) * 0.14);
+        }));
+    },
+    // Needles: dense clumps of hair-thin spikes — crystal needle forests,
+    // thorn deserts, urchin beds. Reads as one fuzzy mass at distance.
+    needles: ({ scene, at, pal, rnd, traits }) => {
+        const geo = new THREE.ConeGeometry(0.09, 4.2, 5);
+        jitterGeometry(geo, 0.05, rnd);
+        const mat = new THREE.MeshStandardMaterial({
+            color: pal.structure, roughness: 0.7, flatShading: true,
+            emissive: pal.emissive, emissiveIntensity: traits.glowing ? 0.5 : (pal.emissiveOn ? 0.2 : 0)
+        });
+        // Each mass spot seeds a CLUMP of needles, not one.
+        const clump: Spot[] = [];
+        for (const p of at) {
+            for (let i = 0; i < 6; i++) {
+                clump.push({ x: p.x + (rnd() - 0.5) * 1.6, z: p.z + (rnd() - 0.5) * 1.6, s: p.s * (0.5 + rnd() * 0.8), r: rnd() * Math.PI, j: rnd() });
+            }
+        }
+        scene.add(scatterAt(geo, mat, clump, (m, p) => {
+            m.position.set(p.x, 2.1 * p.s, p.z);
+            m.scale.set(p.s, p.s * (0.7 + p.j), p.s);
+            m.rotation.set((p.j - 0.5) * 0.3, p.r, (p.j - 0.5) * 0.3);
+        }));
     }
 };
 const FAM_KEYS = Object.keys(MASS_FAMILIES);
@@ -939,9 +1024,12 @@ function composeMasses(
         : (traits.spires ? 'spires' : FAM_KEYS[h % FAM_KEYS.length]);
     const dens = typeof vis.density === 'number' ? vis.density : 0.5;
     const nMass = Math.round(10 + dens * 26);
+    // The mass band moves per world-hash: some places crowd the viewer, some
+    // hold their silhouettes at the horizon. Same recipe, different distance —
+    // one of the reasons scenes used to feel identical even across families.
     const massSpots = vis.order === 'artificial'
         ? ringSpots(Math.max(6, Math.round(nMass * 0.6)), 14 + (h % 8), rnd)
-        : spots(nMass, 7, 40, rnd);
+        : spots(nMass, 6 + (h % 3) * 5, 30 + (h % 4) * 6, rnd);
     if (fam && MASS_FAMILIES[fam]) {
         // massMat overrides the family's structure material when the PLACE
         // demands it (a city's towers carry lit windows whatever silhouette
@@ -959,9 +1047,12 @@ function composeMasses(
         }));
     }
     // Growth where things grow — never in barren places, sparse places, or
-    // built ones (a library does not sprout). Soft fluff clusters, not bare
-    // cones: a cone at bush size reads as a green traffic cone.
-    if (!traits.barren && dens > 0.2 && vis.order !== 'artificial') {
+    // built ones (a library does not sprout), and never on erosion landscapes
+    // (hoodoo/plate fields are bare rock; green scrub turned a badlands into
+    // a grassland). Soft fluff clusters, not bare cones: a cone at bush size
+    // reads as a green traffic cone.
+    const rockFam = fam === 'hoodoos' || fam === 'plates';
+    if (!traits.barren && !rockFam && dens > 0.2 && vis.order !== 'artificial') {
         const growth = spots(Math.round(40 + dens * 90), 3, 34, rnd);
         const bushGeo = fluffCluster(7, 0.8, new THREE.Vector3(0, 0.7, 0), 1.0, rnd);
         const bushes = scatterAt(bushGeo, leafMatFor(pal.foliage), growth, (m, p) => {
@@ -984,34 +1075,45 @@ function composeMasses(
 
 /**
  * The near-camera dark shapes at the bottom frame corners — the oldest trick
- * in background art. Without them the bottom corners are empty ground and the
- * eye has no "way in" to the scene. Framers are squat mounds (boulder, bush —
- * reads in any biome), dark because they stand between the viewer and the
- * light — but dark WITHIN the palette, never black. (The v43 version mixed
- * 55% black at ~5 units wide and rendered as giant crystal shards in the
- * corners — the "weird fuzzy stuff" complaint.) Placement is tuned for the
- * phone: portrait half-width at their depth is ~1.4 units, so x ~±2.5 leaves
- * most of the mound off-frame, inner edge in.
+ * in background art, and the near anchor that keeps the standing camera from
+ * feeling like a hover. Lush places frame with soft foliage bushes, barren
+ * places with smooth rock mounds — always dark WITHIN the palette, never
+ * black. (History: v43 mixed 55% black at ~5 units wide — the "weird fuzzy
+ * stuff" crystal-shard complaint. v44 shrank them so far the anchor vanished
+ * — the "floating" complaint.) x ~±2.6 leaves most of the shape off-frame,
+ * inner edge in.
  */
 function buildFraming(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, traits: SceneTraits, visual: SceneVisual | null | undefined, biome: string) {
     if (biome === 'void' || biome === 'sea') return;        // nowhere to stand
     if (visual?.silhouette === 'none') return;              // an empty place stays empty
-    // Dark, yes, but OF the place — structure/ground hues with only a touch of
-    // black. The old 55%-black mix read as a hole in the world against a
-    // fog-pale midground. Smooth-shaded squashed spheres: at this size flat
-    // facets read as crystal shards, not mounds.
+    // From the standing camera these are THE near anchor — the thing beside
+    // you that tells the eye where it stands. Without them the viewer hovers.
+    const framers: Spot[] = [
+        { x: -2.6 - rnd() * 0.7, z: 5.2 - rnd() * 0.7, s: 1.1 + rnd() * 0.4, r: rnd() * Math.PI, j: rnd() },
+        { x: 2.7 + rnd() * 0.8, z: 4.6 - rnd() * 0.7, s: 1.0 + rnd() * 0.4, r: rnd() * Math.PI, j: rnd() }
+    ];
+    if (!traits.barren) {
+        // Lush places frame with the bush beside you: soft, dark within the
+        // palette, organic silhouette — never a black crystal shard.
+        const bushGeo = fluffCluster(9, 1.1, new THREE.Vector3(0, 0.7, 0), 0.75, rnd);
+        const bushes = scatterAt(bushGeo, leafMatFor(mix(pal.foliage, 0x000000, 0.45)), framers, (m, p) => {
+            m.position.set(p.x, 0, p.z);
+            m.scale.set(p.s * 1.3, p.s, p.s * 1.3);
+            m.rotation.y = p.r;
+        });
+        bushes.customDepthMaterial = leafDepth();
+        scene.add(bushes);
+        return;
+    }
+    // Barren places frame with rock mounds: smooth, dark WITHIN the palette.
     const mat = new THREE.MeshStandardMaterial({
         color: mix(mix(pal.structure, pal.ground, 0.4), 0x000000, 0.22), roughness: 0.95,
         emissive: pal.emissive, emissiveIntensity: pal.emissiveOn ? 0.13 : 0
     });
     const geo = new THREE.SphereGeometry(1, 8, 6);
     jitterGeometry(geo, 0.16, rnd);
-    const framers: Spot[] = [
-        { x: -2.5 - rnd() * 0.7, z: 4.6 - rnd() * 0.8, s: 0.75 + rnd() * 0.25, r: rnd() * Math.PI, j: rnd() },
-        { x: 2.6 + rnd() * 0.8, z: 4.0 - rnd() * 0.8, s: 0.68 + rnd() * 0.25, r: rnd() * Math.PI, j: rnd() }
-    ];
     scene.add(scatterAt(geo, mat, framers, (m, p) => {
-        m.position.set(p.x, 0.22 * p.s, p.z);
+        m.position.set(p.x, 0.25 * p.s, p.z);
         m.scale.set(p.s * 1.6, p.s * 0.8, p.s * 1.15);
         m.rotation.set(0, p.r, (p.j - 0.5) * 0.1);
     }));
@@ -1101,6 +1203,21 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             });
             saplings.customDepthMaterial = leafDepth();
             scene.add(saplings);
+            // Forest floor story: fallen logs and stumps. A wood without dead
+            // wood is a plantation. Logs reuse the bent-taper trunk geometry,
+            // laid down; stumps are short and dark.
+            const logSpots = spots(9, 5, 30, rnd);
+            const logMat = new THREE.MeshStandardMaterial({ color: mix(pal.structure, 0x000000, 0.35), roughness: 0.95 });
+            scene.add(scatterAt(makeTrunkGeo(2.6, 0.22, rnd), logMat, logSpots, (m, p) => {
+                m.position.set(p.x, 0.22, p.z);
+                m.rotation.set(Math.PI / 2 + (p.j - 0.5) * 0.2, p.r, 0);
+                m.scale.setScalar(0.7 + p.j * 0.7);
+            }));
+            scene.add(scatterAt(new THREE.CylinderGeometry(0.24, 0.32, 0.5, 7), logMat, spots(12, 4, 28, rnd), (m, p) => {
+                m.position.set(p.x, 0.25, p.z);
+                m.rotation.y = p.r;
+                m.scale.setScalar(0.7 + p.j * 0.8);
+            }));
             break;
         }
         case 'desert': {
@@ -1111,6 +1228,19 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             }));
             scene.add(scatterAt(new THREE.CylinderGeometry(0.08, 0.2, 3.2, 5), structMat(), spots(9, 11, 36, rnd), (m, p) => {
                 m.position.set(p.x, 1.6, p.z); m.rotation.z = (p.j - 0.5) * 0.4;
+            }));
+            // Saguaro cacti: trunk + two elbowed arms, merged once and instanced.
+            const cactusParts: THREE.BufferGeometry[] = [new THREE.CylinderGeometry(0.16, 0.2, 2.4, 7).translate(0, 1.2, 0)];
+            for (const side of [-1, 1]) {
+                cactusParts.push(new THREE.CylinderGeometry(0.09, 0.09, 0.55, 6).rotateZ(Math.PI / 2 * side).translate(side * 0.42, 1.15, 0));
+                cactusParts.push(new THREE.CylinderGeometry(0.09, 0.11, 0.7, 6).translate(side * 0.66, 1.7, 0));
+            }
+            const cactusGeo = mergeGeometries(cactusParts)!;
+            const cactusMat = new THREE.MeshStandardMaterial({ color: mix(pal.foliage, 0x2a7a3a, 0.5), roughness: 0.85 });
+            scene.add(scatterAt(cactusGeo, cactusMat, spots(12, 8, 36, rnd), (m, p) => {
+                m.position.set(p.x, 0, p.z);
+                m.scale.setScalar(p.s * (0.6 + p.j * 0.8));
+                m.rotation.y = p.r;
             }));
             break;
         }
@@ -1124,6 +1254,14 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             }));
             scene.add(scatterAt(new THREE.IcosahedronGeometry(0.8, 0), structMat(), spots(26, 5, 34, rnd), (m, p) => {
                 m.position.set(p.x, 0.3, p.z); m.scale.set(p.s, 0.6, p.s);
+            }));
+            // Wind-carved snowdrifts: smooth, bright, half-buried lenses.
+            const driftGeo = new THREE.SphereGeometry(1, 10, 8);
+            const driftMat = new THREE.MeshStandardMaterial({ color: mix(pal.ground, 0xffffff, 0.45), roughness: 0.9 });
+            scene.add(scatterAt(driftGeo, driftMat, spots(18, 5, 34, rnd), (m, p) => {
+                m.position.set(p.x, -0.12, p.z);
+                m.scale.set(p.s * (1.2 + p.j), p.s * 0.32, p.s * (1.0 + p.j * 0.7));
+                m.rotation.y = p.r;
             }));
             break;
         }
@@ -1176,15 +1314,33 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             scene.add(scatterAt(new THREE.SphereGeometry(0.16, 6, 6), glowMat(), spots(44, 8, 42, rnd), (m, p) => {
                 m.position.set(p.x, 1.4 + p.j * 6, p.z);
             }));
+            // Streetlamps: ONE spot list -> pole and head land on the same lamp.
+            const lampSpots = spots(14, 8, 38, rnd);
+            const poleMat = new THREE.MeshStandardMaterial({ color: mix(pal.structure, 0x000000, 0.5), roughness: 0.9 });
+            const lampGlow = new THREE.MeshStandardMaterial({ color: 0xffe9c0, emissive: 0xffd9a0, emissiveIntensity: 1.8, roughness: 0.4 });
+            scene.add(scatterAt(new THREE.CylinderGeometry(0.045, 0.06, 3.1, 6), poleMat, lampSpots, (m, p) => {
+                m.position.set(p.x, 1.55, p.z);
+            }));
+            scene.add(scatterAt(new THREE.SphereGeometry(0.17, 8, 6), lampGlow, lampSpots, (m, p) => {
+                m.position.set(p.x, 3.2, p.z);
+            }));
             break;
         }
         case 'swamp': {
             const trees = spots(42, 6, 40, rnd);
             addTrees(scene, trees, structMat(), foliMat(),
                 { trunkH: 4.6, trunkR: 0.44, tiers: 2, canopyR: 1.3, canopyH: 1.9, lean: 0.5 }, pal, rnd);
-            scene.add(scatterAt(new THREE.ConeGeometry(0.1, 1.5, 4), foliMat(), spots(140, 3, 30, rnd), (m, p) => {
-                m.position.set(p.x, 0.75, p.z); m.rotation.z = (p.j - 0.5) * 0.3;
-            }));
+            // Reeds: crossed alpha-cutout blades, not cones — 140 pyramids was
+            // the most primitive-looking layer in the biome.
+            const reedBlade = new THREE.PlaneGeometry(0.5, 1.6).translate(0, 0.8, 0);
+            const reedGeo = mergeGeometries([reedBlade, reedBlade.clone().rotateY(Math.PI / 2)])!;
+            const reeds = scatterAt(reedGeo, leafMatFor(pal.foliage), spots(140, 3, 30, rnd), (m, p) => {
+                m.position.set(p.x, 0, p.z);
+                m.scale.set(0.8 + p.j * 0.6, p.s, 0.8 + p.j * 0.6);
+                m.rotation.set((p.j - 0.5) * 0.2, p.r, (p.j - 0.5) * 0.2);
+            });
+            reeds.customDepthMaterial = leafDepth();
+            scene.add(reeds);
             scene.add(scatterAt(new THREE.SphereGeometry(0.09, 5, 5), glowMat(), spots(32, 4, 26, rnd), (m, p) => {
                 m.position.set(p.x, 0.5 + p.j * 1.8, p.z);
             }));

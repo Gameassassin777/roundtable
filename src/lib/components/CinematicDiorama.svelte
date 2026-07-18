@@ -17,8 +17,8 @@ import { PainterlyBaker, createBackdrop } from '$lib/engine/painterly';
     let camera: THREE.PerspectiveCamera;
     let animationId: number;
     let ready = $state(false);
-    let aimY = 2.2;   // camera target height — lowered on portrait by resize()
-    let baseY = 3.4;  // camera height — the drift loop oscillates around this
+    let aimY = 2.5;   // camera target height — lowered on portrait by resize()
+    let baseY = 2.3;  // camera height — the drift loop oscillates around this
     let failed = $state(false);
 
     // Lights are rebuilt per scene — kept out of userData.procedural so the
@@ -102,9 +102,13 @@ import { PainterlyBaker, createBackdrop } from '$lib/engine/painterly';
         // fov gives a narrow horizontal slice under a vast empty sky. Widen
         // vertically and aim lower so the world fills the tall frame.
         camera.fov = aspect < 1 ? 64 : 52;
-        baseY = aspect < 1 ? 3.0 : 3.4;
-        camera.position.set(0, baseY, aspect < 1 ? 9.5 : 11);
-        aimY = aspect < 1 ? 1.9 : 2.2;
+        // Standing IN the world, not hovering over it: eye at ~1/3 tree
+        // height, closer in, aimed level. The old 3.0/9.5 rig floated above
+        // the ground carpet like a drone (the "feels like you're floating"
+        // complaint) — it also wasted the near field we bother to dress.
+        baseY = aspect < 1 ? 1.9 : 2.3;
+        camera.position.set(0, baseY, aspect < 1 ? 8.0 : 9.5);
+        aimY = aspect < 1 ? 2.3 : 2.5;
         camera.lookAt(0, aimY, 0);
         camera.updateProjectionMatrix();
         ready = true;
@@ -146,8 +150,8 @@ import { PainterlyBaker, createBackdrop } from '$lib/engine/painterly';
             scene = new THREE.Scene();
             const { w, h } = viewport();
             camera = new THREE.PerspectiveCamera(52, (w || 1) / (h || 1), 0.1, 220);
-            camera.position.set(0, 3.4, 11);
-            camera.lookAt(0, 2.2, 0);
+            camera.position.set(0, 2.3, 9.5);
+            camera.lookAt(0, 2.5, 0);
 
             renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
             renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
