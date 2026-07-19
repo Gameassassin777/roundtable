@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
-import { mix, extractTraits, applyVisual, type ScenePalette, type SceneTags, type SceneTraits, type SceneVisual } from './scenePalette';
+import { mix, luminance, extractTraits, applyVisual, type ScenePalette, type SceneTags, type SceneTraits, type SceneVisual } from './scenePalette';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // The stage. See CLAUDE.md — the diorama carries ALL scene atmosphere.
@@ -258,6 +258,137 @@ function buildSky(pal: ScenePalette) {
     return mark(dome) as THREE.Mesh;
 }
 
+// ---------- the sky hem: one giant + one jagged skyline (law D7) ----------
+
+/**
+ * Sky = one gradient + ONE giant + one jagged hem. The giant is a soft flat
+ * disc (moon/planet per palette), deliberately low-detail, pale lavender-pink
+ * family, with ONE darker irregular blot painted on it — and it hangs LOW so
+ * the skyline card always bites a piece out of it: a moon behind things is a
+ * moon with a world in front of it. The hem is the far flat layer of the
+ * near-sharp / mid-painted / far-soft / flat-sky stack — near-black, irregular
+ * (towers, gables, crenellations), never a straight line.
+ */
+function buildSkyHem(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, traits: SceneTraits, biome: string): number | null {
+    if (traits.enclosed || traits.space || traits.submerged) return null;
+    if (biome === 'void' || biome === 'underground' || biome === 'sea') return null;
+
+    // --- the skyline hem: a far flat card of near-black rooftops ---
+    const hemCol = new THREE.Color(mix(mix(pal.fog, pal.sky, 0.2), 0x000000, 0.78));
+    const H_W = 1024, H_H = 192;
+    const hcv = document.createElement('canvas'); hcv.width = H_W; hcv.height = H_H;
+    const hctx = hcv.getContext('2d')!;
+    hctx.clearRect(0, 0, H_W, H_H);
+    hctx.fillStyle = `rgb(${Math.round(hemCol.r * 255)},${Math.round(hemCol.g * 255)},${Math.round(hemCol.b * 255)})`;
+    hctx.beginPath();
+    hctx.moveTo(0, H_H);
+    let hx = 0;
+    let hy = H_H * (0.45 + rnd() * 0.2);
+    hctx.lineTo(hx, hy);
+    while (hx < H_W) {
+        const w = 14 + rnd() * 46;
+        const kind = rnd();
+        if (kind < 0.30) {
+            // a tower: tall block, maybe gabled
+            const th = H_H * (0.18 + rnd() * 0.42);
+            hctx.lineTo(hx, th);
+            hctx.lineTo(hx + w, th);
+            if (rnd() < 0.5) { hctx.lineTo(hx + w / 2, th - H_H * (0.08 + rnd() * 0.10)); hctx.lineTo(hx + w, th); }
+        } else if (kind < 0.55) {
+            // crenellations: a run of little merlon teeth
+            const bh = H_H * (0.38 + rnd() * 0.22);
+            hctx.lineTo(hx, bh);
+            const teeth = 2 + Math.floor(rnd() * 4);
+            const tw = w / (teeth * 2);
+            for (let t2 = 0; t2 < teeth; t2++) {
+                hctx.lineTo(hx + t2 * tw * 2, bh - H_H * 0.07);
+                hctx.lineTo(hx + t2 * tw * 2 + tw, bh - H_H * 0.07);
+                hctx.lineTo(hx + t2 * tw * 2 + tw, bh);
+                hctx.lineTo(hx + (t2 + 1) * tw * 2, bh);
+            }
+            hctx.lineTo(hx + w, bh);
+        } else if (kind < 0.75) {
+            // a gable: one confident triangle
+            const ph = H_H * (0.30 + rnd() * 0.30);
+            hctx.lineTo(hx + w / 2, ph - H_H * (0.10 + rnd() * 0.12));
+            hctx.lineTo(hx + w, ph);
+        } else {
+            // a long low roofline, sagging a little
+            const nh = Math.max(H_H * 0.15, Math.min(H_H * 0.8, hy + (rnd() - 0.5) * H_H * 0.16));
+            hctx.lineTo(hx + w, nh);
+            hy = nh;
+        }
+        hx += w;
+    }
+    hctx.lineTo(H_W, H_H);
+    hctx.closePath();
+    hctx.fill();
+    const hemTex = new THREE.CanvasTexture(hcv);
+    hemTex.needsUpdate = true;
+    const hem = new THREE.Mesh(
+        new THREE.PlaneGeometry(240, 20),
+        new THREE.MeshBasicMaterial({ map: hemTex, transparent: true, fog: false, depthWrite: false })
+    );
+    hem.position.set(0, 8, -95);
+    scene.add(mark(hem));
+
+    // --- the giant: one soft disc, LOW, always cut by the hem ---
+    // If the sky dome already carries a BIG designed sun, that IS the giant —
+    // one giant per sky, never two. A small day sun doesn't count: the sky
+    // still gets its pale planet.
+    const domeHasGiant = pal.sunGlow > 0.35 && pal.sunSize > 0.055;
+    if (!domeHasGiant) {
+        const GS = 256;
+        const gcv = document.createElement('canvas'); gcv.width = gcv.height = GS;
+        const gctx = gcv.getContext('2d')!;
+        // Pale lavender-pink family, clearly DIMMER than any lit pool — a
+        // blank white hole reads as a rendering bug, not a moon.
+        const giantCol = new THREE.Color(mix(mix(mix(pal.fog, pal.sunColor, 0.25), 0xffffff, 0.28), 0xe4d4f8, 0.35));
+        const blotCol = new THREE.Color(mix(giantCol.getHex(), mix(pal.sky, 0x000000, 0.45), 0.55));
+        const gc = (c: THREE.Color, a: number) =>
+            `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
+        // flat body, feather-soft rim (the far layer spends NO sharpness)
+        const body = gctx.createRadialGradient(GS / 2, GS / 2, GS * 0.30, GS / 2, GS / 2, GS * 0.5);
+        body.addColorStop(0, gc(giantCol, 0.88));
+        body.addColorStop(0.82, gc(giantCol, 0.84));
+        body.addColorStop(1, gc(giantCol, 0));
+        gctx.fillStyle = body;
+        gctx.beginPath(); gctx.arc(GS / 2, GS / 2, GS * 0.5, 0, Math.PI * 2); gctx.fill();
+        // ONE darker irregular continent — 2-3 soft ellipses fused into a
+        // single off-center landmass, never a compass circle, never crater noise.
+        const bx = GS * (0.34 + rnd() * 0.16), by = GS * (0.34 + rnd() * 0.16);
+        for (let b = 0; b < 3; b++) {
+            const cx2 = bx + (rnd() - 0.5) * GS * 0.15;
+            const cy2 = by + (rnd() - 0.5) * GS * 0.13;
+            const r = GS * (0.07 + rnd() * 0.08);
+            const g = gctx.createRadialGradient(cx2, cy2, r * 0.15, cx2, cy2, r);
+            g.addColorStop(0, gc(blotCol, 0.55));
+            g.addColorStop(0.7, gc(blotCol, 0.32));
+            g.addColorStop(1, gc(blotCol, 0));
+            gctx.fillStyle = g;
+            gctx.beginPath();
+            gctx.ellipse(cx2, cy2, r * (0.8 + rnd() * 0.6), r * (0.55 + rnd() * 0.5), rnd() * Math.PI, 0, Math.PI * 2);
+            gctx.fill();
+        }
+        const giantTex = new THREE.CanvasTexture(gcv);
+        giantTex.needsUpdate = true;
+        const giant = new THREE.Mesh(
+            new THREE.CircleGeometry(1, 40),
+            new THREE.MeshBasicMaterial({ map: giantTex, transparent: true, fog: false, depthWrite: false })
+        );
+        // Hung low, hugging the -z camera axis (a disc 55deg off-axis is a disc
+        // nobody ever sees on a portrait phone) so the hem and rooftops cut it.
+        const az = -Math.PI / 2 + (rnd() - 0.5) * 0.55;
+        const dist = 130;
+        giant.position.set(Math.cos(az) * dist, 24 + rnd() * 8, Math.sin(az) * dist);
+        giant.scale.setScalar(14 + rnd() * 5);
+        giant.lookAt(0, 20, 0);
+        scene.add(mark(giant));
+        return az;   // so the cumulus layer can keep its puffs off the disc
+    }
+    return null;
+}
+
 // ---------- sky furniture: geometric cumulus ----------
 
 /**
@@ -268,11 +399,13 @@ function buildSky(pal: ScenePalette) {
  * bake into the backdrop like every other solid; the dome's shader clouds
  * supply the drift.
  */
-function buildCumulus(scene: THREE.Scene, pal: ScenePalette, rnd: () => number) {
+function buildCumulus(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, avoidAz: number | null = null) {
     // Blinx clouds are near-WHITE bodies with soft self-shade — never grey
     // blobs (the first pass read as floating rocks). Bright tint, an emissive
     // lift so they stay luminous in dim scenes, kept small, high and far so
-    // they read as a cloud LAYER, not as debris.
+    // they read as a cloud LAYER, not as debris. Puffs steer clear of the sky
+    // giant's azimuth: a hard alpha-tested card clipping a wedge through the
+    // moon was its own "weird polygon" complaint.
     const tint = mix(pal.cloudColor, 0xffffff, 0.5);
     const mat = new THREE.MeshStandardMaterial({
         color: tint, map: leafTexture(), alphaTest: 0.5,
@@ -281,7 +414,11 @@ function buildCumulus(scene: THREE.Scene, pal: ScenePalette, rnd: () => number) 
     });
     for (let i = 0; i < 11; i++) {
         const low = i % 2 === 0;
-        const a = rnd() * Math.PI * 2;
+        let a = rnd() * Math.PI * 2;
+        if (avoidAz !== null) {
+            const d = Math.atan2(Math.sin(a - avoidAz), Math.cos(a - avoidAz));
+            if (Math.abs(d) < 0.5) a += 1.1;
+        }
         const r = 68 + rnd() * 48;
         const y = low ? 15 + rnd() * 7 : 26 + rnd() * 12;
         const g = fluffCluster(9, 2.0 + rnd() * 1.2, new THREE.Vector3(0, 0, 0), 0.40, rnd);
@@ -303,11 +440,12 @@ function buildCumulus(scene: THREE.Scene, pal: ScenePalette, rnd: () => number) 
 function addCrystals(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits, rnd: () => number, dense: boolean) {
     const col = traits.glowColor ?? 0x7fe8ff;
     const mat = new THREE.MeshStandardMaterial({
-        color: mix(col, 0xffffff, 0.35), emissive: col,
-        // Strong on purpose: the paint pass averages away timid emissives
-        // (the lantern lesson) and enclosed scenes dim the sun, so the
-        // crystals ARE the light source.
-        emissiveIntensity: 2.4, roughness: 0.3
+        color: mix(col, 0xffffff, 0.15), emissive: col,
+        // Strong enough to BE the light source in enclosed scenes (the paint
+        // pass averages away timid emissives) — but past ~1.4 the facets blow
+        // to white slabs and the crystal loses its hue AND its shape. Blinx's
+        // crystals stay saturated: white-hot core is the HALO sprite's job.
+        emissiveIntensity: 1.35, roughness: 0.3
     });
     const geo = new THREE.OctahedronGeometry(1, 0);
     geo.scale(0.42, 1.5, 0.42);
@@ -357,21 +495,55 @@ function addCrystals(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits,
 function addGlowPools(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits, rnd: () => number, n = 6) {
     const col = traits.glowColor ?? pal.emissive;
     const tex = softSprite();
+    const orbMat = new THREE.MeshStandardMaterial({
+        color: mix(col, 0xffffff, 0.3), emissive: col, emissiveIntensity: 2.0, roughness: 0.4
+    });
     for (let i = 0; i < n; i++) {
         const a = -Math.PI / 2 + (rnd() - 0.5) * Math.PI * 1.2;   // biased toward the view
         const r = 4 + rnd() * 26;
         const x = Math.cos(a) * r, z = Math.sin(a) * r;
-        const p2 = new THREE.PointLight(col, 3.5, 16, 1.5);
+        const p2 = new THREE.PointLight(col, 2.5, 14, 1.5);
         p2.position.set(x, 1.1, z);
         scene.add(mark(p2));
+        // Blinx's light stack, all four layers: a PHYSICAL source orb (lights
+        // are objects, never abstractions), a small halo, and the painted
+        // ground pool that ties it to the floor.
+        const orb = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), orbMat);
+        orb.position.set(x, 0.55 + rnd() * 0.5, z);
+        scene.add(mark(orb));
         const sp = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: tex, color: col, transparent: true, opacity: 0.22,
+            map: tex, color: col, transparent: true, opacity: 0.18,
             depthWrite: false, blending: THREE.AdditiveBlending, fog: false
         }));
-        sp.position.set(x, 0.9, z);
-        sp.scale.set(6 + rnd() * 5, 3.5 + rnd() * 3, 1);
+        sp.position.copy(orb.position);
+        sp.scale.set(2.2, 1.6, 1);
         scene.add(mark(sp));
+        lightPool(scene, x, z, 3.0 + rnd() * 2.0, col, 0.42);
     }
+}
+
+/**
+ * Physical glow orbs, each inside its own soft halo. Blinx's lights are
+ * OBJECTS, never bare bright pixels: a small tinted emissive orb (never pure
+ * white — the hue comes from the scene's chord) plus a soft additive halo
+ * point that feathers it. Replaces the old bare-ball glow-dot scatters.
+ */
+function glowDots(scene: THREE.Scene, at: Spot[], col: number, yOf: (p: Spot) => number, size = 0.11) {
+    const orbMat = new THREE.MeshStandardMaterial({
+        color: mix(col, 0xffffff, 0.45), emissive: col, emissiveIntensity: 1.6, roughness: 0.4
+    });
+    scene.add(scatterAt(new THREE.SphereGeometry(size, 8, 6), orbMat, at, (m, p) => {
+        m.position.set(p.x, yOf(p), p.z);
+    }));
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(at.length * 3);
+    at.forEach((p, i) => { pos[i * 3] = p.x; pos[i * 3 + 1] = yOf(p); pos[i * 3 + 2] = p.z; });
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const halos = new THREE.Points(geo, new THREE.PointsMaterial({
+        map: softSprite(), color: col, size: size * 9, sizeAttenuation: true,
+        transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    scene.add(mark(halos));
 }
 
 // ---------- roads: painted into the terrain, never separate geometry ----------
@@ -415,7 +587,7 @@ function groundBump(kind: 'litter' | 'dirt'): THREE.Texture {
     return _groundTex[kind];
 }
 
-function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: number) => number, roadMask?: RoadMask, traits?: SceneTraits, visual?: SceneVisual | null) {
+function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: number) => number, roadMask?: RoadMask, traits?: SceneTraits, visual?: SceneVisual | null, rnd: () => number = mulberry32(hashStr('ground|' + biome))) {
     if (biome === 'void') return null;              // the void has no floor — that's the point
 
     const geo = new THREE.PlaneGeometry(170, 170, 120, 120);
@@ -459,8 +631,9 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
         }
     }
 
-    for (let i = 0; i < pos.count; i++) {
-        const x = pos.getX(i), y = pos.getY(i);
+    // The height field as a closure so the PAINT pass can find the low spots
+    // the drift pools in. Takes PLANE coords (world z = -y).
+    const heightAt = (x: number, y: number): number => {
         // Two octaves so terrain reads as landscape, not noise.
         let h = noise2D(x * f, y * f) * a + noise2D(x * f * 2.7, y * f * 2.7) * a * 0.35;
         // Roadbed is packed flat.
@@ -476,54 +649,157 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
         // Kept small (4.5): a 7-unit dead-flat disc around the viewer reads as
         // a billiard table from the lowered camera — the float complaint.
         const d = Math.hypot(x, y);
-        h *= Math.min(1, Math.max(0, (d - 4.5) / 9));
-        pos.setZ(i, h);
+        return h * Math.min(1, Math.max(0, (d - 4.5) / 9));
+    };
+
+    for (let i = 0; i < pos.count; i++) {
+        pos.setZ(i, heightAt(pos.getX(i), pos.getY(i)));
     }
     pos.needsUpdate = true;
     geo.computeVertexNormals();
 
-    // Vertex colour variation. One flat fill across the largest surface in frame
-    // is a dead giveaway; real ground has patches — growth where it's lush,
-    // exposed rock where it isn't, plus VALUE patches (dry pale, damp dark) so
-    // the carpet breaks up even when ground and foliage share a hue. Two
-    // octaves of hue patches + one of value patches + fine grain.
-    const colors = new Float32Array(pos.count * 3);
-    const cGround = new THREE.Color(pal.ground);
+    // ---------- the painted ground stack (O24 / law A5) ----------
+    // FOUR layers, each with one job, composited on ONE canvas mapped over the
+    // whole plane: (1) base crackle over broad value patches, (2) pale drift
+    // blobs pooling in the LOW spots and edges, (3) swept smears all leaning
+    // ONE seeded direction, (4) contact dabs — those stay GEOMETRY
+    // (contactBlobs) so they sit exactly under their owners.
+    const S = 1024;
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const ctx = cv.getContext('2d')!;
+    const px = (u: number) => (u / 170) * S;                     // world units -> canvas px
+    const cx = (x: number) => (x / 170 + 0.5) * S;               // world x -> canvas x
+    const cy = (z: number) => (z / 170 + 0.5) * S;               // world z -> canvas y
+    // Ground hues belong to the SCENE'S chord (law A7: sky is in everything):
+    // the base is the ground hue pulled a step toward the fog hue, so a purple
+    // night never sits on an unrelated green carpet. Dark scenes lift the
+    // canvas one value step — the floor must never crush to a void (A6).
+    const nightLift = pal.starAmount > 0.5;
+    const baseHex = mix(pal.ground, pal.fog, 0.14);
+    const cGround = new THREE.Color(nightLift ? mix(baseHex, mix(pal.fog, 0xffffff, 0.35), 0.22) : baseHex);
+    const css = (c: THREE.Color, a: number) =>
+        `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
     const cGrowth = new THREE.Color(pal.foliage);
     const cRock = new THREE.Color(pal.structure);
     const cDry = new THREE.Color(mix(pal.ground, 0xffffff, 0.22));
     const cDark = new THREE.Color(mix(pal.ground, 0x000000, 0.25));
     const cDirt = new THREE.Color(mix(mix(pal.ground, pal.structure, 0.2), 0xffffff, 0.16));
-    const tmp = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) {
-        const x = pos.getX(i), y = pos.getY(i);
-        const broad = noise2D(x * 0.028, y * 0.028);
-        const fine = noise2D(x * 0.17, y * 0.17);
-        const broad2 = noise2D(x * 0.05 + 31.7, y * 0.05 - 17.3);
-        tmp.copy(cGround);
-        if (broad > 0.18) tmp.lerp(cGrowth, Math.min(0.42, (broad - 0.18) * 0.85));
-        else if (broad < -0.22) tmp.lerp(cRock, Math.min(0.38, (-broad - 0.22) * 0.75));
-        if (broad2 > 0.22) tmp.lerp(cDry, Math.min(0.44, (broad2 - 0.22) * 0.8));
-        else if (broad2 < -0.22) tmp.lerp(cDark, Math.min(0.44, (-broad2 - 0.22) * 0.8));
-        if (roadMask) {
-            // Worn dirt: lighter packed earth, slightly warmed, with the fine
-            // noise wobbling the edge so no two metres of verge match.
-            const rm = roadMask(x, -y) * (0.82 + fine * 0.18);
-            if (rm > 0.02) tmp.lerp(cDirt, Math.min(1, rm) * 0.85);
-        }
-        const shadeK = 0.86 + fine * 0.16;      // fine grain so it never reads as vinyl
-        colors[i * 3] = tmp.r * shadeK;
-        colors[i * 3 + 1] = tmp.g * shadeK;
-        colors[i * 3 + 2] = tmp.b * shadeK;
+
+    /** One soft round stamp — the hand-dab every layer is made of. */
+    const dab = (x: number, z: number, r: number, col: THREE.Color, a: number) => {
+        const g = ctx.createRadialGradient(cx(x), cy(z), px(r) * 0.12, cx(x), cy(z), px(r));
+        g.addColorStop(0, css(col, a));
+        g.addColorStop(0.7, css(col, a * 0.55));
+        g.addColorStop(1, css(col, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx(x), cy(z), px(r), 0, Math.PI * 2); ctx.fill();
+    };
+
+    // --- layer 1a: broad value patches (growth / rock / dry / damp) ---
+    ctx.fillStyle = css(cGround, 1); ctx.fillRect(0, 0, S, S);
+    for (let i = 0; i < 190; i++) {
+        const x = (rnd() - 0.5) * 165, z = (rnd() - 0.5) * 165;
+        const broad = noise2D(x * 0.028, -z * 0.028);
+        const broad2 = noise2D(x * 0.05 + 31.7, -z * 0.05 - 17.3);
+        let col: THREE.Color | null = null, a = 0;
+        if (broad > 0.18) { col = cGrowth; a = Math.min(0.30, (broad - 0.18) * 0.6); }
+        else if (broad < -0.22) { col = cRock; a = Math.min(0.28, (-broad - 0.22) * 0.55); }
+        if (broad2 > 0.22) { col = cDry; a = Math.min(0.30, (broad2 - 0.22) * 0.6); }
+        else if (broad2 < -0.22) { col = cDark; a = Math.min(0.30, (-broad2 - 0.22) * 0.6); }
+        if (col) dab(x, z, 5 + rnd() * 13, col, a);
     }
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    // --- layer 1b: the crackle — small irregular fractured plates, hand-drawn
+    //     walks with a wobble. Water skips it (the sea floor is silt, not glaze).
+    if (biome !== 'sea') {
+        // Crackle in the world's own shadow hue (fog-darkened, never pure
+        // black) so it reads on pale grounds as well as dark ones.
+        const crackCol = new THREE.Color(mix(baseHex, mix(pal.fog, 0x000000, 0.5), 0.5));
+        const walks = 42;
+        ctx.lineWidth = Math.max(1, px(0.16));
+        for (let i = 0; i < walks; i++) {
+            let x = (rnd() - 0.5) * 160, z = (rnd() - 0.5) * 160;
+            let ang = rnd() * Math.PI * 2;
+            ctx.strokeStyle = css(crackCol, 0.18 + rnd() * 0.15);
+            ctx.beginPath(); ctx.moveTo(cx(x), cy(z));
+            const segs = 4 + Math.floor(rnd() * 7);
+            for (let s2 = 0; s2 < segs; s2++) {
+                ang += (rnd() - 0.5) * 1.5;
+                const len = 1.2 + rnd() * 3.2;
+                x += Math.cos(ang) * len; z += Math.sin(ang) * len;
+                ctx.lineTo(cx(x), cy(z));
+            }
+            ctx.stroke();
+        }
+    }
+
+    // --- the worn road, painted soft into the same canvas (was vertex noise) ---
+    if (roadMask) {
+        const wander = (t: number) => noise2D(t * 0.035, 7.3) * 3.2;
+        for (let t = -82; t < 82; t += 1.6) {
+            dab(wander(t) + (rnd() - 0.5) * 0.8, t, 3.4 + rnd() * 1.4, cDirt, 0.16);
+            dab(t, wander(t + 41) + (rnd() - 0.5) * 0.8, 3.4 + rnd() * 1.4, cDirt, 0.16);
+        }
+    }
+
+    if (biome !== 'sea') {
+        // --- layer 2: pale drift pooling in the LOW spots and at the edges ---
+        // Drift carries the scene's own air hue (fog), lightened — not raw white.
+        const driftCol = new THREE.Color(mix(mix(pal.ground, pal.fog, 0.35), 0xffffff, 0.42));
+        const lows: { x: number; z: number }[] = [];
+        let hMin = Infinity, hMax = -Infinity;
+        const grid: { x: number; z: number; h: number }[] = [];
+        for (let gx = -78; gx <= 78; gx += 6.5) {
+            for (let gz = -78; gz <= 78; gz += 6.5) {
+                const h = heightAt(gx, -gz);
+                grid.push({ x: gx, z: gz, h });
+                if (h < hMin) hMin = h;
+                if (h > hMax) hMax = h;
+            }
+        }
+        const cut = hMin + (hMax - hMin) * 0.30;
+        for (const cell of grid) if (cell.h <= cut) lows.push(cell);
+        for (let i = 0; i < 26 && lows.length; i++) {
+            const cell = lows[Math.floor(rnd() * lows.length)];
+            // 2-3 overlapping stamps: a feathered blob with a wobbled hem,
+            // never a compass ring.
+            const bx = cell.x + (rnd() - 0.5) * 4, bz = cell.z + (rnd() - 0.5) * 4;
+            const r = 3.5 + rnd() * 5.5;
+            for (let k = 0; k < 3; k++) {
+                dab(bx + (rnd() - 0.5) * r * 0.5, bz + (rnd() - 0.5) * r * 0.5, r * (0.6 + rnd() * 0.5), driftCol, 0.30 + rnd() * 0.22);
+            }
+        }
+        // Edge drift — the world's rim collects it.
+        for (let i = 0; i < 14; i++) {
+            const a2 = rnd() * Math.PI * 2, rr = 58 + rnd() * 22;
+            dab(Math.cos(a2) * rr, Math.sin(a2) * rr, 4 + rnd() * 7, driftCol, 0.16 + rnd() * 0.14);
+        }
+
+        // --- layer 3: swept smears — ONE direction per scene (law E5: the
+        //     smears agree with the world's gesture). Soft, darker, directional.
+        const smearCol = new THREE.Color(mix(baseHex, mix(pal.fog, 0x000000, 0.45), 0.48));
+        const smearAng = rnd() * Math.PI * 2;
+        const dx = Math.cos(smearAng), dz = Math.sin(smearAng);
+        for (let i = 0; i < 22; i++) {
+            let x = (rnd() - 0.5) * 150, z = (rnd() - 0.5) * 150;
+            const len = 9 + rnd() * 18, r = 1.6 + rnd() * 2.2;
+            const steps = Math.floor(len / 1.4);
+            for (let s3 = 0; s3 < steps; s3++) {
+                dab(x, z, r, smearCol, 0.085);
+                x += dx * 1.4 + (rnd() - 0.5) * 0.5;
+                z += dz * 1.4 + (rnd() - 0.5) * 0.5;
+            }
+        }
+    }
+
+    const groundTex = new THREE.CanvasTexture(cv);
+    groundTex.needsUpdate = true;
 
     const LUSH = biome === 'forest' || biome === 'swamp' || biome === 'plains' || biome === 'crossroads';
     const mat = new THREE.MeshStandardMaterial({
-        // white base: vertexColors MULTIPLY the material colour, so the ground
-        // tint is baked into the attribute instead of double-applied here.
+        // The canvas owns the paint; the material just carries it.
         color: 0xffffff,
-        vertexColors: true,
+        map: groundTex,
         roughness: pal.groundRough,
         metalness: biome === 'sea' ? 0.35 : 0.0,
         flatShading: biome === 'mountain' || biome === 'fire' || visual?.terrain === 'jagged',
@@ -648,6 +924,288 @@ function seussify(geo: THREE.BufferGeometry, bend: number, bulge: number, taper:
     pos.needsUpdate = true;
     geo.computeVertexNormals();
     return geo;
+}
+
+// ---------- the grounding pass: Blinx's two anti-float laws ----------
+//
+// Frame-by-frame study of Blinx: NOTHING meets the ground with a naked mesh
+// intersection (every base gets a drift ring + a painted contact darkening),
+// and every form is value-stepped by orientation — up-faces catch light,
+// down-faces sink into a shadow HUE (moss-green in the temple, violet in the
+// caves — a shadow is never grey). These helpers bake both laws.
+
+const _WHITE = new THREE.Color(0xffffff);
+
+/**
+ * Orientation value-stepping, composing over whatever vertex colours the
+ * geometry already has (bakeGradient, prismatic banding). Faces toward the
+ * sky lighten, faces toward the ground sink into the darkened atmosphere
+ * hue, and the sun side takes a warm kiss of the key light. One pass gives
+ * the "rounded, honestly lit form" read that flat albedo + fog can't fake.
+ */
+function bakeOrientAO(geo: THREE.BufferGeometry, pal: ScenePalette, strength = 1): THREE.BufferGeometry {
+    geo.computeVertexNormals();
+    const pos = geo.attributes.position;
+    const nrm = geo.attributes.normal;
+    let col = geo.attributes.color as THREE.BufferAttribute | undefined;
+    if (!col) {
+        col = new THREE.BufferAttribute(new Float32Array(pos.count * 3).fill(1), 3);
+        geo.setAttribute('color', col);
+    }
+    const sun = new THREE.Vector3(pal.sunDir[0], pal.sunDir[1], pal.sunDir[2]).normalize();
+    const shadeCol = new THREE.Color(mix(pal.fog, 0x000000, 0.62));    // the shadow HUE
+    const warm = new THREE.Color(pal.key);
+    const c = new THREE.Color(), n = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+        n.set(nrm.getX(i), nrm.getY(i), nrm.getZ(i));
+        const up = n.y;
+        const sunK = Math.max(0, n.dot(sun));
+        c.setRGB(col.getX(i), col.getY(i), col.getZ(i));
+        if (up > 0) c.lerp(_WHITE, up * 0.16 * strength);
+        else c.lerp(shadeCol, -up * 0.38 * strength);
+        c.lerp(warm, Math.pow(sunK, 2.2) * 0.20 * strength);
+        col.setXYZ(i, c.r, c.g, c.b);
+    }
+    col.needsUpdate = true;
+    return geo;
+}
+
+/**
+ * Facing-honest facet values — the facet law (style system 9, law A3): every
+ * plane carries ONE flat value chosen purely by its facing, and the darkest
+ * planes stay NAKED (no jitter, no noise — a flat plane tells the truth about
+ * light; texture on a dark plane lies). Up-facing planes take the pale cap,
+ * sun-facing planes take the warm mid, away-facing planes sink into the
+ * world's own shadow hue. Curves are allowed — their few big chords each just
+ * get one honest value. Replaces bakeGradient+bakeOrientAO on carved masses.
+ *
+ * Works per-FACE: indexed geometry is expanded to non-indexed so each
+ * triangle owns its three vertices outright. Always use the RETURN value.
+ */
+function bakeFacetValues(
+    geo: THREE.BufferGeometry, pal: ScenePalette,
+    opts: { base?: number; cap?: number; dark?: number; jitter?: number; snow?: boolean; rnd?: () => number } = {}
+): THREE.BufferGeometry {
+    const g = geo.index ? geo.toNonIndexed() : geo;
+    g.computeVertexNormals();
+    const pos = g.attributes.position;
+    const nrm = g.attributes.normal;
+    const rnd = opts.rnd ?? mulberry32(hashStr('facet'));
+    const jitter = opts.jitter ?? 0.07;
+    const base = new THREE.Color(opts.base ?? pal.structure);
+    // Snow biomes: the cap is WHITE with the faintest blue breath, and it
+    // lands on ANY plane that faces up enough — a per-plane rule with a
+    // hand-wobbled hem (the Everwinter rock: the snow inherits the faceting).
+    const cap = opts.snow
+        ? new THREE.Color(mix(0xffffff, pal.sky, 0.12))
+        : new THREE.Color(opts.cap ?? mix(base.getHex(), mix(0xffffff, pal.key, 0.30), 0.55));
+    const capThreshold = opts.snow ? 0.28 : 0.45;
+    const sunMid = new THREE.Color(mix(base.getHex(), pal.key, 0.20));
+    const dark = new THREE.Color(opts.dark ?? mix(base.getHex(), mix(pal.fog, 0x000000, 0.62), 0.55));
+    const sun = new THREE.Vector3(pal.sunDir[0], pal.sunDir[1], pal.sunDir[2]).normalize();
+    const colors = new Float32Array(pos.count * 3);
+    const n = new THREE.Vector3(), c = new THREE.Color();
+    for (let f = 0; f < pos.count; f += 3) {
+        n.set(nrm.getX(f), nrm.getY(f), nrm.getZ(f));
+        const up = n.y;
+        const sunK = n.dot(sun);
+        let shadeK = 1;
+        // The cap hem wobbles per face — it dips and lifts per plane, never
+        // ruler-straight, never the same wave twice.
+        const hem = opts.snow ? (rnd() - 0.5) * 0.16 : 0;
+        if (up > capThreshold + hem) c.copy(cap);          // sky-facing: the pale cap
+        else if (sunK > 0.30) c.copy(sunMid);              // sun side: the warm mid
+        else if (up > -0.20 && sunK > -0.10) c.copy(base); // the world's body value
+        else { c.copy(dark); shadeK = 0; }                 // away: the shadow hue, FLAT
+        if (shadeK > 0 && jitter > 0) shadeK = 1 + (rnd() - 0.5) * 2 * jitter;
+        for (let k = 0; k < 3; k++) {
+            colors[(f + k) * 3] = c.r * shadeK;
+            colors[(f + k) * 3 + 1] = c.g * shadeK;
+            colors[(f + k) * 3 + 2] = c.b * shadeK;
+        }
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return g;
+}
+
+/** Irregular soft pool texture for contact blobs — overlapping offset
+ *  gradients so the edge wobbles like a painted one, not a compass ring. */
+let _blobTex: THREE.CanvasTexture | null = null;
+function blobTexture(): THREE.CanvasTexture {
+    if (_blobTex) return _blobTex;
+    const S = 128;
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const ctx = cv.getContext('2d')!;
+    ctx.clearRect(0, 0, S, S);
+    const brnd = mulberry32(hashStr('blob'));
+    for (let i = 0; i < 5; i++) {
+        const x = S / 2 + (brnd() - 0.5) * S * 0.16, y = S / 2 + (brnd() - 0.5) * S * 0.16;
+        const r = S * (0.30 + brnd() * 0.12);
+        const g = ctx.createRadialGradient(x, y, r * 0.15, x, y, r);
+        g.addColorStop(0, 'rgba(255,255,255,0.55)');
+        g.addColorStop(0.75, 'rgba(255,255,255,0.30)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+    _blobTex = new THREE.CanvasTexture(cv);
+    _blobTex.needsUpdate = true;
+    return _blobTex;
+}
+
+/** The dark-mouth gradient: darkest core, rim a dark shade of the world's own
+ *  atmosphere hue, soft outer falloff. Blinx's "absolute dark" punctuations
+ *  are always this — a hole you believe has walls. */
+function mouthTexture(pal: ScenePalette): THREE.CanvasTexture {
+    const S = 128;
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const ctx = cv.getContext('2d')!;
+    const core = new THREE.Color(mix(pal.fog, 0x000000, 0.88));
+    const rim = new THREE.Color(mix(pal.fog, 0x000000, 0.42));
+    const hx = (c: THREE.Color, a: number) =>
+        `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
+    const g = ctx.createRadialGradient(S / 2, S / 2, S * 0.06, S / 2, S / 2, S * 0.5);
+    g.addColorStop(0, hx(core, 1));
+    g.addColorStop(0.55, hx(core, 0.98));
+    g.addColorStop(0.85, hx(rim, 0.9));
+    g.addColorStop(1, hx(rim, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    return tex;
+}
+
+/** Soft warm pool texture — the painted ellipse of light Blinx lays under
+ *  every lamp, brazier and glow crystal (the lamppool crop: irregular,
+ *  blobby, following the ground, NEVER a perfect radial). */
+let _poolTex: THREE.CanvasTexture | null = null;
+function poolTexture(): THREE.CanvasTexture {
+    if (_poolTex) return _poolTex;
+    const S = 128;
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const ctx = cv.getContext('2d')!;
+    ctx.clearRect(0, 0, S, S);
+    const prnd = mulberry32(hashStr('pool'));
+    for (let i = 0; i < 6; i++) {
+        const x = S / 2 + (prnd() - 0.5) * S * 0.2, y = S / 2 + (prnd() - 0.5) * S * 0.2;
+        const r = S * (0.26 + prnd() * 0.14);
+        const g = ctx.createRadialGradient(x, y, r * 0.1, x, y, r);
+        g.addColorStop(0, 'rgba(255,255,255,0.55)');
+        g.addColorStop(0.6, 'rgba(255,255,255,0.28)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+    _poolTex = new THREE.CanvasTexture(cv);
+    _poolTex.needsUpdate = true;
+    return _poolTex;
+}
+
+/**
+ * A painted pool of light lying flat on the ground. Blinx stacks four cheap
+ * tricks per light: emissive bulb + halo sprite + PAINTED GROUND POOL +
+ * bloom. The ground pool is the one that survives the paint bake — and the
+ * one that makes a light feel like it belongs to the floor it stands on.
+ */
+function lightPool(scene: THREE.Scene, x: number, z: number, r: number, col: number, opacity = 0.6) {
+    const g = new THREE.CircleGeometry(1, 18);
+    g.rotateX(-Math.PI / 2);
+    // Two stacked discs: a generous feathered rim and a hotter warm core —
+    // the pool reads as a small ROOM of light (law C2: the light is always
+    // bigger than the fixture), and the warm heart survives the paint bake.
+    const rim = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+        map: poolTexture(), color: col, transparent: true, opacity,
+        depthWrite: false, blending: THREE.AdditiveBlending, fog: false
+    }));
+    rim.position.set(x, 0.045, z);
+    rim.scale.setScalar(r * 1.3);
+    rim.renderOrder = 2;
+    scene.add(mark(rim));
+    const core = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+        map: poolTexture(), color: mix(col, 0xfff2d8, 0.5), transparent: true, opacity: opacity * 0.85,
+        depthWrite: false, blending: THREE.AdditiveBlending, fog: false
+    }));
+    core.position.set(x, 0.05, z);
+    core.scale.setScalar(r * 0.55);
+    core.renderOrder = 2;
+    scene.add(mark(core));
+}
+
+/**
+ * Breadcrumb lights: Blinx marks the route with a receding line of small
+ * warm glows (Time Square's lamp-line recession — depth you can FOLLOW, and
+ * the strongest single "walk INTO the picture" cue there is). Walks the
+ * road's own wander so the trail belongs to the path, offset to the verge.
+ */
+function breadcrumbTrail(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, noise2D: (x: number, y: number) => number) {
+    const wander = (t: number) => noise2D(t * 0.035, 7.3) * 3.2;   // the road's own curve
+    const col = pal.emissiveOn ? pal.emissive : mix(0xffc36a, pal.key, 0.30);
+    const orbMat = new THREE.MeshStandardMaterial({
+        color: mix(col, 0xffffff, 0.35), emissive: col, emissiveIntensity: 2.2, roughness: 0.4
+    });
+    const tex = softSprite();
+    for (let i = 0; i < 7; i++) {
+        const z = -4.5 - i * 6.2 - rnd() * 2;
+        const x = wander(z) + (rnd() < 0.5 ? -1 : 1) * (1.7 + rnd() * 0.9);
+        const orb = new THREE.Mesh(new THREE.SphereGeometry(0.10, 8, 8), orbMat);
+        orb.position.set(x, 0.5 + rnd() * 0.3, z);
+        scene.add(mark(orb));
+        const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: tex, color: col, transparent: true, opacity: 0.30,
+            depthWrite: false, blending: THREE.AdditiveBlending, fog: false
+        }));
+        halo.position.copy(orb.position);
+        halo.scale.set(1.8, 1.35, 1);
+        scene.add(mark(halo));
+        lightPool(scene, x, z, 2.2, col, 0.55);
+    }
+}
+
+/**
+ * Painted ground-contact darkening under a spot list — Blinx paints this
+ * under every standing object (the waterline crop, the bomb field). Its
+ * absence is exactly the "assets floating on a plane" tell. Tinted with the
+ * world's darkened atmosphere hue so the shadow stays inside the palette.
+ */
+function contactBlobs(scene: THREE.Scene, at: Spot[], pal: ScenePalette, radiusOf: (p: Spot) => number, opacity = 0.38) {
+    const g = new THREE.CircleGeometry(1, 18);
+    g.rotateX(-Math.PI / 2);
+    const m = new THREE.MeshBasicMaterial({
+        map: blobTexture(), color: mix(pal.fog, 0x000000, 0.72),
+        transparent: true, opacity, depthWrite: false, fog: false
+    });
+    const blobs = scatterAt(g, m, at, (mm, p) => {
+        mm.position.set(p.x, 0.03, p.z);
+        mm.scale.setScalar(radiusOf(p));
+    });
+    blobs.castShadow = false; blobs.receiveShadow = false;
+    scene.add(blobs);
+}
+
+/**
+ * Drift skirts: a low squashed mound at every mass base — the snow-drift /
+ * dust-skirt that hides the mesh/terrain intersection line (Everwinter's
+ * rocks all sit IN the snow, never ON it). Tinted between ground and
+ * structure so it belongs to both.
+ */
+function driftSkirts(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number) {
+    const g = new THREE.ConeGeometry(1, 1, 9);
+    g.translate(0, 0.5, 0);
+    jitterGeometry(g, 0.10, rnd);
+    // The skirt is GROUND that swallows the mass base, not a pale collar:
+    // tint barely leaves the ground hue (bright structure-tinted mounds read
+    // as glowing blobs at night) and the orientation bake sinks its flanks
+    // into the same shadow hue as everything else.
+    bakeGradient(g, mix(pal.ground, 0x000000, 0.40), mix(pal.ground, pal.structure, 0.16), rnd);
+    bakeOrientAO(g, pal, 1.15);
+    const skirts = scatterAt(g, paintMat(), at, (m, p) => {
+        m.position.set(p.x, -0.05, p.z);
+        m.scale.set(p.s * 2.2, 0.40 + p.j * 0.28, p.s * 2.2);
+        m.rotation.y = p.r;
+    });
+    skirts.castShadow = false;
+    scene.add(skirts);
 }
 
 /**
@@ -820,11 +1378,12 @@ function makeConiferGeo(rnd: () => number): THREE.BufferGeometry {
     return mergeGeometries(tiers)!;
 }
 
-/** Trunk with taper + bend. */
+/** Trunk with taper + bend — ONE deliberate gesture per trunk (law S1:
+ *  straightness is the only forbidden thing). */
 function makeTrunkGeo(h: number, r: number, rnd: () => number): THREE.BufferGeometry {
     const g = new THREE.CylinderGeometry(r * 0.5, r, h, 7, 4);
     const pos = g.attributes.position;
-    const bend = (rnd() - 0.5) * 0.5;
+    const bend = (rnd() - 0.5) * 1.1;
     for (let i = 0; i < pos.count; i++) {
         const t = (pos.getY(i) + h / 2) / h;
         pos.setX(i, pos.getX(i) + Math.sin(t * Math.PI * 0.5) * bend);
@@ -889,7 +1448,9 @@ function buildRidges(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, n
         geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
         const mat = new THREE.MeshBasicMaterial({
             // Distant land sits BETWEEN fog and sky in value — never brighter
-            // than the sky it silhouettes against.
+            // than the sky it silhouettes against. Kept UNLIT and pale: far =
+            // soft and simple (law C6). Facing-dark values here turned the
+            // whole horizon into a black wall when the sun sat behind it.
             color: mix(mix(pal.ground, pal.structure, 0.4), mix(pal.fog, pal.sky, 0.45), ring.mixK),
             fog: false, side: THREE.DoubleSide
         });
@@ -944,21 +1505,21 @@ function addTrees(
         m.position.set(pt.x, 0, pt.z); m.scale.setScalar(pt.s);
         m.rotation.set(0, pt.r, (pt.j - 0.5) * lean);
     }));
-    const conifers = scatterAt(coniferGeo, leafMatFor(crownTint), at, (m, pt) => {
+    const conifers = scatterAt(coniferGeo, leafMatFor(mix(crownTint, 0x000000, 0.12)), at, (m, pt) => {
         if (pt.j > 0.42) { m.scale.setScalar(0); return; }
         m.position.set(pt.x, trunkH * 0.72 * pt.s, pt.z);
         m.scale.setScalar(pt.s); m.rotation.y = pt.r;
     });
     conifers.customDepthMaterial = leafDepth();
     scene.add(conifers);
-    const crowns = scatterAt(crownGeo, leafMatFor(mix(crownTint, 0xffffff, 0.06)), at, (m, pt) => {
+    const crowns = scatterAt(crownGeo, leafMatFor(mix(crownTint, 0xffffff, 0.12)), at, (m, pt) => {
         if (pt.j <= 0.42 || pt.j > 0.78) { m.scale.setScalar(0); return; }
         m.position.set(pt.x, trunkH * 0.92 * pt.s, pt.z);
         m.scale.setScalar(pt.s); m.rotation.y = pt.r;
     });
     crowns.customDepthMaterial = leafDepth();
     scene.add(crowns);
-    const umbrellas = scatterAt(umbrellaGeo, leafMatFor(mix(crownTint, p.key, 0.05)), at, (m, pt) => {
+    const umbrellas = scatterAt(umbrellaGeo, leafMatFor(mix(crownTint, p.key, 0.14)), at, (m, pt) => {
         if (pt.j <= 0.78) { m.scale.setScalar(0); return; }
         m.position.set(pt.x, trunkH * 1.02 * pt.s, pt.z);
         m.scale.setScalar(pt.s); m.rotation.y = pt.r;
@@ -977,6 +1538,11 @@ function addTrees(
     bushes.customDepthMaterial = leafDepth();
     bushes.castShadow = false;
     scene.add(bushes);
+
+    // Painted contact darkening under every trunk — a tree is rooted, not
+    // placed. Subtle: the shadow-map shadows exist too; this is the soft
+    // painted core that survives the Kuwahara bake.
+    contactBlobs(scene, at, p, (pt) => canopyR * 0.75 * pt.s, 0.26);
 }
 
 // ---------- mass families: the silhouette registry ----------
@@ -999,8 +1565,9 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
         // segments so the bend reads as a curve, not a kink.
         const g = seussify(new THREE.BoxGeometry(1.5, 7, 1.5, 1, 6, 1), 0.55, 0.16, 0.10, rnd);
         // A glass metropolis bands its towers like the rainbow bridge bands
-        // its arches — sentient glass, not painted concrete.
-        const mat = pal.prismatic ? (prismatize(g), prismaticMat()) : structMat();
+        // its arches — sentient glass, not painted concrete. Otherwise each
+        // face owns ONE value by facing; the mottle stays off the dark sides.
+        const mat = pal.prismatic ? (prismatize(g), prismaticMat()) : (bakeFacetValues(g, pal, { rnd }), structMat());
         scene.add(scatterAt(g, mat, at, (m, p) => {
             m.position.set(p.x, 3.5 * p.s * (0.5 + p.j), p.z);
             m.scale.set(p.s * (0.5 + p.j), p.s * (0.5 + p.j * 1.6), p.s * (0.5 + p.j));
@@ -1008,23 +1575,23 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
         }));
     },
     blobs: ({ scene, at, pal, rnd }) => {
-        const g = bakeGradient(new THREE.IcosahedronGeometry(1.6, 2), mix(pal.structure, 0x000000, 0.35), mix(pal.structure, pal.key, 0.25), rnd);
+        const g = bakeFacetValues(new THREE.IcosahedronGeometry(1.6, 2), pal, { rnd });
         scene.add(scatterAt(g, paintMat(), at, (m, p) => {
             m.position.set(p.x, 0.7 * p.s, p.z);
             m.scale.set(p.s * (0.8 + p.j), p.s * (0.55 + p.j * 0.7), p.s * (0.8 + p.j));
             m.rotation.y = p.r;
         }));
     },
-    blocks: ({ scene, at, structMat, vis, rnd }) => {
-        const g = seussify(new THREE.BoxGeometry(2.4, 2.4, 2.4, 1, 4, 1), 0.30, 0.12, 0.08, rnd);
+    blocks: ({ scene, at, structMat, vis, rnd, pal }) => {
+        const g = bakeFacetValues(seussify(new THREE.BoxGeometry(2.4, 2.4, 2.4, 1, 4, 1), 0.30, 0.12, 0.08, rnd), pal, { rnd });
         scene.add(scatterAt(g, structMat(), at, (m, p) => {
             m.position.set(p.x, 1.2 * p.s * (0.4 + p.j), p.z);
             m.scale.set(p.s * (0.7 + p.j * 0.8), p.s * (0.4 + p.j * 1.4), p.s * (0.7 + p.j * 0.6));
             m.rotation.y = vis.order === 'artificial' ? p.r : Math.round(p.r * 2.55) * 0.35;
         }));
     },
-    arches: ({ scene, at, structMat, pal }) => {
-        const g = new THREE.TorusGeometry(2.6, 0.42, 6, 14, Math.PI);
+    arches: ({ scene, at, structMat, pal, rnd }) => {
+        const g = bakeFacetValues(new THREE.TorusGeometry(2.6, 0.42, 6, 14, Math.PI), pal, { rnd });
         let mat = structMat();
         if (pal.prismatic) {
             // A solidified rainbow bands along the arc — red at one foot to
@@ -1047,20 +1614,21 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
             m.rotation.y = p.r;
         }));
         // The Blinx value anchor: a dark MOUTH inside every arch — a place to
-        // go. Absolute-dark shapes punched into a lit field are what give the
-        // frame depth punctuation (Forgotten City's cave mouths). Under a
-        // rainbow bridge it simply reads as the bridge's own shadow.
-        const mouthMat = new THREE.MeshBasicMaterial({ color: mix(pal.fog, 0x000000, 0.80), fog: false });
-        scene.add(scatterAt(new THREE.CircleGeometry(2.15, 20), mouthMat, at, (m, p) => {
+        // go. Study of the Forgotten City pits: the dark is never flat black —
+        // it's a dark blue-violet GRADIENT (darkest at the core, a shade of
+        // the world at the rim), which reads as a hole with walls, not a
+        // rendering bug. Pure black is a void; a gradient is a place.
+        const mouthMat = new THREE.MeshBasicMaterial({ map: mouthTexture(pal), transparent: true, depthWrite: false, fog: false });
+        scene.add(scatterAt(new THREE.CircleGeometry(1.9, 20), mouthMat, at, (m, p) => {
             const sc = p.s * (0.7 + p.j * 0.9);
             m.position.set(p.x - Math.sin(p.r) * 0.4 * sc, 0.1, p.z - Math.cos(p.r) * 0.4 * sc);
             m.scale.setScalar(sc);
             m.rotation.y = p.r;
         }));
     },
-    shards: ({ scene, at, structMat, pal }) => {
+    shards: ({ scene, at, structMat, pal, rnd }) => {
         const g = new THREE.BoxGeometry(0.28, 4.6, 2.0, 1, 4, 1);
-        const mat = pal.prismatic ? (prismatize(g), prismaticMat()) : structMat();
+        const mat = pal.prismatic ? (prismatize(g), prismaticMat()) : (bakeFacetValues(g, pal, { rnd }), structMat());
         scene.add(scatterAt(g, mat, at, (m, p) => {
             m.position.set(p.x, 2.0 * p.s, p.z);
             m.scale.setScalar(p.s * (0.5 + p.j));
@@ -1071,11 +1639,11 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
     // lesson). The cap carries the place's colour identity — a mushroom
     // forest must NOT read as a green cone forest.
     fungus: ({ scene, at, pal, rnd }) => {
-        const stemGeo = bakeGradient(new THREE.CylinderGeometry(0.16, 0.34, 2.6, 8),
-            mix(pal.structure, 0xffffff, 0.30), mix(pal.structure, 0xffffff, 0.55), rnd);
+        const stemGeo = bakeFacetValues(new THREE.CylinderGeometry(0.16, 0.34, 2.6, 8),
+            pal, { base: mix(pal.structure, 0xffffff, 0.42), rnd });
         const capGeo = new THREE.SphereGeometry(1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
         capGeo.scale(1.35, 0.55, 1.35);
-        bakeGradient(capGeo, mix(pal.foliage, 0x000000, 0.30), mix(pal.foliage, pal.key, 0.28), rnd);
+        bakeFacetValues(capGeo, pal, { base: pal.foliage, rnd });
         scene.add(scatterAt(stemGeo, paintMat(), at, (m, p) => {
             m.position.set(p.x, 1.3 * p.s * (0.7 + p.j * 0.9), p.z);
             m.scale.set(p.s, p.s * (0.7 + p.j * 0.9), p.s);
@@ -1094,10 +1662,8 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
     // nature (or time) did. Capitals only survive on intact columns.
     columns: ({ scene, at, pal, rnd, vis }) => {
         // A whisper of bend even in built shafts — hand-placed, not machined.
-        const shaftGeo = bakeGradient(seussify(new THREE.CylinderGeometry(0.42, 0.52, 6.4, 10, 5), 0.20, 0.08, 0.04, rnd),
-            mix(pal.structure, 0x000000, 0.25), mix(pal.structure, pal.key, 0.30), rnd);
-        const capGeo = new THREE.BoxGeometry(1.35, 0.42, 1.35);
-        bakeGradient(capGeo, mix(pal.structure, 0x000000, 0.20), mix(pal.structure, pal.key, 0.25), rnd);
+        const shaftGeo = bakeFacetValues(seussify(new THREE.CylinderGeometry(0.42, 0.52, 6.4, 10, 5), 0.20, 0.08, 0.04, rnd), pal, { rnd });
+        const capGeo = bakeFacetValues(new THREE.BoxGeometry(1.35, 0.42, 1.35), pal, { rnd });
         const height = (p: Spot, order?: string) => order === 'artificial' ? 1 : 0.35 + p.j * 0.85;
         scene.add(scatterAt(shaftGeo, paintMat(), at, (m, p) => {
             const full = height(p, vis.order);
@@ -1115,9 +1681,9 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
     },
     // Bent, tapered growths — organic interiors, alien thickets, root tangles.
     tendrils: ({ scene, at, pal, rnd, traits }) => {
-        const geo = bakeGradient(makeTrunkGeo(3.6, 0.36, rnd),
-            mix(pal.structure, 0x000000, 0.30),
-            traits.glowing ? mix(pal.structure, pal.emissive, 0.55) : mix(pal.structure, pal.key, 0.20), rnd);
+        const geo = bakeFacetValues(makeTrunkGeo(3.6, 0.36, rnd), pal, {
+            base: traits.glowing ? mix(pal.structure, pal.emissive, 0.35) : pal.structure, rnd
+        });
         scene.add(scatterAt(geo, paintMat(), at, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.scale.set(p.s * 0.8, p.s * (0.6 + p.j * 1.2), p.s * 0.8);
@@ -1130,7 +1696,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
         const geo = new THREE.SphereGeometry(0.7, 14, 10);
         const mat = glowing
             ? new THREE.MeshStandardMaterial({ color: mix(pal.emissive, 0xffffff, 0.30), emissive: pal.emissive, emissiveIntensity: 1.6, roughness: 0.4 })
-            : (bakeGradient(geo, mix(pal.structure, 0x000000, 0.30), mix(pal.structure, pal.key, 0.30), rnd), paintMat());
+            : (bakeFacetValues(geo, pal, { rnd }), paintMat());
         scene.add(scatterAt(geo, mat, at, (m, p) => {
             m.position.set(p.x, 2 + p.j * 7, p.z);
             m.scale.setScalar(0.35 + p.j * 1.1);
@@ -1151,8 +1717,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
             stack.push(seg);
             y += h * 0.92;
         }
-        const geo = bakeGradient(mergeGeometries(stack)!,
-            mix(pal.structure, 0x000000, 0.30), mix(pal.structure, pal.key, 0.28), rnd);
+        const geo = bakeFacetValues(mergeGeometries(stack)!, pal, { rnd });
         scene.add(scatterAt(geo, paintMat(), at, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.scale.set(p.s, p.s * (1.0 + p.j * 1.1), p.s);
@@ -1169,8 +1734,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
             slab.translate((rnd() - 0.5) * 0.3, 0.16 + i * 0.24, (rnd() - 0.5) * 0.3);
             stack.push(slab);
         }
-        const geo = bakeGradient(mergeGeometries(stack)!,
-            mix(pal.structure, 0x000000, 0.32), mix(pal.structure, pal.key, 0.26), rnd);
+        const geo = bakeFacetValues(mergeGeometries(stack)!, pal, { rnd });
         scene.add(scatterAt(geo, paintMat(), at, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.scale.set(p.s * (0.9 + p.j * 0.6), p.s * (0.7 + p.j * 0.8), p.s * (0.9 + p.j * 0.6));
@@ -1281,26 +1845,44 @@ function composeMasses(
     if (fam && MASS_FAMILIES[fam]) {
         // massMat overrides the family's structure material when the PLACE
         // demands it (a city's towers carry lit windows whatever silhouette
-        // the Director picked). Rocks/stalactites below keep plain structMat —
-        // rubble doesn't have windows.
-        MASS_FAMILIES[fam]({ scene, at: massSpots, pal, rnd, vis, traits, structMat: massMat ?? structMat, foliMat, glowMat });
+        // the Director picked). Otherwise masses go TOON + facet-baked: one
+        // honest value per plane, no mottle noise on the dark sides (the
+        // facet law). Rocks/stalactites below follow the same rule.
+        MASS_FAMILIES[fam]({ scene, at: massSpots, pal, rnd, vis, traits, structMat: massMat ?? (() => paintMat()), foliMat, glowMat });
+    }
+    // The anti-float law: nothing stands ON the ground, everything sits IN
+    // it — a drift skirt hides the intersection line and a painted blob
+    // darkens the contact (Everwinter's drift rings, the waterline crop).
+    // Floating families and weightless places stay clean.
+    if (fam && fam !== 'orbs' && fam !== 'none' && !traits.submerged && !traits.space) {
+        driftSkirts(scene, massSpots, pal, rnd);
+        contactBlobs(scene, massSpots, pal, (p) => p.s * 2.1, 0.34);
     }
     // Enclosed spaces have a ceiling — stalactites from above. Jittered so
     // they read as wet rock, not machined cones. Kept small, high and few,
     // over a haze ROOF: fangs hanging from a pure black void read as icicles
     // floating in space; they need a ceiling to grow from.
     if (traits.enclosed) {
-        const roof = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: softSprite(), color: mix(pal.fog, 0x000000, 0.55),
-            transparent: true, opacity: 0.6, depthWrite: false, fog: false
-        }));
-        roof.position.set(0, 13.5, -14);
-        roof.scale.set(80, 18, 1);
+        // A REAL ceiling, not a haze sprite: a huge near-horizontal slab
+        // overhead carrying the cave-marble mottle, a shade lighter than the
+        // void behind it. It must sit IN FRAME — low enough that the standing
+        // camera catches its near edge across the upper third — or the
+        // stalactites hang from nothing (fangs in pure black read as floating
+        // debris; Blinx's caves always show the ceiling's dark marbled mass).
+        const roof = new THREE.Mesh(
+            new THREE.PlaneGeometry(170, 110),
+            new THREE.MeshBasicMaterial({
+                map: mottleTexture(), color: mix(pal.fog, 0x000000, 0.42),
+                fog: false, side: THREE.DoubleSide
+            })
+        );
+        roof.position.set(0, 9.5, -15);
+        roof.rotation.x = Math.PI / 2 - 0.12;
         scene.add(mark(roof));
-        const stalGeo = new THREE.ConeGeometry(0.5, 3.0, 7);
+        const stalGeo = bakeFacetValues(new THREE.ConeGeometry(0.5, 3.0, 7), pal, { rnd });
         jitterGeometry(stalGeo, 0.12, rnd);
-        scene.add(scatterAt(stalGeo, structMat(), spots(22, 4, 34, rnd), (m, p) => {
-            m.position.set(p.x, 11.5, p.z); m.rotation.z = Math.PI; m.scale.setScalar(0.3 + p.j * 0.6);
+        scene.add(scatterAt(stalGeo, paintMat(), spots(22, 4, 34, rnd), (m, p) => {
+            m.position.set(p.x, 9.0, p.z); m.rotation.z = Math.PI; m.scale.setScalar(0.3 + p.j * 0.6);
         }));
     }
     // Growth where things grow — never in barren places, sparse places, or
@@ -1318,13 +1900,14 @@ function composeMasses(
         bushes.customDepthMaterial = leafDepth();
         scene.add(bushes);
     }
-    scene.add(scatterAt(new THREE.DodecahedronGeometry(0.7, 0), structMat(), spots(Math.round(8 + dens * 20), 4, 30, rnd), (m, p) => {
+    const rubbleSpots = spots(Math.round(8 + dens * 20), 4, 30, rnd);
+    const rubbleGeo = bakeFacetValues(new THREE.DodecahedronGeometry(0.7, 0), pal, { rnd });
+    scene.add(scatterAt(rubbleGeo, paintMat(), rubbleSpots, (m, p) => {
         m.position.set(p.x, 0.28, p.z); m.rotation.set(p.r, p.j * Math.PI, p.r);
     }));
+    contactBlobs(scene, rubbleSpots, pal, (p) => 0.9 * p.s, 0.30);
     if (pal.emissiveOn) {
-        scene.add(scatterAt(new THREE.SphereGeometry(0.15, 6, 6), glowMat(), spots(40, 3, 30, rnd), (m, p) => {
-            m.position.set(p.x, 0.5 + p.j * 4, p.z);
-        }));
+        glowDots(scene, spots(40, 3, 30, rnd), pal.emissive, (p) => 0.5 + p.j * 4);
     }
 }
 
@@ -1340,7 +1923,7 @@ function composeMasses(
  * — the "floating" complaint.) x ~±2.6 leaves most of the shape off-frame,
  * inner edge in.
  */
-function buildFraming(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, traits: SceneTraits, visual: SceneVisual | null | undefined, biome: string) {
+function buildFraming(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, traits: SceneTraits, visual: SceneVisual | null | undefined, biome: string, roadMask?: RoadMask, noise2D?: (x: number, y: number) => number) {
     if (biome === 'void' || biome === 'sea') return;        // nowhere to stand
     if (visual?.silhouette === 'none') return;              // an empty place stays empty
     // From the standing camera these are THE near anchor — the thing beside
@@ -1360,20 +1943,132 @@ function buildFraming(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, 
         });
         bushes.customDepthMaterial = leafDepth();
         scene.add(bushes);
-        return;
+    } else {
+        // Barren places frame with rock mounds: smooth, dark WITHIN the palette.
+        const mat = new THREE.MeshStandardMaterial({
+            color: mix(mix(pal.structure, pal.ground, 0.4), 0x000000, 0.22), roughness: 0.95,
+            emissive: pal.emissive, emissiveIntensity: pal.emissiveOn ? 0.13 : 0
+        });
+        const geo = new THREE.SphereGeometry(1, 8, 6);
+        jitterGeometry(geo, 0.16, rnd);
+        scene.add(scatterAt(geo, mat, framers, (m, p) => {
+            m.position.set(p.x, 0.25 * p.s, p.z);
+            m.scale.set(p.s * 1.6, p.s * 0.8, p.s * 1.15);
+            m.rotation.set(0, p.r, (p.j - 0.5) * 0.1);
+        }));
     }
-    // Barren places frame with rock mounds: smooth, dark WITHIN the palette.
-    const mat = new THREE.MeshStandardMaterial({
-        color: mix(mix(pal.structure, pal.ground, 0.4), 0x000000, 0.22), roughness: 0.95,
-        emissive: pal.emissive, emissiveIntensity: pal.emissiveOn ? 0.13 : 0
-    });
-    const geo = new THREE.SphereGeometry(1, 8, 6);
-    jitterGeometry(geo, 0.16, rnd);
-    scene.add(scatterAt(geo, mat, framers, (m, p) => {
-        m.position.set(p.x, 0.25 * p.s, p.z);
-        m.scale.set(p.s * 1.6, p.s * 0.8, p.s * 1.15);
-        m.rotation.set(0, p.r, (p.j - 0.5) * 0.1);
-    }));
+
+    // ---------- the boundary ring (law D6): the scene ENDS ----------
+    // Every scene is hemmed by the world's own architecture or its own
+    // darkness — a ring of dark masses at the playable edge, in the biome's
+    // own silhouette, dimmed. It reads "goes on, not for you", never "content
+    // ends". No raw world edge, no floating horizon polygons.
+    if (!traits.space && !traits.submerged) {
+        // The boundary is the world's own material, DIMMED — never near-black.
+        // Pale worlds get a deep slate of their own sky hue; dark worlds a
+        // darker step of their structure. Kept LOW and pushed OUT to the
+        // ridgeline gap so it hems the view without looming over the player.
+        const pale = luminance(mix(pal.ground, pal.fog, 0.5)) > 0.45;
+        const darkTarget = pale ? mix(mix(pal.fog, pal.sky, 0.35), 0x000000, 0.30) : mix(pal.fog, 0x000000, 0.60);
+        const dark = mix(mix(pal.structure, pal.ground, 0.25), darkTarget, pale ? 0.62 : 0.45);
+        const built = biome === 'urban' || visual?.order === 'artificial';
+        // THREE silhouette variants per world, cycled around the ring — no two
+        // adjacent masses share a gable/crenellation rhythm (law B5/B10).
+        const variants: THREE.BufferGeometry[] = [];
+        for (let v = 0; v < 3; v++) {
+            let g: THREE.BufferGeometry;
+            if (built) {
+                // Dark rooftops/towers — the city continues, unlit, past the edge.
+                g = seussify(new THREE.BoxGeometry(2.2 + v * 0.7, 5.2 + v * 1.1, 2.2 + (2 - v) * 0.5, 1, 5, 1), 0.35, 0.10, 0.08 + v * 0.04, rnd);
+            } else if (biome === 'arctic') {
+                // Ice cliffs: pale family sunk into the slate shadow value.
+                g = new THREE.CylinderGeometry(1.4 + v * 0.4, 2.4 + v * 0.5, 5.0 + v * 1.4, 6);
+                jitterGeometry(g, 0.20, rnd);
+            } else if (biome === 'desert' || biome === 'plains') {
+                // Dune-dark swells on the horizon line.
+                g = new THREE.SphereGeometry(3.0 + v * 0.6, 9, 6);
+                g.scale(1.4 + v * 0.25, 0.42 + v * 0.09, 1);
+                jitterGeometry(g, 0.13, rnd);
+            } else {
+                // Rock walls / crags — the cave closes with its own rock.
+                g = new THREE.IcosahedronGeometry(2.6 + v * 0.5, 1);
+                g.scale(1 + v * 0.15, 1.1 + v * 0.30, 1);
+                jitterGeometry(g, 0.26, rnd);
+            }
+            variants.push(bakeFacetValues(g, pal, {
+                base: dark, cap: mix(dark, pal.key, 0.30),
+                // Away faces sink toward the fog hue, not toward a second
+                // black — and jitter stays ON so the masses never read as
+                // flat unlit cutouts.
+                dark: mix(dark, pal.fog, pale ? 0.60 : 0.22),
+                jitter: 0.11, rnd
+            }));
+        }
+        const ringAt = ringSpots(15, 55 + rnd() * 8, rnd);
+        for (let v = 0; v < 3; v++) {
+            const sub = ringAt.filter((_, i) => i % 3 === v);
+            scene.add(scatterAt(variants[v], paintMat(), sub, (m, p) => {
+                m.position.set(p.x, 0.9 * p.s, p.z);
+                m.scale.set(p.s * (1.1 + p.j), p.s * (0.55 + p.j * 0.5), p.s * (1.1 + p.j));
+                m.rotation.y = p.r;
+            }));
+        }
+        contactBlobs(scene, ringAt, pal, (p) => p.s * 3.6, 0.30);
+        // Bases swallowed by drift so no mass sits on a naked contact line.
+        driftSkirts(scene, ringAt, pal, rnd);
+
+        // The ring is INHABITED, not void: built edges get a scatter of small
+        // warm windows; wild edges a few lone warm dabs (law E3/A6 sparks).
+        const warmCol = pal.emissiveOn ? pal.emissive : 0xffc36a;
+        const winMat = new THREE.MeshBasicMaterial({ color: mix(warmCol, 0xffffff, 0.25), fog: true });
+        const winSpots: Spot[] = [];
+        for (const p of ringAt) {
+            const nWin = built ? 2 + Math.floor(p.j * 3) : (p.j > 0.62 ? 1 : 0);
+            for (let w = 0; w < nWin; w++) {
+                winSpots.push({
+                    x: p.x + (rnd() - 0.5) * 1.6, z: p.z + (rnd() - 0.5) * 1.6,
+                    s: 1, r: Math.atan2(-p.x, -p.z), j: rnd()
+                });
+            }
+        }
+        if (winSpots.length) {
+            const winGeo = new THREE.PlaneGeometry(built ? 0.34 : 0.22, built ? 0.46 : 0.22);
+            const wins = scatterAt(winGeo, winMat, winSpots, (m, p) => {
+                m.position.set(p.x, (built ? 1.2 + p.j * 3.4 : 0.9 + p.j * 1.2), p.z);
+                m.rotation.y = p.r;
+            });
+            wins.castShadow = false; wins.receiveShadow = false;
+            scene.add(wins);
+        }
+
+        // The path's exits close with mouths/gates/darkness: a dark mouth card
+        // at each far road end, flanked by two masses so it reads as a gate.
+        if (roadMask && noise2D) {
+            const wander = (t: number) => noise2D(t * 0.035, 7.3) * 3.2;
+            const mouthMat = new THREE.MeshBasicMaterial({ map: mouthTexture(pal), transparent: true, depthWrite: false, fog: false });
+            const gateGeo = bakeFacetValues(new THREE.DodecahedronGeometry(2.2, 0), pal, { base: dark, rnd });
+            const exits = [
+                { x: wander(-44), z: -44, ry: 0 },                 // north, down the view
+                { x: -46, z: wander(-46 + 41), ry: Math.PI / 2 },  // west
+                { x: 46, z: wander(46 + 41), ry: -Math.PI / 2 }    // east
+            ];
+            for (const e of exits) {
+                const mouth = new THREE.Mesh(new THREE.CircleGeometry(2.6, 20), mouthMat);
+                mouth.position.set(e.x, 2.0, e.z);
+                mouth.rotation.y = e.ry;
+                scene.add(mark(mouth));
+                const flank = scatterAt(gateGeo, paintMat(), [
+                    { x: e.x - Math.cos(e.ry) * 3.2, z: e.z + Math.sin(e.ry) * 3.2, s: 1, r: rnd() * Math.PI, j: rnd() },
+                    { x: e.x + Math.cos(e.ry) * 3.2, z: e.z - Math.sin(e.ry) * 3.2, s: 1, r: rnd() * Math.PI, j: rnd() }
+                ], (m, p) => {
+                    m.position.set(p.x, 1.4, p.z);
+                    m.scale.set(1.2, 1.5 + p.j * 0.8, 1.2);
+                    m.rotation.y = p.r;
+                });
+                scene.add(flank);
+            }
+        }
+    }
 }
 
 // ---------- near-field ground detail ----------
@@ -1457,10 +2152,12 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
 
     switch (biome) {
         case 'forest': {
-            // One spot list -> trunk and canopy land on the SAME tree.
-            const trees = spots(80, 7, 42, rnd);
+            // One spot list -> trunk and canopy land on the SAME tree. Fewer,
+            // BIGGER crowns on leaning trunks: distinct lollipops that read as
+            // individual trees, not one continuous green ceiling (S1/A3).
+            const trees = spots(52, 8, 42, rnd);
             addTrees(scene, trees, structMat(), foliMat(),
-                { trunkH: 5.2, trunkR: 0.3, tiers: 3, canopyR: 1.9, canopyH: 2.6 }, pal, rnd);
+                { trunkH: 5.6, trunkR: 0.3, tiers: 3, canopyR: 2.5, canopyH: 2.6, lean: 0.3 }, pal, rnd);
             // Saplings: soft fluff puffs, not little pyramids.
             const saplingGeo = fluffCluster(5, 0.45, new THREE.Vector3(0, 0.4, 0), 1.1, rnd);
             const saplings = scatterAt(saplingGeo, leafMatFor(mix(pal.foliage, pal.ground, 0.15)), spots(70, 3, 28, rnd), (m, p) => {
@@ -1478,22 +2175,31 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
                 m.rotation.set(Math.PI / 2 + (p.j - 0.5) * 0.2, p.r, 0);
                 m.scale.setScalar(0.7 + p.j * 0.7);
             }));
-            scene.add(scatterAt(new THREE.CylinderGeometry(0.24, 0.32, 0.5, 7), logMat, spots(12, 4, 28, rnd), (m, p) => {
+            const stumpSpots = spots(12, 4, 28, rnd);
+            scene.add(scatterAt(new THREE.CylinderGeometry(0.24, 0.32, 0.5, 7), logMat, stumpSpots, (m, p) => {
                 m.position.set(p.x, 0.25, p.z);
                 m.rotation.y = p.r;
                 m.scale.setScalar(0.7 + p.j * 0.8);
             }));
+            contactBlobs(scene, logSpots, pal, (p) => 1.1 * p.s, 0.28);
+            contactBlobs(scene, stumpSpots, pal, (p) => 0.6 * p.s, 0.28);
             break;
         }
         case 'desert': {
-            scene.add(scatterAt(new THREE.DodecahedronGeometry(1.1, 0), structMat(), spots(24, 8, 40, rnd), (m, p) => {
+            const rockSpots = spots(24, 8, 40, rnd);
+            const rockGeo = bakeFacetValues(new THREE.DodecahedronGeometry(1.1, 0), pal, { rnd });
+            scene.add(scatterAt(rockGeo, paintMat(), rockSpots, (m, p) => {
                 m.position.set(p.x, 0.4 + p.j * 0.5, p.z);
                 m.scale.set(p.s * 1.3, p.s * 0.6, p.s * 1.3);
                 m.rotation.set(p.j, p.r, p.j);
             }));
-            scene.add(scatterAt(new THREE.CylinderGeometry(0.08, 0.2, 3.2, 5), structMat(), spots(9, 11, 36, rnd), (m, p) => {
+            contactBlobs(scene, rockSpots, pal, (p) => p.s * 1.6, 0.30);
+            const pillarSpots = spots(9, 11, 36, rnd);
+            const pillarGeo = bakeFacetValues(new THREE.CylinderGeometry(0.08, 0.2, 3.2, 5), pal, { rnd });
+            scene.add(scatterAt(pillarGeo, paintMat(), pillarSpots, (m, p) => {
                 m.position.set(p.x, 1.6, p.z); m.rotation.z = (p.j - 0.5) * 0.4;
             }));
+            contactBlobs(scene, pillarSpots, pal, () => 0.7, 0.30);
             // Saguaro cacti: trunk + two elbowed arms, merged once and instanced.
             const cactusParts: THREE.BufferGeometry[] = [new THREE.CylinderGeometry(0.16, 0.2, 2.4, 7).translate(0, 1.2, 0)];
             for (const side of [-1, 1]) {
@@ -1502,22 +2208,28 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             }
             const cactusGeo = mergeGeometries(cactusParts)!;
             const cactusMat = new THREE.MeshStandardMaterial({ color: mix(pal.foliage, 0x2a7a3a, 0.5), roughness: 0.85 });
-            scene.add(scatterAt(cactusGeo, cactusMat, spots(12, 8, 36, rnd), (m, p) => {
+            const cactusSpots = spots(12, 8, 36, rnd);
+            scene.add(scatterAt(cactusGeo, cactusMat, cactusSpots, (m, p) => {
                 m.position.set(p.x, 0, p.z);
                 m.scale.setScalar(p.s * (0.6 + p.j * 0.8));
                 m.rotation.y = p.r;
             }));
+            contactBlobs(scene, cactusSpots, pal, (p) => p.s * 0.8, 0.30);
             break;
         }
         case 'arctic': {
             // Ice shards: jittered 6-sided cones. 4-sided ones read as pyramids.
             const shardGeo = new THREE.ConeGeometry(0.9, 4.5, 6);
             jitterGeometry(shardGeo, 0.14, rnd);
-            scene.add(scatterAt(shardGeo, foliMat(), spots(42, 7, 42, rnd), (m, p) => {
+            const iceGeo = bakeFacetValues(shardGeo, pal, { base: pal.foliage, snow: true, rnd });
+            const shardSpots = spots(42, 7, 42, rnd);
+            scene.add(scatterAt(iceGeo, paintMat(), shardSpots, (m, p) => {
                 m.position.set(p.x, 2.2 * p.s, p.z); m.scale.setScalar(p.s);
                 m.rotation.set((p.j - 0.5) * 0.3, p.r, (p.j - 0.5) * 0.3);
             }));
-            scene.add(scatterAt(new THREE.IcosahedronGeometry(0.8, 0), structMat(), spots(26, 5, 34, rnd), (m, p) => {
+            contactBlobs(scene, shardSpots, pal, (p) => p.s * 1.1, 0.26);
+            const iceRockGeo = bakeFacetValues(new THREE.IcosahedronGeometry(0.8, 0), pal, { snow: true, rnd });
+            scene.add(scatterAt(iceRockGeo, paintMat(), spots(26, 5, 34, rnd), (m, p) => {
                 m.position.set(p.x, 0.3, p.z); m.scale.set(p.s, 0.6, p.s);
             }));
             // Wind-carved snowdrifts: smooth, bright, half-buried lenses.
@@ -1531,7 +2243,8 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             break;
         }
         case 'sea': {
-            scene.add(scatterAt(new THREE.DodecahedronGeometry(1.4, 0), structMat(), spots(15, 9, 38, rnd), (m, p) => {
+            const seaRockGeo = bakeFacetValues(new THREE.DodecahedronGeometry(1.4, 0), pal, { rnd });
+            scene.add(scatterAt(seaRockGeo, paintMat(), spots(15, 9, 38, rnd), (m, p) => {
                 m.position.set(p.x, -0.2 + p.j * 0.8, p.z);
                 m.scale.set(p.s, p.s * 0.9, p.s); m.rotation.set(p.j, p.r, p.j);
             }));
@@ -1542,25 +2255,31 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             // 5-sided cone is a pyramid, this reads as broken rock.
             const cragGeo = new THREE.IcosahedronGeometry(3.2, 1);
             jitterGeometry(cragGeo, 0.35, rnd);
-            scene.add(scatterAt(cragGeo, structMat(), spots(15, 22, 46, rnd), (m, p) => {
+            const cragFacetGeo = bakeFacetValues(cragGeo, pal, { rnd });
+            const cragSpots = spots(15, 22, 46, rnd);
+            scene.add(scatterAt(cragFacetGeo, paintMat(), cragSpots, (m, p) => {
                 m.position.set(p.x, 3.5 * p.s, p.z);
                 m.scale.set(p.s, p.s * (1.1 + p.j * 0.9), p.s); m.rotation.y = p.r;
             }));
-            scene.add(scatterAt(new THREE.DodecahedronGeometry(0.9, 0), structMat(), spots(32, 5, 30, rnd), (m, p) => {
+            contactBlobs(scene, cragSpots, pal, (p) => p.s * 3.4, 0.30);
+            const talusGeo = bakeFacetValues(new THREE.DodecahedronGeometry(0.9, 0), pal, { rnd });
+            scene.add(scatterAt(talusGeo, paintMat(), spots(32, 5, 30, rnd), (m, p) => {
                 m.position.set(p.x, 0.35, p.z); m.rotation.set(p.j, p.r, p.j);
             }));
             break;
         }
         case 'underground': {
-            scene.add(scatterAt(new THREE.ConeGeometry(0.7, 3.4, 6), structMat(), spots(48, 4, 34, rnd), (m, p) => {
+            const miteGeo = bakeFacetValues(new THREE.ConeGeometry(0.7, 3.4, 6), pal, { rnd });
+            const miteSpots = spots(48, 4, 34, rnd);
+            scene.add(scatterAt(miteGeo, paintMat(), miteSpots, (m, p) => {
                 m.position.set(p.x, 1.7 * p.s, p.z); m.scale.setScalar(p.s);
             }));
-            scene.add(scatterAt(new THREE.ConeGeometry(0.5, 2.8, 6), structMat(), spots(38, 4, 34, rnd), (m, p) => {
+            contactBlobs(scene, miteSpots, pal, (p) => p.s * 0.9, 0.32);
+            const titeGeo = bakeFacetValues(new THREE.ConeGeometry(0.5, 2.8, 6), pal, { rnd });
+            scene.add(scatterAt(titeGeo, paintMat(), spots(38, 4, 34, rnd), (m, p) => {
                 m.position.set(p.x, 9.2, p.z); m.rotation.z = Math.PI; m.scale.setScalar(p.s);
             }));
-            scene.add(scatterAt(new THREE.SphereGeometry(0.14, 6, 6), glowMat(), spots(28, 4, 28, rnd), (m, p) => {
-                m.position.set(p.x, 0.4 + p.j * 3.5, p.z);
-            }));
+            glowDots(scene, spots(28, 4, 28, rnd), pal.emissive, (p) => 0.4 + p.j * 3.5, 0.10);
             break;
         }
         case 'urban': {
@@ -1579,9 +2298,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
                 m.scale.set(p.s, 0.4 + p.j * 1.8, p.s);
                 m.rotation.y = Math.round(p.r) * (Math.PI / 4);
             }));
-            scene.add(scatterAt(new THREE.SphereGeometry(0.16, 6, 6), glowMat(), spots(44, 8, 42, rnd), (m, p) => {
-                m.position.set(p.x, 1.4 + p.j * 6, p.z);
-            }));
+            glowDots(scene, spots(44, 8, 42, rnd), pal.emissiveOn ? pal.emissive : 0x9fc8ff, (p) => 1.4 + p.j * 6);
             // Streetlamps: ONE spot list -> pole and head land on the same lamp.
             const lampSpots = spots(14, 8, 38, rnd);
             const poleMat = new THREE.MeshStandardMaterial({ color: mix(pal.structure, 0x000000, 0.5), roughness: 0.9 });
@@ -1592,6 +2309,9 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             scene.add(scatterAt(new THREE.SphereGeometry(0.17, 8, 6), lampGlow, lampSpots, (m, p) => {
                 m.position.set(p.x, 3.2, p.z);
             }));
+            // Towers and lamp posts both stand IN the street, not on it.
+            contactBlobs(scene, blocks, pal, (p) => p.s * 2.6, 0.30);
+            contactBlobs(scene, lampSpots, pal, () => 0.55, 0.30);
             break;
         }
         case 'swamp': {
@@ -1609,27 +2329,30 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             });
             reeds.customDepthMaterial = leafDepth();
             scene.add(reeds);
-            scene.add(scatterAt(new THREE.SphereGeometry(0.09, 5, 5), glowMat(), spots(32, 4, 26, rnd), (m, p) => {
-                m.position.set(p.x, 0.5 + p.j * 1.8, p.z);
-            }));
+            glowDots(scene, spots(32, 4, 26, rnd), pal.emissive, (p) => 0.5 + p.j * 1.8, 0.09);
             break;
         }
         case 'plains': {
             scene.add(scatterAt(new THREE.ConeGeometry(0.14, 0.7, 4), foliMat(), spots(240, 2, 42, rnd), (m, p) => {
                 m.position.set(p.x, 0.35, p.z); m.rotation.z = (p.j - 0.5) * 0.35;
             }));
-            scene.add(scatterAt(new THREE.DodecahedronGeometry(0.5, 0), structMat(), spots(18, 6, 36, rnd), (m, p) => {
+            const plainRockGeo = bakeFacetValues(new THREE.DodecahedronGeometry(0.5, 0), pal, { rnd });
+            scene.add(scatterAt(plainRockGeo, paintMat(), spots(18, 6, 36, rnd), (m, p) => {
                 m.position.set(p.x, 0.2, p.z); m.rotation.set(p.j, p.r, p.j);
             }));
             break;
         }
         case 'ruin': {
-            scene.add(scatterAt(new THREE.CylinderGeometry(0.5, 0.55, 6, 8), structMat(), spots(22, 8, 36, rnd), (m, p) => {
+            const colGeo = bakeFacetValues(new THREE.CylinderGeometry(0.5, 0.55, 6, 8), pal, { rnd });
+            const colSpots = spots(22, 8, 36, rnd);
+            scene.add(scatterAt(colGeo, paintMat(), colSpots, (m, p) => {
                 const broken = 0.25 + p.j * 0.85;
                 m.position.set(p.x, 3 * broken, p.z); m.scale.set(1, broken, 1);
                 m.rotation.z = p.j > 0.75 ? (p.j - 0.5) * 0.35 : 0;
             }));
-            scene.add(scatterAt(new THREE.BoxGeometry(1.4, 0.5, 1.4), structMat(), spots(28, 5, 30, rnd), (m, p) => {
+            contactBlobs(scene, colSpots, pal, () => 1.1, 0.32);
+            const slabGeo = bakeFacetValues(new THREE.BoxGeometry(1.4, 0.5, 1.4), pal, { rnd });
+            scene.add(scatterAt(slabGeo, paintMat(), spots(28, 5, 30, rnd), (m, p) => {
                 m.position.set(p.x, 0.25, p.z);
                 m.rotation.set((p.j - 0.5) * 0.3, p.r, (p.j - 0.5) * 0.3);
             }));
@@ -1645,14 +2368,15 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             break;
         }
         case 'fire': {
-            scene.add(scatterAt(new THREE.DodecahedronGeometry(1.3, 0), structMat(), spots(28, 7, 40, rnd), (m, p) => {
+            const fireRockGeo = bakeFacetValues(new THREE.DodecahedronGeometry(1.3, 0), pal, { rnd });
+            const fireSpots = spots(28, 7, 40, rnd);
+            scene.add(scatterAt(fireRockGeo, paintMat(), fireSpots, (m, p) => {
                 m.position.set(p.x, 0.3 + p.j * 0.8, p.z);
                 m.scale.set(p.s, p.s * (0.7 + p.j * 1.5), p.s);
                 m.rotation.set(p.j, p.r, p.j);
             }));
-            scene.add(scatterAt(new THREE.SphereGeometry(0.13, 5, 5), glowMat(), spots(64, 3, 32, rnd), (m, p) => {
-                m.position.set(p.x, 0.3 + p.j * 4.5, p.z);
-            }));
+            contactBlobs(scene, fireSpots, pal, (p) => p.s * 1.5, 0.32);
+            glowDots(scene, spots(64, 3, 32, rnd), pal.emissive, (p) => 0.3 + p.j * 4.5, 0.10);
             break;
         }
         case 'synthetic': {
@@ -1711,7 +2435,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             hang.position.set(-0.72, 2.06, 0); sign.add(hang);
             // base stones so the post grows out of something
             for (let i = 0; i < 3; i++) {
-                const st = new THREE.Mesh(bakeGradient(makeRockGeo(rnd), mix(pal.structure, 0x000000, 0.4), mix(pal.structure, pal.key, 0.25), rnd), paintMat());
+                const st = new THREE.Mesh(bakeFacetValues(makeRockGeo(rnd), pal, { rnd }), paintMat());
                 const aa = rnd() * Math.PI * 2;
                 st.position.set(Math.cos(aa) * 0.3, 0.06, Math.sin(aa) * 0.3);
                 st.scale.setScalar(0.16 + rnd() * 0.1);
@@ -1735,7 +2459,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             scene.add(grass);
 
             // --- verge stones: hug the road edges ---
-            const stoneGeo = bakeGradient(makeRockGeo(rnd), mix(pal.structure, 0x000000, 0.4), mix(pal.structure, pal.key, 0.25), rnd);
+            const stoneGeo = bakeFacetValues(makeRockGeo(rnd), pal, { rnd });
             const vergeSpots = spots(90, 2, 30, rnd).filter(pt => { const m2 = mask(pt.x, pt.z); return m2 > 0.15 && m2 < 0.6; });
             scene.add(scatterAt(stoneGeo, paintMat(), vergeSpots, (m, pt) => {
                 m.position.set(pt.x, 0.03, pt.z);
@@ -1776,32 +2500,122 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
     }
 }
 
-// ---------- weather ----------
+// ---------- the air pass (law C5): ONE particle, one tint ----------
 
-function buildWeather(scene: THREE.Scene, weather: string, pal: ScenePalette) {
-    if (weather !== 'rain' && weather !== 'snow') return;
-    const snow = weather === 'snow';
-    const n = snow ? 1400 : 2200;
+/**
+ * Every world owns exactly ONE particle and one air tint. The particle is
+ * chosen per scene from palette/traits (falling weather > marine snow >
+ * embers/fireflies > dust motes), dozens not hundreds, spread through near,
+ * mid and far depths so the volume between viewer and wall has a body. The
+ * tint is the fog banks + low ground mist that melt the hard low-poly edges.
+ *
+ * This MERGES the old buildWeather/buildMotes/buildAtmosphere trio — three
+ * builders layering competing particle systems was how a scene ended up with
+ * snow AND dust AND embers at once. The live-layer userData flags
+ * (isPrecip/isMote/isFogBank/isGroundMist) are preserved so the diorama's
+ * animation loop keeps working unchanged.
+ */
+function buildAir(scene: THREE.Scene, biome: string, weather: string, pal: ScenePalette, rnd: () => number, traits: SceneTraits) {
+    const openSky = !traits.enclosed && !traits.space && !traits.submerged;
+    const snowing = openSky && weather === 'snow';
+    const raining = openSky && weather === 'rain';
+    const marine = !!traits.submerged;
+    const fireflies = pal.starAmount > 0.5 && ['forest', 'crossroads', 'swamp', 'plains'].includes(biome);
+    const embers = !marine && (pal.emissiveOn || fireflies || biome === 'fire');
+
+    // --- the ONE particle ---
+    const n = snowing ? 130 : raining ? 110 : marine ? 90 : embers ? 70 : 55;
     const geo = new THREE.BufferGeometry();
     const pos = new Float32Array(n * 3);
-    for (let i = 0; i < n * 3; i += 3) {
-        pos[i] = (Math.random() - 0.5) * 70;
-        pos[i + 1] = Math.random() * 22;
-        pos[i + 2] = (Math.random() - 0.5) * 70;
+    const phase = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+        // near / mid / far: sqrt spread, biased toward the view like the props
+        const ang = rnd() < 0.8
+            ? -Math.PI / 2 + (rnd() - 0.5) * (Math.PI * 0.95)
+            : rnd() * Math.PI * 2;
+        const rad = 2 + Math.sqrt(rnd()) * 46;
+        pos[i * 3] = Math.cos(ang) * rad;
+        pos[i * 3 + 1] = 0.4 + rnd() * 14;
+        pos[i * 3 + 2] = Math.sin(ang) * rad;
+        phase[i] = rnd() * Math.PI * 2;
     }
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const glowy = !marine && !snowing && !raining && (pal.emissiveOn || fireflies);
+    const color = snowing ? 0xffffff
+        : raining ? 0xbcd0e0
+        : marine ? 0xd8ecf4
+        : glowy ? (pal.emissiveOn ? pal.emissive : 0xd8e87a)
+        : mix(pal.foliage, 0xffffff, 0.55);
     const mat = new THREE.PointsMaterial({
-        color: snow ? 0xffffff : 0xbcd0e0,
-        size: snow ? 0.16 : 0.075,
+        // soft round sprite — bare square points were the "white squares in
+        // the sky" tell. Colour picks up the biome's own light.
+        map: softSprite(),
+        color,
+        size: snowing ? 0.34 : raining ? 0.16 : marine ? 0.10 : glowy ? 0.20 : 0.14,
         transparent: true,
-        opacity: snow ? 0.95 : 0.55,
-        depthWrite: false
+        opacity: snowing ? 0.9 : raining ? 0.5 : marine ? 0.45 : glowy ? 0.85 : 0.5,
+        depthWrite: false,
+        blending: glowy ? THREE.AdditiveBlending : THREE.NormalBlending
     });
     const p = new THREE.Points(geo, mat);
-    p.userData.isPrecip = true;
-    p.userData.fallSpeed = snow ? 0.035 : 0.5;
-    p.userData.drift = snow;
+    if (snowing || raining) {
+        p.userData.isPrecip = true;
+        p.userData.fallSpeed = snowing ? 0.035 : 0.5;
+        p.userData.drift = snowing;
+    } else {
+        p.userData.isMote = true;
+        p.userData.glowy = glowy;
+        p.userData.rise = marine ? -0.005 : glowy ? 0.012 : 0.004;   // embers climb, marine snow sinks
+        p.userData.phase = phase;
+    }
     scene.add(mark(p));
+
+    // --- the air tint: mid-ground fog banks + low ground mist ---
+    const tex = softSprite();
+    const fogCol = new THREE.Color(pal.fog);
+    // Enclosed glowing spaces: the mist itself carries the glow colour — this
+    // is "the air is lit", the difference between a cavern and a black room.
+    if (traits.enclosed && pal.emissiveOn) fogCol.lerp(new THREE.Color(pal.emissive), 0.30);
+
+    // Mid-ground fog banks — the main edge-hiding layer. Few but large; low
+    // opacity to keep overdraw (fillrate) sane on phones.
+    for (let i = 0; i < 16; i++) {
+        const smat = new THREE.SpriteMaterial({
+            map: tex, color: fogCol,
+            transparent: true, opacity: 0.07 + rnd() * 0.09,
+            depthWrite: false, fog: false
+        });
+        const sp = new THREE.Sprite(smat);
+        const ang = -Math.PI / 2 + (rnd() - 0.5) * Math.PI * 1.2;   // biased toward the view
+        const r = 9 + rnd() * 32;
+        sp.position.set(Math.cos(ang) * r, 1.5 + rnd() * 6.5, Math.sin(ang) * r);
+        const w = 11 + rnd() * 18;
+        sp.scale.set(w, w * (0.5 + rnd() * 0.2), 1);
+        sp.userData.isFogBank = true;
+        sp.userData.drift = (rnd() - 0.5) * 0.012;   // the live loop reads ud.drift
+        sp.userData.phase = rnd() * Math.PI * 2;
+        sp.userData.baseY = sp.position.y;
+        scene.add(mark(sp));
+    }
+
+    // Ground mist — low, dense-ish soft points so tree/rock bases melt into it.
+    // Enclosed scenes get more: the floor must never collapse to a black void.
+    const nm = traits.enclosed ? 110 : 70;
+    const mgeo = new THREE.BufferGeometry();
+    const mpos = new Float32Array(nm * 3);
+    for (let i = 0; i < nm; i++) {
+        mpos[i * 3]     = (rnd() - 0.5) * 62;
+        mpos[i * 3 + 1] = 0.3 + rnd() * 2.4;
+        mpos[i * 3 + 2] = (rnd() - 0.5) * 62;
+    }
+    mgeo.setAttribute('position', new THREE.BufferAttribute(mpos, 3));
+    const mmat = new THREE.PointsMaterial({
+        map: tex, color: fogCol, size: 7, sizeAttenuation: true,
+        transparent: true, opacity: traits.enclosed ? 0.19 : 0.14, depthWrite: false, fog: false
+    });
+    const mist = new THREE.Points(mgeo, mmat);
+    mist.userData.isGroundMist = true;
+    scene.add(mark(mist));
 }
 
 // ---------- creatures: the world is inhabited ----------
@@ -1880,52 +2694,7 @@ function buildCreatures(scene: THREE.Scene, biome: string, pal: ScenePalette, rn
     }
 }
 
-// ---------- ambient motes ----------
-
-/**
- * Drifting motes — the single cheapest thing that makes a static stylised scene
- * feel ALIVE. Dust in daylight, embers where the biome glows, snow-lit flecks
- * in the cold. One Points system, animated in the render loop like precip.
- * Without this the world is frozen: only the camera and precipitation moved,
- * so a calm/clear scene read as a screenshot, not a place.
- */
-function buildMotes(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: () => number, traits?: SceneTraits) {
-    // Fireflies: after dark in living biomes, the dust motes become embers of
-    // green-gold light (and pulse — see the isMote handler in the diorama).
-    const fireflies = pal.starAmount > 0.5 && ['forest', 'crossroads', 'swamp', 'plains'].includes(biome);
-    // Marine snow: underwater, the motes are pale flecks that SINK slowly.
-    const marine = !!traits?.submerged;
-    const glowy = !marine && (pal.emissiveOn || fireflies);
-    const n = marine ? 110 : glowy ? 90 : 60;
-    const geo = new THREE.BufferGeometry();
-    const pos = new Float32Array(n * 3);
-    const phase = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-        pos[i * 3]     = (rnd() - 0.5) * 46;
-        pos[i * 3 + 1] = rnd() * 12 + 0.5;
-        pos[i * 3 + 2] = (rnd() - 0.5) * 46;
-        phase[i] = rnd() * Math.PI * 2;
-    }
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-
-    // Embers rise; dust/pollen drift; marine snow sinks. Colour picks up the
-    // biome's own light.
-    const color = marine ? 0xd8ecf4 : glowy ? (pal.emissiveOn ? pal.emissive : 0xd8e87a) : mix(pal.foliage, 0xffffff, 0.55);
-    const mat = new THREE.PointsMaterial({
-        color,
-        size: marine ? 0.07 : glowy ? 0.14 : 0.085,
-        transparent: true,
-        opacity: marine ? 0.45 : glowy ? 0.9 : 0.5,
-        depthWrite: false,
-        blending: glowy ? THREE.AdditiveBlending : THREE.NormalBlending
-    });
-    const p = new THREE.Points(geo, mat);
-    p.userData.isMote = true;
-    p.userData.glowy = glowy;
-    p.userData.rise = marine ? -0.005 : glowy ? 0.012 : 0.004;   // embers climb, snow sinks
-    p.userData.phase = phase;
-    scene.add(mark(p));
-}
+// ---------- ambient motes: MERGED into buildAir (law C5 — one particle per scene) ----------
 
 // ---------- atmosphere: soft fog that hides the low-poly edges ----------
 
@@ -1945,61 +2714,6 @@ function softSprite(): THREE.Texture {
     _softSprite = new THREE.CanvasTexture(cv);
     _softSprite.needsUpdate = true;
     return _softSprite;
-}
-
-/**
- * The single biggest fix for "looks like shit polygon": big soft fog banks
- * drifting through the mid-ground + low ground mist that dissolves the base of
- * every tree and rock. Overlapping soft-alpha billboards read as volume and
- * break up the hard low-poly edges, so the geometry reads as atmosphere rather
- * than as cheap flat shapes. Tinted to the scene's own fog colour.
- */
-function buildAtmosphere(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, traits?: SceneTraits) {
-    const tex = softSprite();
-    const fogCol = new THREE.Color(pal.fog);
-    // Enclosed glowing spaces: the mist itself carries the glow colour — this
-    // is "the air is lit", the difference between a cavern and a black room.
-    if (traits?.enclosed && pal.emissiveOn) fogCol.lerp(new THREE.Color(pal.emissive), 0.30);
-
-    // Mid-ground fog banks — the main edge-hiding layer. Few but large; low
-    // opacity to keep overdraw (fillrate) sane on phones.
-    for (let i = 0; i < 16; i++) {
-        const mat = new THREE.SpriteMaterial({
-            map: tex, color: fogCol,
-            transparent: true, opacity: 0.07 + rnd() * 0.09,
-            depthWrite: false, fog: false
-        });
-        const sp = new THREE.Sprite(mat);
-        const ang = -Math.PI / 2 + (rnd() - 0.5) * Math.PI * 1.2;   // biased toward the view
-        const r = 9 + rnd() * 32;
-        sp.position.set(Math.cos(ang) * r, 1.5 + rnd() * 6.5, Math.sin(ang) * r);
-        const w = 11 + rnd() * 18;
-        sp.scale.set(w, w * (0.5 + rnd() * 0.2), 1);
-        sp.userData.isFogBank = true;
-        sp.userData.driftX = (rnd() - 0.5) * 0.012;
-        sp.userData.phase = rnd() * Math.PI * 2;
-        sp.userData.baseY = sp.position.y;
-        scene.add(mark(sp));
-    }
-
-    // Ground mist — low, dense-ish soft points so tree/rock bases melt into it.
-    // Enclosed scenes get more: the floor must never collapse to a black void.
-    const n = traits?.enclosed ? 110 : 70;
-    const geo = new THREE.BufferGeometry();
-    const pos = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-        pos[i * 3]     = (rnd() - 0.5) * 62;
-        pos[i * 3 + 1] = 0.3 + rnd() * 2.4;
-        pos[i * 3 + 2] = (rnd() - 0.5) * 62;
-    }
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const mmat = new THREE.PointsMaterial({
-        map: tex, color: fogCol, size: 7, sizeAttenuation: true,
-        transparent: true, opacity: traits?.enclosed ? 0.19 : 0.14, depthWrite: false, fog: false
-    });
-    const mist = new THREE.Points(geo, mmat);
-    mist.userData.isGroundMist = true;
-    scene.add(mark(mist));
 }
 
 // ---------- braziers: the Temple of Lost Time lesson ----------
@@ -2038,10 +2752,14 @@ function addBraziers(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, t
         m.scale.setScalar(0.8 + p.j * 0.7);
     }));
     for (const p of at) {
-        const pool = new THREE.PointLight(flameCol, 4.5, 11, 1.5);
+        const pool = new THREE.PointLight(flameCol, 3.5, 11, 1.5);
         pool.position.set(p.x, 1.7, p.z);
         scene.add(mark(pool));
+        // The painted pool: Blinx's fourth layer of every light — and the one
+        // that still reads after the paint bake averages the bloom away.
+        lightPool(scene, p.x, p.z, 2.3, flameCol, 0.5);
     }
+    contactBlobs(scene, at, pal, (p) => 1.2, 0.30);
 }
 
 // ---------- the overhead layer: the upper third is never empty ----------
@@ -2127,13 +2845,17 @@ export function generateScene(scene: THREE.Scene, tags: SceneTags | any, pal: Sc
     const traits = applyVisual(extractTraits(`${t.biomeRaw ?? t.biome ?? ''} ${t.location ?? ''}`), t.visual);
 
     scene.add(buildSky(pal));
+    // One giant + one jagged hem (D7): the far flat layer that keeps the world
+    // from floating in space. The giant's azimuth comes back so the cumulus
+    // layer never clips a hard wedge through the disc.
+    const giantAz = buildSkyHem(scene, pal, rnd, traits, biome);
 
     const roadMask = biome === 'crossroads' || biome === 'urban' ? makeRoadMask(noise2D) : undefined;
-    const ground = buildGround(pal, biome, noise2D, roadMask, traits, t.visual);
+    const ground = buildGround(pal, biome, noise2D, roadMask, traits, t.visual, rnd);
     if (ground) scene.add(ground);
 
     buildProps(scene, biome, pal, rnd, roadMask, traits, t.visual);
-    buildFraming(scene, pal, rnd, traits, t.visual, biome);
+    buildFraming(scene, pal, rnd, traits, t.visual, biome, roadMask, noise2D);
     addBraziers(scene, pal, rnd, traits, biome, t.visual);
     buildOverhead(scene, pal, rnd, biome, traits);
     buildNearField(scene, pal, rnd, roadMask, traits, biome);
@@ -2143,6 +2865,12 @@ export function generateScene(scene: THREE.Scene, tags: SceneTags | any, pal: Sc
     // Glow without crystals still pools — luminous places must LIGHT their
     // ground, not just sparkle (the lantern lesson).
     if (traits.glowing && !traits.crystals) addGlowPools(scene, pal, traits, rnd);
+    // The lit heart (law A6): EVERY scene gets a chain of pools receding down
+    // the path — the value script's spark line, whether or not the place has
+    // roads or its own emissive. Pathless places follow the same noise curve.
+    if (biome !== 'void' && biome !== 'sea' && !traits.space && !traits.submerged) {
+        breadcrumbTrail(scene, pal, rnd, noise2D);
+    }
     // Underwater: shafts of surface light. Broad additive planes — gradients
     // survive the paint bake, so the water column reads in the painting.
     if (traits.submerged) {
@@ -2162,16 +2890,15 @@ export function generateScene(scene: THREE.Scene, tags: SceneTags | any, pal: Sc
         }
     }
     buildCreatures(scene, biome, pal, rnd, traits);
-    // Precip is open-sky only — it does not rain in a cavern or snow in the void.
-    if (!traits.enclosed && !traits.space && !traits.submerged) buildWeather(scene, (t.weather as string) ?? 'clear', pal);
-    buildMotes(scene, biome, pal, rnd, traits);
-    buildAtmosphere(scene, pal, rnd, traits);
+    // The air pass (C5): ONE particle type per scene + the scene's air tint.
+    // Handles its own gating — it does not rain in a cavern or snow in the void.
+    buildAir(scene, biome, (t.weather as string) ?? 'clear', pal, rnd, traits);
     // Horizon ridgelines everywhere a horizon makes sense — peaks, dunes or
     // mesas per world. And the sky gets its furniture: real cumulus bodies,
     // because a Blinx sky is never an empty gradient.
     if (biome !== 'underground' && biome !== 'void' && !traits.enclosed && !traits.space && !traits.submerged) {
         buildRidges(scene, pal, rnd, noise2D, seed % 3);
-        if (pal.cloud > 0.15) buildCumulus(scene, pal, rnd);
+        if (pal.cloud > 0.15) buildCumulus(scene, pal, rnd, giantAz);
     }
 
     // Depth fog, tuned so the MASS BAND (10-30 units out) keeps its identity:
