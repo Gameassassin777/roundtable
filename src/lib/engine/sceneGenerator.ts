@@ -438,6 +438,7 @@ function buildCumulus(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, 
  * so the glow must be a POOL of light on the ground, not just bright pixels.
  */
 function addCrystals(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits, rnd: () => number, dense: boolean) {
+    scene.userData.crystalsAdded = true;
     const col = traits.glowColor ?? 0x7fe8ff;
     const mat = new THREE.MeshStandardMaterial({
         color: mix(col, 0xffffff, 0.15), emissive: col,
@@ -446,6 +447,13 @@ function addCrystals(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits,
         // to white slabs and the crystal loses its hue AND its shape. Blinx's
         // crystals stay saturated: white-hot core is the HALO sprite's job.
         emissiveIntensity: 1.35, roughness: 0.3
+    });
+    // The hero path clamps harder: 2x facets at 1.35 tone-map to white slabs
+    // (16-glow-cavern). The core stays INSIDE the emissive hue at <=85%
+    // brightness — the white-hot read belongs to the halo sprite alone.
+    const heroMat = new THREE.MeshStandardMaterial({
+        color: mix(col, 0xffffff, 0.05), emissive: mix(col, 0x000000, 0.15),
+        emissiveIntensity: 0.85, roughness: 0.3
     });
     const geo = new THREE.OctahedronGeometry(1, 0);
     geo.scale(0.42, 1.5, 0.42);
@@ -457,7 +465,7 @@ function addCrystals(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits,
     // Hero formation just off-centre — the focal point of the frame.
     const hero = new THREE.Group();
     for (let i = 0; i < 5; i++) {
-        const c = new THREE.Mesh(geo, mat);
+        const c = new THREE.Mesh(geo, heroMat);
         c.position.set((rnd() - 0.5) * 1.6, 0.7 + rnd() * 0.5, (rnd() - 0.5) * 1.6);
         c.scale.setScalar(0.9 + rnd() * 1.3);
         c.rotation.set((rnd() - 0.5) * 0.8, rnd() * Math.PI, (rnd() - 0.5) * 0.6);
@@ -675,7 +683,9 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
     // night never sits on an unrelated green carpet. Dark scenes lift the
     // canvas one value step — the floor must never crush to a void (A6).
     const nightLift = pal.starAmount > 0.5;
-    const baseHex = mix(pal.ground, pal.fog, 0.14);
+    // Dark scenes lean harder on the fog chord: the floor must belong to the
+    // air above it, or a purple night floats over an unrelated green carpet.
+    const baseHex = mix(pal.ground, pal.fog, nightLift || traits?.enclosed ? 0.30 : 0.14);
     const cGround = new THREE.Color(nightLift ? mix(baseHex, mix(pal.fog, 0xffffff, 0.35), 0.22) : baseHex);
     const css = (c: THREE.Color, a: number) =>
         `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
@@ -1842,6 +1852,19 @@ function composeMasses(
             });
         }
     }
+    // Massing constraint (law D1/B1, the 04-cereal-ocean monoliths): block
+    // masses are WALLS, not furniture — a close cube in the centre strip fills
+    // half the frame with one flat face. Keep the family out of the near
+    // middle third, at a minimum camera distance, and capped in height
+    // relative to the play area.
+    if (fam === 'blocks') {
+        for (const p of massSpots) {
+            const d = Math.hypot(p.x, p.z);
+            if (d < 12) { const k = 12 / Math.max(d, 0.01); p.x *= k; p.z *= k; }
+            if (Math.abs(p.x) < 7 && p.z < 2 && p.z > -30) p.x = (p.x < 0 ? -1 : 1) * (7 + p.j * 5);
+            p.s = Math.min(p.s, 1.15);
+        }
+    }
     if (fam && MASS_FAMILIES[fam]) {
         // massMat overrides the family's structure material when the PLACE
         // demands it (a city's towers carry lit windows whatever silhouette
@@ -2017,56 +2040,58 @@ function buildFraming(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, 
         // Bases swallowed by drift so no mass sits on a naked contact line.
         driftSkirts(scene, ringAt, pal, rnd);
 
-        // The ring is INHABITED, not void: built edges get a scatter of small
-        // warm windows; wild edges a few lone warm dabs (law E3/A6 sparks).
+        // The ring is INHABITED, not void: built edges carry crooked clusters
+        // of glowing window cards (recipe windowCards — mullions painted on,
+        // every cluster sharing its mass's facing); wild edges a lone warm dab.
         const warmCol = pal.emissiveOn ? pal.emissive : 0xffc36a;
-        const winMat = new THREE.MeshBasicMaterial({ color: mix(warmCol, 0xffffff, 0.25), fog: true });
-        const winSpots: Spot[] = [];
-        for (const p of ringAt) {
-            const nWin = built ? 2 + Math.floor(p.j * 3) : (p.j > 0.62 ? 1 : 0);
-            for (let w = 0; w < nWin; w++) {
-                winSpots.push({
-                    x: p.x + (rnd() - 0.5) * 1.6, z: p.z + (rnd() - 0.5) * 1.6,
-                    s: 1, r: Math.atan2(-p.x, -p.z), j: rnd()
+        if (built) {
+            const walls: CardWall[] = [];
+            for (const p of ringAt) {
+                if (p.j <= 0.2) continue;
+                const d = Math.hypot(p.x, p.z) || 1;
+                const nx = -p.x / d, nz = -p.z / d;
+                walls.push({
+                    x: p.x + nx * 2.4, y: 1.4 + p.j * 2.6, z: p.z + nz * 2.4,
+                    ry: Math.atan2(nx, nz), lean: (p.j - 0.5) * 0.3,
+                    n: 2 + Math.floor(p.j * 3), s: 1.15
                 });
             }
-        }
-        if (winSpots.length) {
-            const winGeo = new THREE.PlaneGeometry(built ? 0.34 : 0.22, built ? 0.46 : 0.22);
-            const wins = scatterAt(winGeo, winMat, winSpots, (m, p) => {
-                m.position.set(p.x, (built ? 1.2 + p.j * 3.4 : 0.9 + p.j * 1.2), p.z);
-                m.rotation.y = p.r;
-            });
-            wins.castShadow = false; wins.receiveShadow = false;
-            scene.add(wins);
+            windowCards(scene, walls, pal, rnd);
+        } else {
+            const winMat = new THREE.MeshBasicMaterial({ color: mix(warmCol, 0xffffff, 0.25), fog: true });
+            const winSpots: Spot[] = [];
+            for (const p of ringAt) {
+                if (p.j > 0.62) {
+                    winSpots.push({
+                        x: p.x + (rnd() - 0.5) * 1.6, z: p.z + (rnd() - 0.5) * 1.6,
+                        s: 1, r: Math.atan2(-p.x, -p.z), j: rnd()
+                    });
+                }
+            }
+            if (winSpots.length) {
+                const wins = scatterAt(new THREE.PlaneGeometry(0.22, 0.22), winMat, winSpots, (m, p) => {
+                    m.position.set(p.x, 0.9 + p.j * 1.2, p.z);
+                    m.rotation.y = p.r;
+                });
+                wins.castShadow = false; wins.receiveShadow = false;
+                scene.add(wins);
+            }
         }
 
-        // The path's exits close with mouths/gates/darkness: a dark mouth card
-        // at each far road end, flanked by two masses so it reads as a gate.
+        // The path's exits close with DRESSED thresholds (law D5/D6, recipe
+        // gateArch): real gates — flanking piers, a lintel or arch, biome
+        // dressing — framing the dark mouth that previews the next room.
         if (roadMask && noise2D) {
             const wander = (t: number) => noise2D(t * 0.035, 7.3) * 3.2;
-            const mouthMat = new THREE.MeshBasicMaterial({ map: mouthTexture(pal), transparent: true, depthWrite: false, fog: false });
-            const gateGeo = bakeFacetValues(new THREE.DodecahedronGeometry(2.2, 0), pal, { base: dark, rnd });
             const exits = [
                 { x: wander(-44), z: -44, ry: 0 },                 // north, down the view
                 { x: -46, z: wander(-46 + 41), ry: Math.PI / 2 },  // west
                 { x: 46, z: wander(46 + 41), ry: -Math.PI / 2 }    // east
             ];
-            for (const e of exits) {
-                const mouth = new THREE.Mesh(new THREE.CircleGeometry(2.6, 20), mouthMat);
-                mouth.position.set(e.x, 2.0, e.z);
-                mouth.rotation.y = e.ry;
-                scene.add(mark(mouth));
-                const flank = scatterAt(gateGeo, paintMat(), [
-                    { x: e.x - Math.cos(e.ry) * 3.2, z: e.z + Math.sin(e.ry) * 3.2, s: 1, r: rnd() * Math.PI, j: rnd() },
-                    { x: e.x + Math.cos(e.ry) * 3.2, z: e.z - Math.sin(e.ry) * 3.2, s: 1, r: rnd() * Math.PI, j: rnd() }
-                ], (m, p) => {
-                    m.position.set(p.x, 1.4, p.z);
-                    m.scale.set(1.2, 1.5 + p.j * 0.8, 1.2);
-                    m.rotation.y = p.r;
-                });
-                scene.add(flank);
-            }
+            const gv: 'stone' | 'timber' | 'glyph' =
+                (biome === 'forest' || biome === 'crossroads' || biome === 'plains' || biome === 'swamp') ? 'timber'
+                : (biome === 'synthetic' || biome === 'fire' || biome === 'underground') ? 'glyph' : 'stone';
+            for (const e of exits) gateArch(scene, e.x, e.z, e.ry, pal, rnd, gv, biome);
         }
     }
 }
@@ -2092,17 +2117,925 @@ function buildNearField(scene: THREE.Scene, pal: ScenePalette, rnd: () => number
             m.rotation.set(p.r, p.j * Math.PI, p.r * 0.7);
         }));
     if (!traits.barren) {
-        // Tufts: tiny painted-fluff clusters. The old 4-sided mini-cones read
-        // as scattered pyramids on the floor.
-        const tuftGeo = fluffCluster(5, 0.28, new THREE.Vector3(0, 0.22, 0), 1.3, rnd);
-        const tufts = scatterAt(tuftGeo, leafMatFor(pal.foliage),
-            spots(34, 2, 9, rnd).filter(p => ok(p.x, p.z)), (m, p) => {
+        // Tufts in THREE silhouettes x three tints — one green puff instanced
+        // 34 times was the "identical shrubs" tell (18-strata-plates). Every
+        // instance gets rotation, lean and non-uniform scale jitter, all from
+        // the spot's own jitter fields.
+        const kits: [THREE.BufferGeometry, THREE.Material][] = [
+            [fluffCluster(5, 0.28, new THREE.Vector3(0, 0.22, 0), 1.3, rnd), leafMatFor(pal.foliage)],                          // the round puff
+            [fluffCluster(3, 0.36, new THREE.Vector3(0, 0.16, 0), 0.5, rnd), leafMatFor(mix(pal.foliage, pal.key, 0.20))],      // the spiky trio
+            [fluffCluster(7, 0.22, new THREE.Vector3(0, 0.12, 0), 0.9, rnd), leafMatFor(mix(pal.foliage, 0x000000, 0.22))]      // the low dark mat
+        ];
+        const at = spots(34, 2, 9, rnd).filter(p => ok(p.x, p.z));
+        kits.forEach(([geo, mat], k) => {
+            const sub = at.filter((_, i) => i % 3 === k);
+            if (!sub.length) return;
+            const im = scatterAt(geo, mat, sub, (m, p) => {
                 m.position.set(p.x, 0, p.z);
-                m.scale.setScalar(p.s * 0.9);
-                m.rotation.y = p.r;
+                m.scale.set(
+                    p.s * (0.55 + p.j * 0.7),
+                    p.s * (0.5 + ((p.r * 7.3) % 1) * 0.75),
+                    p.s * (0.55 + ((p.j * 13.7) % 1) * 0.7)
+                );
+                m.rotation.set(0, p.r * 2.3, (p.j - 0.5) * 0.3);
             });
-        tufts.customDepthMaterial = leafDepth();
-        scene.add(tufts);
+            im.customDepthMaterial = leafDepth();
+            scene.add(im);
+        });
+    }
+}
+
+// ==========================================================================
+// Layer 2 — the RECIPE LIBRARY (hero props + architecture, _transfer.md §3)
+//
+// Parametric recipes in the transfer-plan mould: randomness only through the
+// seeded rnd / spot jitter fields, values baked into vertices (bakeFacetValues
+// / bakeGradient / vcolor), canvas textures for painted detail, a contact blob
+// under every placement and a painted light pool under every light. Each
+// recipe ships named variants; variant x jitter means no two instances match.
+// ==========================================================================
+
+/** Flat vertex-colour fill — one merged part, ONE hue. */
+function vcolor(geo: THREE.BufferGeometry, hex: number): THREE.BufferGeometry {
+    const pos = geo.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    const c = new THREE.Color(hex);
+    for (let i = 0; i < pos.count; i++) { colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b; }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return geo;
+}
+
+/** Solid recipe material: baked vertex values x the hand mottle (the crafted-illustration read). */
+function craftMat(): THREE.Material {
+    return new THREE.MeshStandardMaterial({
+        color: 0xffffff, vertexColors: true, roughness: 0.9,
+        map: mottleTexture(), bumpMap: mottleTexture(), bumpScale: 0.015
+    });
+}
+
+/** Grime wash: darken the baked vertex colours toward the shadow hue near the base. */
+function grimeBake(geo: THREE.BufferGeometry, h: number, pal: ScenePalette) {
+    const col = geo.attributes.color as THREE.BufferAttribute | undefined;
+    if (!col) return;
+    geo.computeBoundingBox();
+    const y0 = geo.boundingBox!.min.y;
+    const gc = new THREE.Color(mix(pal.fog, 0x000000, 0.5));
+    const c = new THREE.Color();
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+        const t = Math.max(0, Math.min(1, (pos.getY(i) - y0) / h));
+        c.setRGB(col.getX(i), col.getY(i), col.getZ(i)).lerp(gc, (1 - t) * 0.55);
+        col.setXYZ(i, c.r, c.g, c.b);
+    }
+    col.needsUpdate = true;
+}
+
+/** Wonky lit-window card: warm field, mullions PAINTED ON as bent dark strokes
+ *  (_objects 9). Three cached variants of hand-done wonkiness. */
+const _mullionTex: THREE.CanvasTexture[] = [];
+function mullionTexture(v: number): THREE.CanvasTexture {
+    if (_mullionTex[v]) return _mullionTex[v];
+    const W = 64, H = 84;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d')!;
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#fff2dc'); g.addColorStop(1, '#f0c890');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const r = mulberry32(hashStr('mullion' + v));
+    ctx.strokeStyle = 'rgba(52,36,24,0.9)'; ctx.lineCap = 'round';
+    ctx.lineWidth = 5 + r() * 3;
+    const vx = W * (0.38 + r() * 0.24);
+    ctx.beginPath(); ctx.moveTo(vx + (r() - 0.5) * 6, 2);
+    ctx.quadraticCurveTo(vx + (r() - 0.5) * 14, H / 2, vx + (r() - 0.5) * 6, H - 2);
+    ctx.stroke();
+    const hy = H * (0.36 + r() * 0.26);
+    ctx.lineWidth = 4 + r() * 3;
+    ctx.beginPath(); ctx.moveTo(2, hy + (r() - 0.5) * 6);
+    ctx.quadraticCurveTo(W / 2, hy + (r() - 0.5) * 12, W - 2, hy + (r() - 0.5) * 6);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(40,26,18,0.95)'; ctx.lineWidth = 6;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+    const tex = new THREE.CanvasTexture(cv); tex.needsUpdate = true;
+    _mullionTex[v] = tex; return tex;
+}
+
+/** Chunky hand-painted glyph strokes — abstract marks, never real text. Field
+ *  left pale so the material tint owns the card's hue. */
+const _glyphTex: THREE.CanvasTexture[] = [];
+function glyphTexture(v: number): THREE.CanvasTexture {
+    if (_glyphTex[v]) return _glyphTex[v];
+    const W = 96, H = 64;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d')!;
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#f2ddba'); g.addColorStop(1, '#d8b88a');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const r = mulberry32(hashStr('glyph' + v));
+    ctx.strokeStyle = 'rgba(46,28,18,0.92)'; ctx.lineCap = 'round';
+    const nStrokes = 2 + Math.floor(r() * 3);
+    for (let i = 0; i < nStrokes; i++) {
+        ctx.lineWidth = 6 + r() * 6;
+        const x0 = 12 + r() * (W - 24), y0 = 14 + r() * (H - 28);
+        ctx.beginPath(); ctx.moveTo(x0, y0);
+        if (r() < 0.5) {
+            ctx.quadraticCurveTo(x0 + (r() - 0.5) * 20, y0 + (r() - 0.5) * 12,
+                x0 + (r() < 0.5 ? -1 : 1) * (10 + r() * 16), y0 + (r() - 0.5) * 10);
+        } else {
+            ctx.quadraticCurveTo(x0 + 8 + r() * 10, y0 - 6 + r() * 8, x0 + 3 + r() * 5, y0 + 6 + r() * 8);
+        }
+        ctx.stroke();
+    }
+    if (r() < 0.7) {
+        ctx.fillStyle = 'rgba(46,28,18,0.9)';
+        ctx.beginPath(); ctx.arc(14 + r() * (W - 28), 12 + r() * (H - 24), 3 + r() * 3, 0, Math.PI * 2); ctx.fill();
+    }
+    // worn board edge
+    ctx.strokeStyle = 'rgba(60,38,22,0.8)'; ctx.lineWidth = 5;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+    const tex = new THREE.CanvasTexture(cv); tex.needsUpdate = true;
+    _glyphTex[v] = tex; return tex;
+}
+
+/** Flat opaque water: a radial-gradient canvas in the scene's own teal. Water
+ *  in Blinx is a COLOUR, not a shader — no waves, no transparency. */
+function waterTexture(pal: ScenePalette): THREE.CanvasTexture {
+    const S = 128;
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const ctx = cv.getContext('2d')!;
+    const wcol = new THREE.Color(mix(mix(pal.sky, 0x1f7a74, 0.45), pal.key, 0.10));
+    const hx = (c: THREE.Color, a: number) =>
+        `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
+    const g = ctx.createRadialGradient(S / 2, S / 2, S * 0.05, S / 2, S / 2, S * 0.5);
+    g.addColorStop(0, hx(new THREE.Color(mix(wcol.getHex(), 0xffffff, 0.22)), 1));
+    g.addColorStop(0.7, hx(wcol, 1));
+    g.addColorStop(1, hx(new THREE.Color(mix(wcol.getHex(), 0x000000, 0.28)), 1));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, S, S);
+    const tex = new THREE.CanvasTexture(cv); tex.needsUpdate = true;
+    return tex;
+}
+
+/** A flat water disc lying on the ground (pond, canal reach). */
+function waterDisc(scene: THREE.Scene, x: number, z: number, y: number, r: number, pal: ScenePalette) {
+    const water = new THREE.Mesh(new THREE.CircleGeometry(r, 24), new THREE.MeshBasicMaterial({ map: waterTexture(pal), fog: true }));
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(x, y, z);
+    water.userData.isWater = true;
+    scene.add(mark(water));
+}
+
+/** RECIPE streetLamp (_objects 5): a thin tapered pole bent in ONE long S —
+ *  grown, not kinked — verdigris iron, a teacup lantern at the tip, a halo
+ *  4-5x the fixture that swallows the stem top, its own painted pool beneath.
+ *  Variants: 0 tall-lean, 1 short-bow, 2 double-arm. Tell: never straight. */
+function streetLamp(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number, variant: number) {
+    const H = variant === 1 ? 2.5 : variant === 0 ? 3.9 : 3.2;
+    const amp = variant === 1 ? 0.50 : 0.34;
+    // ONE S-curve shared by pole geometry and head placement: a slow overhang
+    // with a wobble mid-shaft — you can count the chords of the curve.
+    const sOff = (t: number) => amp * (1.15 * t * t + Math.sin(t * Math.PI * 2) * 0.28);
+    const zOff = (t: number) => Math.sin(t * Math.PI) * amp * 0.2;
+    const poleGeo = new THREE.CylinderGeometry(0.032, 0.075, H, 6, 9);
+    {
+        const pos = poleGeo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+            const t = (pos.getY(i) + H / 2) / H;
+            pos.setX(i, pos.getX(i) + sOff(t));
+            pos.setZ(i, pos.getZ(i) + zOff(t));
+        }
+        poleGeo.translate(0, H / 2, 0);
+        poleGeo.computeVertexNormals();
+    }
+    // Verdigris iron: murky green-grey, paler up top where it catches its own
+    // lantern light.
+    const verdi = mix(pal.structure, 0x4a7a66, 0.42);
+    bakeGradient(poleGeo, mix(verdi, 0x000000, 0.38), mix(verdi, pal.key, 0.30), rnd);
+    scene.add(scatterAt(poleGeo, paintMat(), at, (m, p) => {
+        m.position.set(p.x, 0, p.z);
+        m.scale.setScalar(0.9 + p.j * 0.35);
+        m.rotation.y = p.r;
+    }));
+    const warm = pal.emissiveOn ? pal.emissive : 0xffc36a;
+    // Head positions: cage + ember ride the pole's own scale and lean. The
+    // double-arm carries a second, smaller lantern on a counter-arm.
+    const heads: Spot[] = [];
+    for (const p of at) {
+        heads.push(p);
+        if (variant === 2) heads.push({ ...p, j: (p.j + 0.5) % 1 });
+    }
+    const armOf = (p: Spot, alt: boolean) => {
+        const k = 0.9 + p.j * 0.35;
+        const tx = (alt ? -sOff(1) * 0.72 : sOff(1)) * k;
+        const ty = (alt ? H * 0.86 : H) * k;
+        const c = Math.cos(p.r), s = Math.sin(p.r);
+        return { x: p.x + tx * c, y: ty, z: p.z - tx * s };
+    };
+    const cageGeo = vcolor(new THREE.BoxGeometry(0.16, 0.20, 0.16), mix(verdi, 0x000000, 0.55));
+    scene.add(scatterAt(cageGeo, craftMat(), heads, (m, p, i) => {
+        const t = armOf(p, variant === 2 && i % 2 === 1);
+        m.position.set(t.x, t.y, t.z);
+        m.scale.setScalar(0.9 + p.j * 0.35);
+    }));
+    const emberMat = new THREE.MeshStandardMaterial({ color: mix(warm, 0xffffff, 0.4), emissive: warm, emissiveIntensity: 2.0, roughness: 0.4 });
+    const embers = scatterAt(new THREE.SphereGeometry(0.085, 8, 6), emberMat, heads, (m, p, i) => {
+        const t = armOf(p, variant === 2 && i % 2 === 1);
+        m.position.set(t.x, t.y, t.z);
+        m.scale.setScalar(0.9 + p.j * 0.35);
+    });
+    embers.castShadow = false;
+    scene.add(embers);
+    // The halo: 4-5x the fixture, feathering to zero, eating the stem top.
+    const hpos = new Float32Array(heads.length * 3);
+    heads.forEach((p, i) => {
+        const t = armOf(p, variant === 2 && i % 2 === 1);
+        hpos[i * 3] = t.x; hpos[i * 3 + 1] = t.y; hpos[i * 3 + 2] = t.z;
+    });
+    const hgeo = new THREE.BufferGeometry();
+    hgeo.setAttribute('position', new THREE.BufferAttribute(hpos, 3));
+    const halos = new THREE.Points(hgeo, new THREE.PointsMaterial({
+        map: softSprite(), color: warm, size: 1.9, sizeAttenuation: true,
+        transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending
+    }));
+    scene.add(mark(halos));
+    for (const p of at) lightPool(scene, p.x, p.z, 2.6, warm, 0.5);
+    contactBlobs(scene, at, pal, () => 0.55, 0.3);
+}
+
+/** RECIPE fountain (_objects 17): octagonal basin on octagonal plinth, palest
+ *  coping rim over a darker body, a FLAT opaque water disc, a pedestal bowl
+ *  with pickups in it. Variants: 0 single-tier, 1 two-tier, 2 dry/mossy. */
+function fountain(scene: THREE.Scene, x: number, z: number, pal: ScenePalette, rnd: () => number, variant: number) {
+    const pale = mix(pal.structure, 0xffffff, 0.55);    // the coping rule
+    const body = mix(pal.structure, 0x000000, 0.28);
+    const parts: THREE.BufferGeometry[] = [];
+    const put = (g: THREE.BufferGeometry, col: number, y: number) => {
+        bakeFacetValues(g, pal, { base: col, rnd });
+        g.translate(0, y, 0);
+        parts.push(g);
+    };
+    put(new THREE.CylinderGeometry(2.35, 2.55, 0.34, 8), pale, 0.17);
+    put(new THREE.CylinderGeometry(1.85, 2.05, 0.70, 8), body, 0.66);
+    put(new THREE.CylinderGeometry(2.06, 2.06, 0.15, 8), pale, 1.02);
+    put(new THREE.CylinderGeometry(0.30, 0.48, 0.85, 8), body, 1.35);
+    put(new THREE.CylinderGeometry(0.85, 0.52, 0.38, 8), pale, 1.95);
+    if (variant === 1) {
+        put(new THREE.CylinderGeometry(0.24, 0.30, 0.55, 8), body, 2.45);
+        put(new THREE.CylinderGeometry(1.05, 0.85, 0.30, 8), pale, 2.85);
+        put(new THREE.CylinderGeometry(1.12, 1.12, 0.10, 8), pale, 3.02);
+    }
+    const stone = new THREE.Mesh(mergeGeometries(parts)!, craftMat());
+    stone.position.set(x, 0, z);
+    stone.rotation.y = rnd() * Math.PI;
+    stone.castShadow = true;
+    scene.add(mark(stone));
+    if (variant !== 2) {
+        // Water: flat, opaque, one clean ellipse inside the rim.
+        const water = new THREE.Mesh(new THREE.CircleGeometry(1.82, 8), new THREE.MeshBasicMaterial({ map: waterTexture(pal), fog: true }));
+        water.rotation.x = -Math.PI / 2;
+        water.rotation.z = stone.rotation.y + Math.PI / 8;
+        water.position.set(x, 1.035, z);
+        scene.add(mark(water));
+        if (variant === 1) {
+            const upper = new THREE.Mesh(new THREE.CircleGeometry(0.92, 8), new THREE.MeshBasicMaterial({ map: waterTexture(pal), fog: true }));
+            upper.rotation.x = -Math.PI / 2;
+            upper.rotation.z = water.rotation.z;
+            upper.position.set(x, 2.985, z);
+            scene.add(mark(upper));
+        }
+    } else {
+        // Dry and mossy: the basin floor carries a dark moss wash.
+        const moss = new THREE.Mesh(new THREE.CircleGeometry(1.6, 8),
+            new THREE.MeshBasicMaterial({ color: mix(pal.foliage, 0x000000, 0.45), fog: true }));
+        moss.rotation.x = -Math.PI / 2;
+        moss.position.set(x, 1.03, z);
+        scene.add(mark(moss));
+    }
+    // Pickups in the bowl — dressing with a function.
+    const gemCol = pal.emissiveOn ? pal.emissive : 0xffd98a;
+    const gemMat = new THREE.MeshStandardMaterial({ color: mix(gemCol, 0xffffff, 0.3), emissive: gemCol, emissiveIntensity: 1.6, roughness: 0.4 });
+    const gemSpots: Spot[] = [];
+    for (let i = 0; i < 3; i++) {
+        const a = rnd() * Math.PI * 2, rr = 0.3 + rnd() * 0.35;
+        gemSpots.push({ x: x + Math.cos(a) * rr, z: z + Math.sin(a) * rr, s: 1, r: rnd() * Math.PI, j: rnd() });
+    }
+    const gems = scatterAt(new THREE.OctahedronGeometry(0.09, 0), gemMat, gemSpots, (m, p) => {
+        m.position.set(p.x, 2.16, p.z);
+        m.rotation.set(p.j, p.r, p.j * 0.5);
+    });
+    gems.castShadow = false;
+    scene.add(gems);
+    contactBlobs(scene, [{ x, z, s: 1, r: 0, j: 0.5 }], pal, () => 3.0, 0.32);
+    if (pal.starAmount > 0.5 || pal.emissiveOn) lightPool(scene, x, z, 3.4, pal.emissiveOn ? pal.emissive : 0xffc36a, 0.4);
+}
+
+/** RECIPE statue (_objects 8): ONE eroded carved mass on fractured base slabs
+ *  (the slabs are the anti-float skirt), moss wash on up-facing planes only,
+ *  recess shade painted darker than nature. Variants: 0 reclining,
+ *  1 standing-robed, 2 fragment. */
+function statue(scene: THREE.Scene, x: number, z: number, ry: number, pal: ScenePalette, rnd: () => number, variant: number) {
+    const group = new THREE.Group();
+    const warmGrey = mix(pal.structure, 0x9a8f80, 0.45);
+    const moss = mix(pal.foliage, pal.ground, 0.30);
+    const recess = mix(pal.fog, 0x000000, 0.72);
+    const nSlab = 2 + Math.floor(rnd() * 2);
+    for (let i = 0; i < nSlab; i++) {
+        const slab = bakeFacetValues(new THREE.BoxGeometry(1.35 - i * 0.2, 0.26, 1.05 - i * 0.15), pal, { base: mix(warmGrey, 0x000000, 0.12), rnd });
+        jitterGeometry(slab, 0.05, rnd);
+        const m = new THREE.Mesh(slab, craftMat());
+        m.position.set((i - (nSlab - 1) / 2) * 0.85 + (rnd() - 0.5) * 0.2, 0.13 - i * 0.015, (rnd() - 0.5) * 0.4);
+        m.rotation.y = (rnd() - 0.5) * 0.5;
+        group.add(m);
+    }
+    const figs: THREE.BufferGeometry[] = [];
+    if (variant === 0) {
+        const torso = new THREE.SphereGeometry(1, 10, 8); torso.scale(1.55, 0.62, 0.72); torso.translate(0, 0.62, 0);
+        const head = new THREE.SphereGeometry(0.36, 8, 7); head.translate(1.25, 0.85, 0.08);
+        const knee = new THREE.SphereGeometry(0.42, 8, 6); knee.translate(-0.35, 0.9, 0.12);
+        figs.push(torso, head, knee);
+    } else if (variant === 1) {
+        const robe = seussify(new THREE.CylinderGeometry(0.34, 0.85, 2.4, 9, 4), 0.10, 0.10, 0.05, rnd); robe.translate(0, 1.45, 0);
+        const head = new THREE.SphereGeometry(0.30, 8, 7); head.translate(0.1, 2.9, 0);
+        const shoulder = new THREE.SphereGeometry(0.42, 8, 6); shoulder.scale(1.3, 0.6, 0.9); shoulder.translate(0, 2.35, 0);
+        figs.push(robe, head, shoulder);
+    } else {
+        const torso = new THREE.CylinderGeometry(0.48, 0.7, 1.2, 8, 2); torso.rotateZ(0.16); torso.translate(0, 0.75, 0);
+        const stump = new THREE.SphereGeometry(0.4, 7, 6); stump.translate(0.3, 1.35, 0.1);
+        figs.push(torso, stump);
+    }
+    const fig = mergeGeometries(figs)!;
+    jitterGeometry(fig, 0.05, rnd);   // erosion: the soft lumpy outline
+    bakeFacetValues(fig, pal, { base: warmGrey, cap: mix(moss, warmGrey, 0.25), dark: recess, jitter: 0.06, rnd });
+    const fm = new THREE.Mesh(fig, craftMat());
+    fm.castShadow = true;
+    group.add(fm);
+    group.position.set(x, 0, z);
+    group.rotation.y = ry;
+    scene.add(mark(group));
+    contactBlobs(scene, [{ x, z, s: 1, r: 0, j: 0.5 }], pal, () => 2.0, 0.32);
+}
+
+/** RECIPE planter (_objects 7): a worn stone trough — pale rim, stained body,
+ *  near-black soil — with ~9 cup-flowers in two loose rows, per-flower lean
+ *  jitter, flame-tipped hues from the palette accent. Variants: 0 trough,
+ *  1 round pot, 2 raised bed. */
+function planter(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number, variant: number) {
+    const pale = mix(pal.structure, 0xffffff, 0.42);
+    const bodyCol = mix(pal.structure, 0x000000, 0.14);
+    const soil = 0x161009;
+    const parts: THREE.BufferGeometry[] = [];
+    if (variant === 1) {
+        parts.push(vcolor(new THREE.CylinderGeometry(0.40, 0.32, 0.58, 9).translate(0, 0.29, 0), bodyCol));
+        parts.push(vcolor(new THREE.CylinderGeometry(0.46, 0.44, 0.13, 9).translate(0, 0.55, 0), pale));
+        parts.push(vcolor(new THREE.CylinderGeometry(0.36, 0.36, 0.07, 9).translate(0, 0.60, 0), soil));
+    } else if (variant === 2) {
+        parts.push(vcolor(new THREE.BoxGeometry(2.5, 0.42, 1.05).translate(0, 0.21, 0), bodyCol));
+        parts.push(vcolor(new THREE.BoxGeometry(2.62, 0.10, 1.15).translate(0, 0.42, 0), pale));
+        parts.push(vcolor(new THREE.BoxGeometry(2.3, 0.08, 0.85).translate(0, 0.46, 0), soil));
+    } else {
+        parts.push(vcolor(new THREE.BoxGeometry(1.7, 0.55, 0.60).translate(0, 0.28, 0), bodyCol));
+        parts.push(vcolor(new THREE.BoxGeometry(1.84, 0.14, 0.72).translate(0, 0.56, 0), pale));
+        parts.push(vcolor(new THREE.BoxGeometry(1.56, 0.09, 0.48).translate(0, 0.62, 0), soil));
+    }
+    const geo = mergeGeometries(parts)!;
+    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+        m.position.set(p.x, 0, p.z);
+        m.rotation.y = p.r;
+        m.scale.setScalar(0.9 + p.j * 0.3);
+    }));
+    // The unrehearsed choir: two loose rows of cup-flowers, every stem leaning
+    // its own way. Cups ride the SAME spot list as their stems (the floating-
+    // canopy lesson).
+    const len = variant === 2 ? 2.2 : variant === 1 ? 0.5 : 1.45;
+    const wid = variant === 2 ? 0.55 : variant === 1 ? 0.4 : 0.3;
+    const soilY = variant === 2 ? 0.50 : variant === 1 ? 0.64 : 0.66;
+    const stemGeo = vcolor(new THREE.CylinderGeometry(0.014, 0.02, 0.34, 5).translate(0, 0.17, 0), mix(pal.foliage, 0x000000, 0.35));
+    const cupGeo = mergeGeometries([
+        vcolor(new THREE.ConeGeometry(0.075, 0.15, 6).translate(0, 0.40, 0), mix(0xff5a1e, pal.key, 0.25)),
+        vcolor(new THREE.SphereGeometry(0.045, 6, 5).translate(0, 0.48, 0), 0xffd94a)
+    ])!;
+    const stemMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
+    const cupMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: 0xff7a2a, emissiveIntensity: 0.35 });
+    const stems: Spot[] = [];
+    for (const p of at) {
+        const k = 0.9 + p.j * 0.3;
+        const nF = 8 + Math.floor(p.j * 3);
+        for (let i = 0; i < nF; i++) {
+            const row = i % 2 === 0 ? -1 : 1;
+            const lx = ((i / nF) - 0.5) * len + (rnd() - 0.5) * 0.12;
+            const lz = row * wid * 0.5 + (rnd() - 0.5) * 0.1;
+            stems.push({
+                x: p.x + (lx * Math.cos(p.r) + lz * Math.sin(p.r)) * k,
+                z: p.z + (-lx * Math.sin(p.r) + lz * Math.cos(p.r)) * k,
+                s: 0.8 + rnd() * 0.5, r: rnd() * Math.PI, j: rnd()
+            });
+        }
+    }
+    scene.add(scatterAt(stemGeo, stemMat, stems, (m, p) => {
+        m.position.set(p.x, soilY * (0.9 + p.j * 0.2), p.z);
+        m.rotation.set((p.j - 0.5) * 0.5, p.r, (p.j - 0.5) * 0.6);
+        m.scale.setScalar(p.s);
+    }));
+    scene.add(scatterAt(cupGeo, cupMat, stems, (m, p) => {
+        m.position.set(p.x + (p.j - 0.5) * 0.15, soilY * (0.9 + p.j * 0.2), p.z + (p.j - 0.5) * 0.18);
+        m.rotation.set((p.j - 0.5) * 0.5, p.r, (p.j - 0.5) * 0.6);
+        m.scale.setScalar(p.s);
+    }));
+    contactBlobs(scene, at, pal, () => 1.0, 0.28);
+}
+
+/** A wall that carries a cluster of window cards. */
+type CardWall = { x: number; y: number; z: number; ry: number; lean: number; n: number; s: number };
+
+/** RECIPE windowCards (_objects 9): crooked glowing parallelograms stuck on
+ *  walls in sociable clusters of 2-5, mullions painted ON the card, every card
+ *  sharing its host's lean, never grid-aligned. Three mullion-wonk variants. */
+function windowCards(scene: THREE.Scene, walls: CardWall[], pal: ScenePalette, rnd: () => number) {
+    const warm = mix(0xffd98a, pal.emissiveOn ? pal.emissive : 0xffd98a, pal.emissiveOn ? 0.35 : 0);
+    const lists: { spots: Spot[]; y: number[]; lean: number[]; ry: number[] }[] = [
+        { spots: [], y: [], lean: [], ry: [] },
+        { spots: [], y: [], lean: [], ry: [] },
+        { spots: [], y: [], lean: [], ry: [] }
+    ];
+    for (const w of walls) {
+        const L = lists[Math.floor(rnd() * 3)];
+        const n = Math.max(2, Math.min(5, w.n));
+        // cards sit slightly PROUD of their wall, along its normal
+        const bx = w.x + Math.sin(w.ry) * 0.07, bz = w.z + Math.cos(w.ry) * 0.07;
+        for (let i = 0; i < n; i++) {
+            const ox = (rnd() - 0.5) * 1.9 * w.s;
+            const oy = (rnd() - 0.5) * 1.3 * w.s;
+            L.spots.push({
+                x: bx + ox * Math.cos(w.ry), z: bz - ox * Math.sin(w.ry),
+                s: (0.75 + rnd() * 0.55) * w.s, r: 0, j: rnd()
+            });
+            L.y.push(w.y + oy);
+            L.lean.push(w.lean + (rnd() - 0.5) * 0.22);
+            L.ry.push(w.ry);
+        }
+    }
+    const geo = new THREE.PlaneGeometry(0.5, 0.68);
+    lists.forEach((L, v) => {
+        if (!L.spots.length) return;
+        const mat = new THREE.MeshBasicMaterial({ map: mullionTexture(v), color: warm, fog: true, side: THREE.DoubleSide });
+        const im = scatterAt(geo, mat, L.spots, (m, p, i) => {
+            m.position.set(p.x, L.y[i], p.z);
+            m.rotation.set(0, L.ry[i], L.lean[i]);
+            m.scale.set(p.s * (0.85 + p.j * 0.4), p.s, 1);
+        });
+        im.castShadow = false; im.receiveShadow = false;
+        scene.add(im);
+    });
+}
+
+/** RECIPE archHouse (_objects 10): a small cottage settling like a tired
+ *  animal — ONE shared lean for walls, roof and door; a sagging roofline; an
+ *  off-center curtain door; crooked window cards; grime at the base.
+ *  Variants: 0 tall-narrow, 1 wide-sag, 2 L-lean. */
+function archHouse(scene: THREE.Scene, x: number, z: number, ry: number, pal: ScenePalette, rnd: () => number, variant: number) {
+    const g = new THREE.Group();
+    const lean = (variant === 2 ? 0.20 : variant === 0 ? 0.10 : 0.15) * (rnd() < 0.5 ? -1 : 1);
+    const W = variant === 1 ? 3.1 : 2.4, H = variant === 0 ? 3.1 : 2.3, D = variant === 1 ? 2.5 : 2.2;
+    const olive = mix(pal.structure, pal.ground, 0.30);
+    const bodyGeo = seussify(new THREE.BoxGeometry(W, H, D, 2, 4, 2), 0.14, 0.10, 0.07, rnd);
+    bakeFacetValues(bodyGeo, pal, { base: olive, cap: mix(olive, pal.key, 0.22), jitter: 0.13, rnd });
+    grimeBake(bodyGeo, 0.65, pal);
+    const body = new THREE.Mesh(bodyGeo, craftMat());
+    body.position.y = H / 2 - 0.12;   // pressed INTO the dirt over centuries
+    body.castShadow = true;
+    g.add(body);
+    // The sagging roofline: one spine-dip across the middle.
+    const sag = variant === 1 ? 0.34 : 0.22;
+    const roofGeo = new THREE.BoxGeometry(W * 1.16, 0.55, D * 1.18, 6, 1, 2);
+    {
+        const pos = roofGeo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+            const px = pos.getX(i) / (W * 1.16 / 2);
+            pos.setY(i, pos.getY(i) - sag * Math.max(0, 1 - px * px));
+        }
+        roofGeo.computeVertexNormals();
+    }
+    bakeFacetValues(roofGeo, pal, { base: mix(olive, 0x000000, 0.30), jitter: 0.10, rnd });
+    const roof = new THREE.Mesh(roofGeo, craftMat());
+    roof.position.y = H + 0.08;
+    roof.rotation.z = (rnd() - 0.5) * 0.06;
+    g.add(roof);
+    // The door is a CURTAIN, off-center, exhaling slightly.
+    const doorGeo = new THREE.PlaneGeometry(0.66, 1.25, 3, 3);
+    {
+        const pos = doorGeo.attributes.position;
+        for (let i = 0; i < pos.count; i++) pos.setZ(i, Math.sin((pos.getY(i) / 1.25 + 0.5) * Math.PI) * 0.07);
+        doorGeo.computeVertexNormals();
+    }
+    const door = new THREE.Mesh(doorGeo, new THREE.MeshStandardMaterial({
+        color: mix(0x8a2a30, pal.key, 0.15), roughness: 0.9, side: THREE.DoubleSide
+    }));
+    door.position.set(W * 0.18, 1.1, D / 2 + 0.03);
+    g.add(door);
+    g.position.set(x, 0, z);
+    g.rotation.y = ry;
+    g.rotation.z = lean;   // ONE lean — walls, roof and door all agree
+    scene.add(mark(g));
+    // Crooked window cards on the front wall, sharing the house's lean.
+    windowCards(scene, [{
+        x: x + Math.sin(ry) * (D / 2 + 0.06) - Math.cos(ry) * W * 0.22,
+        y: 1.55,
+        z: z + Math.cos(ry) * (D / 2 + 0.06) + Math.sin(ry) * W * 0.22,
+        ry, lean, n: 2 + Math.floor(rnd() * 3), s: 0.95
+    }], pal, rnd);
+    contactBlobs(scene, [{ x, z, s: 1, r: 0, j: 0.5 }], pal, () => Math.max(W, D) * 0.85, 0.34);
+    if (pal.starAmount > 0.5) {
+        lightPool(scene, x + Math.sin(ry) * (D / 2 + 0.7), z + Math.cos(ry) * (D / 2 + 0.7), 1.8, 0xffc36a, 0.4);
+    }
+}
+
+/** RECIPE gateArch: the dressed threshold (law D5) — two flanking masses + a
+ *  lintel or arch, the dark mouth gradient inside, biome dressing (icicles /
+ *  banner / glyph). It must FRAME a view through it. Variants: stone-arch,
+ *  timber-gate, glyph-door. */
+function gateArch(scene: THREE.Scene, x: number, z: number, ry: number, pal: ScenePalette, rnd: () => number, variant: 'stone' | 'timber' | 'glyph', biome: string) {
+    const g = new THREE.Group();
+    const dark = mix(mix(pal.structure, pal.ground, 0.25), mix(pal.fog, 0x000000, 0.5), 0.4);
+    const warm = pal.emissiveOn ? pal.emissive : 0xffc36a;
+    if (variant === 'timber') {
+        const postGeo = bakeGradient(makeTrunkGeo(4.4, 0.30, rnd), mix(pal.structure, 0x000000, 0.3), mix(pal.structure, pal.key, 0.2), rnd);
+        for (const s of [-1, 1]) {
+            const post = new THREE.Mesh(postGeo, paintMat());
+            post.position.set(s * 2.4, 0, 0);
+            post.rotation.z = -s * (0.04 + rnd() * 0.05);
+            g.add(post);
+        }
+        const beamGeo = new THREE.BoxGeometry(5.6, 0.5, 0.62, 6, 1, 1);
+        {
+            const pos = beamGeo.attributes.position;
+            for (let i = 0; i < pos.count; i++) {
+                const px = pos.getX(i) / 2.8;
+                pos.setY(i, pos.getY(i) - 0.22 * Math.max(0, 1 - px * px));
+            }
+            beamGeo.computeVertexNormals();
+        }
+        bakeFacetValues(beamGeo, pal, { base: mix(pal.structure, 0x000000, 0.22), rnd });
+        const beam = new THREE.Mesh(beamGeo, craftMat());
+        beam.position.y = 4.3;
+        g.add(beam);
+        // Dressing: a small banner under the beam.
+        const bannerGeo = new THREE.PlaneGeometry(1.1, 0.75, 3, 2);
+        {
+            const pos = bannerGeo.attributes.position;
+            for (let i = 0; i < pos.count; i++) pos.setZ(i, Math.sin((pos.getX(i) / 1.1 + 0.5) * Math.PI) * 0.08);
+            bannerGeo.computeVertexNormals();
+        }
+        const banner = new THREE.Mesh(bannerGeo, new THREE.MeshStandardMaterial({
+            color: mix(pal.key, pal.foliage, 0.3), roughness: 0.9, side: THREE.DoubleSide
+        }));
+        banner.position.set((rnd() - 0.5) * 1.6, 3.75, 0.05);
+        banner.rotation.z = (rnd() - 0.5) * 0.1;
+        g.add(banner);
+    } else {
+        const pierGeo = seussify(new THREE.BoxGeometry(1.15, 4.6, 1.15, 1, 4, 1), 0.16, 0.08, 0.06, rnd);
+        bakeFacetValues(pierGeo, pal, { base: dark, cap: mix(dark, pal.key, 0.25), jitter: 0.10, rnd });
+        for (const s of [-1, 1]) {
+            const pier = new THREE.Mesh(pierGeo, craftMat());
+            pier.position.set(s * 2.35, 2.0, 0);
+            pier.rotation.y = rnd();
+            g.add(pier);
+        }
+        if (variant === 'stone') {
+            const archGeo = new THREE.TorusGeometry(2.35, 0.48, 6, 12, Math.PI);
+            bakeFacetValues(archGeo, pal, { base: dark, cap: mix(dark, pal.key, 0.28), jitter: 0.09, rnd });
+            const arch = new THREE.Mesh(archGeo, craftMat());
+            arch.position.y = 4.1;
+            g.add(arch);
+        } else {
+            const lintelGeo = new THREE.BoxGeometry(5.9, 0.7, 1.3, 4, 1, 1);
+            bakeFacetValues(lintelGeo, pal, { base: dark, cap: mix(dark, pal.key, 0.25), jitter: 0.09, rnd });
+            const lintel = new THREE.Mesh(lintelGeo, craftMat());
+            lintel.position.y = 4.5;
+            g.add(lintel);
+            // The glyph door: glowing marks painted across the lintel.
+            const glyph = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.55),
+                new THREE.MeshBasicMaterial({ map: glyphTexture(Math.floor(rnd() * 3)), color: mix(warm, 0xffffff, 0.2), fog: true }));
+            glyph.position.set(0, 4.5, 0.68);
+            g.add(glyph);
+        }
+        // Icicle dressing where the world is cold or deep-wet.
+        if (biome === 'arctic' || biome === 'underground' || biome === 'mountain') {
+            const icGeo = bakeFacetValues(new THREE.ConeGeometry(0.09, 0.8, 5), pal, { base: mix(pal.foliage, 0xffffff, 0.3), rnd });
+            const icSpots: Spot[] = [];
+            for (let i = 0; i < 5; i++) icSpots.push({ x: (rnd() - 0.5) * 4, z: 0, s: 0.6 + rnd() * 0.8, r: 0, j: rnd() });
+            const ic = scatterAt(icGeo, paintMat(), icSpots, (m, p) => {
+                m.position.set(p.x, 4.15 - 0.4 * p.s, p.z);
+                m.rotation.z = Math.PI;
+                m.scale.setScalar(p.s);
+            });
+            g.add(ic);
+        }
+    }
+    // The mouth: a dark gradient INSIDE the frame — a place to go, previewed.
+    const mouth = new THREE.Mesh(new THREE.CircleGeometry(2.0, 20),
+        new THREE.MeshBasicMaterial({ map: mouthTexture(pal), transparent: true, depthWrite: false, fog: false }));
+    mouth.position.y = 1.95;
+    g.add(mouth);
+    g.position.set(x, 0, z);
+    g.rotation.y = ry;
+    scene.add(mark(g));
+    contactBlobs(scene, [
+        { x: x + Math.cos(ry) * 2.35, z: z - Math.sin(ry) * 2.35, s: 1, r: 0, j: 0.5 },
+        { x: x - Math.cos(ry) * 2.35, z: z + Math.sin(ry) * 2.35, s: 1, r: 0, j: 0.5 }
+    ], pal, () => 1.5, 0.32);
+}
+
+/** RECIPE bridge: an arched span with chunky parapet caps in the palest value
+ *  (the coping rule), end piers buried into the banks. Variants: 0 single-arch,
+ *  1 flat-span, 2 humpback. */
+function bridge(scene: THREE.Scene, x: number, z: number, ry: number, pal: ScenePalette, rnd: () => number, variant: number) {
+    const g = new THREE.Group();
+    const span = variant === 2 ? 4.8 : 6.2;
+    const rise = variant === 1 ? 0.06 : variant === 2 ? 0.9 : 0.55;
+    const arch = (lx: number) => rise * Math.max(0, 1 - (lx / (span / 2)) * (lx / (span / 2)));
+    const deckGeo = new THREE.BoxGeometry(span, 0.38, 2.1, 8, 1, 1);
+    {
+        const pos = deckGeo.attributes.position;
+        for (let i = 0; i < pos.count; i++) pos.setY(i, pos.getY(i) + arch(pos.getX(i)));
+        deckGeo.computeVertexNormals();
+    }
+    bakeFacetValues(deckGeo, pal, { base: mix(pal.structure, 0x000000, 0.18), cap: mix(pal.structure, 0xffffff, 0.3), jitter: 0.09, rnd });
+    const deck = new THREE.Mesh(deckGeo, craftMat());
+    deck.position.y = 0.72;
+    deck.castShadow = true;
+    g.add(deck);
+    const pierGeo = bakeFacetValues(new THREE.BoxGeometry(1.1, 1.7, 2.3), pal, { base: mix(pal.structure, 0x000000, 0.25), rnd });
+    for (const s of [-1, 1]) {
+        const pier = new THREE.Mesh(pierGeo, craftMat());
+        pier.position.set(s * (span / 2 - 0.3), 0.15, 0);
+        g.add(pier);
+    }
+    // Parapet caps: pale, chunky, no two alike.
+    const capGeo = bakeFacetValues(new THREE.BoxGeometry(0.55, 0.26, 0.30), pal, { base: mix(pal.structure, 0xffffff, 0.5), jitter: 0.12, rnd });
+    const capSpots: Spot[] = [];
+    const nC = Math.floor(span / 0.62);
+    for (let i = 0; i < nC; i++) {
+        const lx = -span / 2 + 0.4 + i * 0.62;
+        for (const s of [-1, 1]) capSpots.push({ x: lx, z: s * 0.92, s: 0.9 + rnd() * 0.25, r: 0, j: rnd() });
+    }
+    const caps = scatterAt(capGeo, paintMat(), capSpots, (m, p) => {
+        m.position.set(p.x, 1.04 + arch(p.x), p.z);
+        m.scale.setScalar(p.s);
+        m.rotation.y = (p.j - 0.5) * 0.1;
+    });
+    g.add(caps);
+    g.position.set(x, 0, z);
+    g.rotation.y = ry;
+    scene.add(mark(g));
+    contactBlobs(scene, [
+        { x: x + Math.cos(ry) * (span / 2 - 0.3), z: z - Math.sin(ry) * (span / 2 - 0.3), s: 1, r: 0, j: 0.5 },
+        { x: x - Math.cos(ry) * (span / 2 - 0.3), z: z + Math.sin(ry) * (span / 2 - 0.3), s: 1, r: 0, j: 0.5 }
+    ], pal, () => 1.6, 0.3);
+}
+
+/** RECIPE stairRun: 4-8 chunky steps — pale treads, dark risers (the pillow
+ *  rule at stair scale — the orientation bake does it), worn centers.
+ *  Variants: 0 straight, 1 L-turn, 2 grand. */
+function stairRun(scene: THREE.Scene, x: number, z: number, ry: number, pal: ScenePalette, rnd: () => number, variant: number) {
+    const steps: THREE.BufferGeometry[] = [];
+    const n = variant === 2 ? 7 : 4 + Math.floor(rnd() * 4);
+    const w = variant === 2 ? 3.4 : 1.7 + rnd() * 0.5;
+    for (let i = 0; i < n; i++) {
+        const st = new THREE.BoxGeometry(w * (0.96 + rnd() * 0.08), 0.24, 0.66);
+        st.translate((rnd() - 0.5) * 0.05, 0.12 + i * 0.24, -i * 0.62);
+        steps.push(st);
+    }
+    if (variant === 1) {
+        // the L: a short second flight turning off the top step
+        for (let i = 0; i < 3; i++) {
+            const st = new THREE.BoxGeometry(w * 0.95, 0.24, 0.66);
+            st.rotateY(Math.PI / 2);
+            st.translate(0.5 + i * 0.62, 0.12 + (n - 1) * 0.24 + i * 0.24, -(n - 1) * 0.62);
+            steps.push(st);
+        }
+    }
+    const geo = mergeGeometries(steps)!;
+    bakeFacetValues(geo, pal, {
+        base: mix(pal.structure, 0x000000, 0.10), cap: mix(pal.structure, 0xffffff, 0.38),
+        dark: mix(pal.fog, 0x000000, 0.6), jitter: 0.08, rnd
+    });
+    const m = new THREE.Mesh(geo, craftMat());
+    m.position.set(x, 0, z);
+    m.rotation.y = ry;
+    m.castShadow = true;
+    scene.add(mark(m));
+    contactBlobs(scene, [{ x, z, s: 1, r: 0, j: 0.5 }], pal, () => 1.3, 0.3);
+}
+
+/** RECIPE canalCoping (_objects 16): pale overhanging cap slabs with the dark
+ *  under-seam — the three-step value ladder at every water edge. Per-slab
+ *  value jitter. Variants: 0 straight, 1 curved, 2 stepped-down. */
+function canalCoping(scene: THREE.Scene, edge: { x: number; z: number; ry: number }[], pal: ScenePalette, rnd: () => number, variant: number) {
+    const tints = [mix(pal.structure, 0xffffff, 0.52), mix(pal.structure, 0xffffff, 0.38)];
+    const seam = mix(pal.fog, 0x000000, 0.72);
+    tints.forEach((col, gi) => {
+        const sub = edge.filter((_, i) => i % 2 === gi);
+        if (!sub.length) return;
+        const g = mergeGeometries([
+            vcolor(new THREE.BoxGeometry(0.98, 0.16, 0.62).translate(0, 0.10, 0), col),
+            vcolor(new THREE.BoxGeometry(0.92, 0.12, 0.52).translate(0, -0.03, 0), seam)
+        ])!;
+        jitterGeometry(g, 0.03, rnd);
+        const im = scatterAt(g, craftMat(), sub.map(e => ({ x: e.x, z: e.z, s: 0.95 + rnd() * 0.2, r: e.ry, j: rnd() })), (m, p, i) => {
+            m.position.set(p.x, variant === 2 ? 0.22 - i * 0.07 : 0.22, p.z);
+            m.rotation.y = p.r;
+            m.scale.setScalar(p.s);
+        });
+        scene.add(im);
+    });
+}
+
+/** RECIPE bench: two slab supports + a seat slab, the worn pale top, contact
+ *  dabs beneath. Variants: 0 stone, 1 timber, 2 broken. */
+function bench(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number, variant: number) {
+    const stone = variant !== 1;
+    const seatCol = stone ? mix(pal.structure, 0xffffff, 0.34) : mix(pal.structure, pal.key, 0.25);
+    const legCol = stone ? mix(pal.structure, 0x000000, 0.2) : mix(pal.structure, 0x000000, 0.35);
+    const geo = mergeGeometries([
+        vcolor(new THREE.BoxGeometry(0.3, 0.44, 0.52).translate(-0.6, 0.22, 0), legCol),
+        vcolor(new THREE.BoxGeometry(0.3, 0.44, 0.52).translate(0.6, 0.22, 0), legCol),
+        vcolor(new THREE.BoxGeometry(1.65, 0.13, 0.58).translate(0, 0.50, 0), seatCol)
+    ])!;
+    jitterGeometry(geo, 0.02, rnd);
+    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+        m.position.set(p.x, 0, p.z);
+        m.rotation.y = p.r;
+        if (variant === 2) m.rotation.z = 0.07 + p.j * 0.06;   // settled crooked
+        m.scale.setScalar(0.9 + p.j * 0.3);
+    }));
+    contactBlobs(scene, at, pal, () => 0.85, 0.3);
+}
+
+/** RECIPE signCard (_objects 11 dressing): a warped board with chunky painted
+ *  glyph strokes, on a bent post or hung from a bracket, or mounted to a wall.
+ *  Slight bloom in emissive biomes. Variants: 0 post, 1 hanging, 2 wall. */
+function signCard(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number, variant: number) {
+    const cardCol = mix(0xd88a3a, pal.key, 0.25);
+    const cardGeo = new THREE.PlaneGeometry(0.85, 0.55, 3, 2);
+    jitterGeometry(cardGeo, 0.05, rnd);
+    for (let v = 0; v < 3; v++) {
+        const sub = at.filter((_, i) => i % 3 === v);
+        if (!sub.length) continue;
+        const mat = new THREE.MeshBasicMaterial({ map: glyphTexture(v), color: mix(cardCol, 0xffffff, 0.4), fog: true, side: THREE.DoubleSide });
+        const cards = scatterAt(cardGeo, mat, sub, (m, p) => {
+            const y = variant === 2 ? 1.5 + p.j * 0.9 : variant === 1 ? 1.5 : 1.62;
+            const off = variant === 1 ? 0.5 : 0;
+            m.position.set(p.x + Math.sin(p.r) * off, y, p.z + Math.cos(p.r) * off);
+            m.rotation.set(0, p.r, (p.j - 0.5) * 0.16);
+            m.scale.setScalar(0.9 + p.j * 0.35);
+        });
+        cards.castShadow = false;
+        scene.add(cards);
+    }
+    if (variant !== 2) {
+        // The bent dark post; the hanging variant adds its bracket arm.
+        const postParts: THREE.BufferGeometry[] = [
+            vcolor(makeTrunkGeo(2.0, 0.09, rnd), 0x2a2018)
+        ];
+        if (variant === 1) {
+            postParts.push(vcolor(new THREE.CylinderGeometry(0.03, 0.03, 0.8, 5).rotateZ(Math.PI / 2).translate(0, 2.02, 0), 0x2a2018));
+        }
+        const postGeo = mergeGeometries(postParts)!;
+        scene.add(scatterAt(postGeo, craftMat(), at, (m, p) => {
+            m.position.set(p.x, 0, p.z);
+            m.rotation.y = p.r;
+            m.scale.setScalar(0.9 + p.j * 0.2);
+        }));
+        contactBlobs(scene, at, pal, () => 0.5, 0.3);
+    }
+    if (pal.emissiveOn) {
+        // A whisper of bloom behind the board so it reads at night.
+        const hpos = new Float32Array(at.length * 3);
+        at.forEach((p, i) => {
+            hpos[i * 3] = p.x; hpos[i * 3 + 1] = variant === 2 ? 1.5 + p.j * 0.9 : 1.55; hpos[i * 3 + 2] = p.z;
+        });
+        const hgeo = new THREE.BufferGeometry();
+        hgeo.setAttribute('position', new THREE.BufferAttribute(hpos, 3));
+        scene.add(mark(new THREE.Points(hgeo, new THREE.PointsMaterial({
+            map: softSprite(), color: pal.emissive, size: 1.1, sizeAttenuation: true,
+            transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending
+        }))));
+    }
+}
+
+/**
+ * The habitation pass (laws E3/B5): hero props and street furniture that make
+ * a place LIVED-IN — lamps at path corners and pool gaps, planters flanking
+ * doors and paths, a fountain on the plaza, one statue hero, benches at pool
+ * edges, sign cards near the gates. Each biome takes only what its chord and
+ * gesture already imply — never every asset everywhere.
+ */
+function buildHabitation(
+    scene: THREE.Scene, pal: ScenePalette, rnd: () => number,
+    biome: string, traits: SceneTraits, visual: SceneVisual | null | undefined,
+    roadMask: RoadMask | undefined, noise2D: (x: number, y: number) => number
+) {
+    if (biome === 'void' || biome === 'sea' || traits.space || traits.submerged || traits.enclosed) return;
+    if (visual?.silhouette === 'none') return;
+    const wander = (t: number) => noise2D(t * 0.035, 7.3) * 3.2;   // the path's own curve
+
+    // --- streetLamps at path corners, in the gaps between the breadcrumb
+    //     pools; alternate verges so the light chain zigs down the walk line.
+    if (roadMask) {
+        const groups: Spot[][] = [[], [], []];
+        for (let i = 0; i < 6; i++) {
+            const z = -7.5 - i * 6.2 - rnd() * 1.5;
+            const side = i % 2 === 0 ? -1 : 1;
+            groups[i % 3].push({
+                x: wander(z) + side * (2.9 + rnd() * 0.7), z, s: 1,
+                r: side < 0 ? 0.1 + rnd() * 0.2 : Math.PI - 0.1 - rnd() * 0.2, j: rnd()
+            });
+        }
+        groups.forEach((lampSpots, v) => { if (lampSpots.length) streetLamp(scene, lampSpots, pal, rnd, v); });
+    }
+
+    if (biome === 'urban') {
+        // The plaza: a fountain on an open spot off the roadbed, answered
+        // across the road by the statue hero (one-offs, D4/B5).
+        const fs = rnd() < 0.5 ? -1 : 1;
+        const fz = -12.5 - rnd() * 3;
+        fountain(scene, wander(fz) + fs * (6.5 + rnd() * 2), fz, pal, rnd, Math.floor(rnd() * 3));
+        if (rnd() < 0.75) {
+            const sz = fz - 6 - rnd() * 3;
+            statue(scene, wander(sz) - fs * (7 + rnd() * 2), sz, rnd() * Math.PI * 2, pal, rnd, Math.floor(rnd() * 3));
+        }
+        // Arch-houses leaning over the street, each with its ONE lean.
+        const nH = 2 + Math.floor(rnd() * 2);
+        for (let i = 0; i < nH; i++) {
+            const hz = -9 - i * 7.5 - rnd() * 2;
+            const hs = i % 2 === 0 ? -1 : 1;
+            archHouse(scene, wander(hz) + hs * (5.4 + rnd() * 1.2), hz,
+                hs > 0 ? -Math.PI / 2 + (rnd() - 0.5) * 0.3 : Math.PI / 2 + (rnd() - 0.5) * 0.3,
+                pal, rnd, Math.floor(rnd() * 3));
+        }
+        // Planters flanking the walking line; benches at pool edges; sign
+        // cards near the shopfronts.
+        const pl: Spot[] = [];
+        for (let i = 0; i < 4; i++) {
+            const pz = -6.5 - i * 4.6 - rnd();
+            const side = i % 2 === 0 ? 1 : -1;
+            pl.push({ x: wander(pz) + side * (2.7 + rnd() * 0.5), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
+        }
+        planter(scene, pl, pal, rnd, Math.floor(rnd() * 3));
+        bench(scene, [-10.5, -23].map(bz => ({
+            x: wander(bz) + (rnd() < 0.5 ? -1 : 1) * 3.1, z: bz, s: 1, r: rnd() * Math.PI * 2, j: rnd()
+        })), pal, rnd, Math.floor(rnd() * 3));
+        const signs: Spot[] = [];
+        for (let i = 0; i < 3; i++) {
+            const sz = -8 - i * 9 - rnd() * 2;
+            const side = i % 2 === 0 ? 1 : -1;
+            signs.push({
+                x: wander(sz) + side * (3.4 + rnd() * 0.8), z: sz, s: 1,
+                r: (side > 0 ? -1 : 1) * Math.PI / 2 + (rnd() - 0.5) * 0.4, j: rnd()
+            });
+        }
+        signCard(scene, signs, pal, rnd, Math.floor(rnd() * 2));
+    }
+
+    if (biome === 'crossroads') {
+        archHouse(scene, wander(-11) - 5.6, -11, Math.PI / 2 + (rnd() - 0.5) * 0.3, pal, rnd, 1 + Math.floor(rnd() * 2));
+        if (rnd() < 0.6) {
+            archHouse(scene, wander(-19) + 5.4, -19, -Math.PI / 2 + (rnd() - 0.5) * 0.3, pal, rnd, Math.floor(rnd() * 2));
+        }
+        planter(scene, [
+            { x: wander(-10) - 4.2, z: -10, s: 1, r: rnd() * Math.PI, j: rnd() },
+            { x: wander(-13.5) - 4.0, z: -13.5, s: 1, r: rnd() * Math.PI, j: rnd() },
+            { x: wander(-8) + 3.2, z: -8, s: 1, r: rnd() * Math.PI, j: rnd() }
+        ], pal, rnd, 0);
+        bench(scene, [{ x: wander(-16) + 2.9, z: -16, s: 1, r: -0.4 + rnd() * 0.8, j: rnd() }], pal, rnd, Math.floor(rnd() * 3));
+    }
+
+    if (biome === 'forest') {
+        // Tended things at the path edge — a garden implies a gardener.
+        const pl: Spot[] = [];
+        for (let i = 0; i < 3; i++) {
+            const pz = -7 - i * 5.2 - rnd();
+            pl.push({ x: wander(pz) + (i % 2 === 0 ? 1 : -1) * (2.7 + rnd() * 0.6), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
+        }
+        planter(scene, pl, pal, rnd, 1 + Math.floor(rnd() * 2));   // pots and beds, not civic stone
+        streetLamp(scene, [{ x: wander(-14) - 2.8, z: -14, s: 1, r: 0.15 + rnd() * 0.2, j: rnd() }], pal, rnd, 0);
+        bench(scene, [{ x: wander(-9) + 3.0, z: -9, s: 1, r: rnd() * Math.PI, j: rnd() }], pal, rnd, 1);
+    }
+
+    if (biome === 'ruin') {
+        statue(scene, (rnd() - 0.5) * 10, -12 - rnd() * 6, rnd() * Math.PI * 2, pal, rnd, Math.floor(rnd() * 3));
+        stairRun(scene, -3 + rnd() * 6, -9 - rnd() * 4, rnd() * Math.PI, pal, rnd, Math.floor(rnd() * 3));
+        if (rnd() < 0.6) stairRun(scene, -5 + rnd() * 10, -16 - rnd() * 6, rnd() * Math.PI, pal, rnd, 2);
+    }
+
+    if (biome === 'swamp') {
+        // The pond: flat opaque water with a coped rim and a span over it.
+        const px = -6.5, pz = -13;
+        waterDisc(scene, px, pz, 0.06, 5.2, pal);
+        const edge: { x: number; z: number; ry: number }[] = [];
+        for (let a = -0.4; a < Math.PI * 1.55; a += 0.30) {
+            edge.push({ x: px + Math.cos(a) * 5.6, z: pz + Math.sin(a) * 5.6, ry: -a + Math.PI / 2 });
+        }
+        canalCoping(scene, edge, pal, rnd, 1);
+        bridge(scene, px, pz + 4.1, 0.08, pal, rnd, 0);
     }
 }
 
@@ -2299,19 +3232,9 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
                 m.rotation.y = Math.round(p.r) * (Math.PI / 4);
             }));
             glowDots(scene, spots(44, 8, 42, rnd), pal.emissiveOn ? pal.emissive : 0x9fc8ff, (p) => 1.4 + p.j * 6);
-            // Streetlamps: ONE spot list -> pole and head land on the same lamp.
-            const lampSpots = spots(14, 8, 38, rnd);
-            const poleMat = new THREE.MeshStandardMaterial({ color: mix(pal.structure, 0x000000, 0.5), roughness: 0.9 });
-            const lampGlow = new THREE.MeshStandardMaterial({ color: 0xffe9c0, emissive: 0xffd9a0, emissiveIntensity: 1.8, roughness: 0.4 });
-            scene.add(scatterAt(new THREE.CylinderGeometry(0.045, 0.06, 3.1, 6), poleMat, lampSpots, (m, p) => {
-                m.position.set(p.x, 1.55, p.z);
-            }));
-            scene.add(scatterAt(new THREE.SphereGeometry(0.17, 8, 6), lampGlow, lampSpots, (m, p) => {
-                m.position.set(p.x, 3.2, p.z);
-            }));
-            // Towers and lamp posts both stand IN the street, not on it.
+            // Streetlamps moved to the habitation pass (recipe streetLamp):
+            // S-curved poles with halo + pool, placed at path corners.
             contactBlobs(scene, blocks, pal, (p) => p.s * 2.6, 0.30);
-            contactBlobs(scene, lampSpots, pal, () => 0.55, 0.30);
             break;
         }
         case 'swamp': {
@@ -2832,6 +3755,7 @@ function buildOverhead(scene: THREE.Scene, pal: ScenePalette, rnd: () => number,
  */
 export function generateScene(scene: THREE.Scene, tags: SceneTags | any, pal: ScenePalette) {
     disposeProcedural(scene);
+    scene.userData.crystalsAdded = false;   // guards the double-add (16-glow-cavern)
 
     const t = tags ?? {};
     const known = !!(t.biome && KNOWN_BIOMES.has(t.biome as string));
@@ -2856,12 +3780,17 @@ export function generateScene(scene: THREE.Scene, tags: SceneTags | any, pal: Sc
 
     buildProps(scene, biome, pal, rnd, roadMask, traits, t.visual);
     buildFraming(scene, pal, rnd, traits, t.visual, biome, roadMask, noise2D);
+    // The habitation pass (E3/B5): lamps, planters, the fountain, a statue
+    // hero, benches, signs — the lived-in layer from the recipe library.
+    buildHabitation(scene, pal, rnd, biome, traits, t.visual, roadMask, noise2D);
     addBraziers(scene, pal, rnd, traits, biome, t.visual);
     buildOverhead(scene, pal, rnd, biome, traits);
     buildNearField(scene, pal, rnd, roadMask, traits, biome);
     // Traits layer specifics onto KNOWN biomes too — underground + "crystal"
-    // in the text = a crystal cavern without any new biome existing.
-    if (traits.crystals && biome !== 'synthetic') addCrystals(scene, pal, traits, rnd, false);
+    // in the text = a crystal cavern without any new biome existing. Skip if
+    // a silhouette-override path already grew them (the double-add doubled
+    // the light and blew the cores white).
+    if (traits.crystals && biome !== 'synthetic' && !scene.userData.crystalsAdded) addCrystals(scene, pal, traits, rnd, false);
     // Glow without crystals still pools — luminous places must LIGHT their
     // ground, not just sparkle (the lantern lesson).
     if (traits.glowing && !traits.crystals) addGlowPools(scene, pal, traits, rnd);
