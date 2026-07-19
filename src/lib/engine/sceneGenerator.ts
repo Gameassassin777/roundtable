@@ -153,7 +153,7 @@ function ringSpots(n: number, radius: number, rnd: () => number): Spot[] {
 }
 
 /** Scatter one instance per spot. Two calls with the SAME spots stay aligned. */
-function scatterAt(
+function scatterFree(
     geo: THREE.BufferGeometry, mat: THREE.Material, at: Spot[],
     place: (m: THREE.Object3D, p: Spot, i: number) => void
 ): THREE.InstancedMesh {
@@ -193,7 +193,7 @@ let _claims: Claim[] = [];
 let _anchors: { x: number; y: number; z: number }[] = [];
 
 /** Start a fresh ground plan (called once per generated scene). */
-function fieldReset() { _claims = []; _anchors = []; }
+function fieldReset() { _claims = []; _anchors = []; _groundY = () => 0; }
 
 /** Claim a footprint. True if free (and recorded); false if already taken. */
 function claim(x: number, z: number, r: number): boolean {
@@ -208,6 +208,40 @@ function claim(x: number, z: number, r: number): boolean {
 /** Claim every spot in a list, dropping the ones that collide. */
 function claimAll(at: Spot[], r: number): Spot[] {
     return at.filter(p => claim(p.x, p.z, r));
+}
+
+/** Query only: is this point clear of every claim (with margin)? Records
+ *  nothing — for grass-scale scatter that may cluster freely among itself
+ *  but must never sit inside a placed prop. */
+function fieldFree(x: number, z: number, margin = 0): boolean {
+    for (const c of _claims) {
+        const dx = c.x - x, dz = c.z - z, rr = c.r + margin;
+        if (dx * dx + dz * dz < rr * rr) return false;
+    }
+    return true;
+}
+
+// ---------- the height field (one terrain, one truth) ----------
+// buildGround owns the relief; it publishes the sampler here so EVERYTHING
+// placed afterwards stands ON the terrain instead of the old y=0 plane —
+// the "assets floating on a carpet" tell. Identity for floorless scenes.
+let _groundY: (x: number, z: number) => number = () => 0;
+
+/** Terrain height at world (x, z). Zero where the world has no floor. */
+function gy(x: number, z: number): number { return _groundY(x, z); }
+
+/** scatterAt + terrain snap: every instance drops onto the height field.
+ *  Married groups (trunk+crown, bowl+flame) share a spot list, so they rise
+ *  together. Things hung in the air (wire bulbs, pennants, local-coord
+ *  attachments) stay on scatterFree. */
+function scatterGround(
+    geo: THREE.BufferGeometry, mat: THREE.Material, at: Spot[],
+    place: (m: THREE.Object3D, p: Spot, i: number) => void
+): THREE.InstancedMesh {
+    return scatterFree(geo, mat, at, (m, p, i) => {
+        place(m, p, i);
+        m.position.y += gy(p.x, p.z);
+    });
 }
 
 // ---------- sky ----------
@@ -624,7 +658,7 @@ function addCrystals(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits,
     });
     const geo = new THREE.OctahedronGeometry(1, 0);
     geo.scale(0.42, 1.5, 0.42);
-    scene.add(scatterAt(geo, mat, spots(dense ? 42 : 16, 3, 32, rnd), (m, pt) => {
+    scene.add(scatterGround(geo, mat, spots(dense ? 42 : 16, 3, 32, rnd), (m, pt) => {
         m.position.set(pt.x, 0.45 * pt.s, pt.z);
         m.scale.setScalar(0.35 + pt.j * 1.0);
         m.rotation.set((pt.j - 0.5) * 0.7, pt.r, (pt.j - 0.5) * 0.5);
@@ -653,7 +687,7 @@ function addCrystals(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits,
         const aa = rnd() * Math.PI * 2, rr = 8 + rnd() * 16;
         registerLight(Math.cos(aa) * rr, 1.2, Math.sin(aa) * rr, col, 8, 20, 1);
     }
-    hero.position.set(-3.2, 0, -4.5);
+    hero.position.set(-3.2, gy(-3.2, -4.5), -4.5);
     // The hero's real light: shadowed, high-priority — the cavern's sun.
     registerLight(-3.2, 1.8, -4.5, col, 30, 30, 4, true);
     scene.add(mark(hero));
@@ -702,7 +736,7 @@ function glowDots(scene: THREE.Scene, at: Spot[], col: number, yOf: (p: Spot) =>
     const orbMat = new THREE.MeshStandardMaterial({
         color: mix(col, 0xffffff, 0.45), emissive: col, emissiveIntensity: EMIT.dot, roughness: 0.4
     });
-    scene.add(scatterAt(new THREE.SphereGeometry(size, 8, 6), orbMat, at, (m, p) => {
+    scene.add(scatterGround(new THREE.SphereGeometry(size, 8, 6), orbMat, at, (m, p) => {
         m.position.set(p.x, yOf(p), p.z);
     }));
     const geo = new THREE.BufferGeometry();
@@ -760,17 +794,25 @@ function groundBump(kind: 'litter' | 'dirt'): THREE.Texture {
 function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: number) => number, roadMask?: RoadMask, traits?: SceneTraits, visual?: SceneVisual | null, rnd: () => number = mulberry32(hashStr('ground|' + biome))) {
     if (biome === 'void') return null;              // the void has no floor — that's the point
 
-    const geo = new THREE.PlaneGeometry(170, 170, 120, 120);
+    const geo = new THREE.PlaneGeometry(170, 170, 200, 200);   // 0.85u verts: micro-relief survives sampling
     const pos = geo.attributes.position;
 
     const amp: Record<string, number> = {
-        swamp: 0.45, desert: 1.6, mountain: 2.8, arctic: 0.9, sea: 0.25,
-        underground: 0.5, ruin: 0.35, plains: 0.5, forest: 0.6, urban: 0.05,
-        fire: 1.2, crossroads: 0.06, synthetic: 0.85
+        swamp: 0.75, desert: 1.6, mountain: 2.8, arctic: 1.25, sea: 0.35,
+        underground: 0.85, ruin: 0.75, plains: 1.0, forest: 1.05, urban: 0.08,
+        fire: 1.2, crossroads: 0.08, synthetic: 1.0
     };
     const freq: Record<string, number> = {
         desert: 0.045, mountain: 0.06, sea: 0.22, arctic: 0.05, fire: 0.1
     };
+    // Micro-lumps: knee-high tooth at walking scale — the difference between
+    // "terrain" and "carpet". Streets keep only a cobble-scale shiver.
+    const MICRO: Record<string, number> = { urban: 0.05, crossroads: 0.05, sea: 0.05 };
+    const micro = MICRO[biome] ?? 0.17;
+    // Composition swells: one broad knoll-and-valley octave (~50u wavelength)
+    // so the far field reads as LANDSCAPE, not a flat plane with noise.
+    // Built places don't swell — a city street can't climb a dune.
+    const swell = (biome === 'urban' || biome === 'crossroads') ? 0 : 0.9;
     // The terrain aspect is a MULTIPLIER on the biome's own relief, so
     // "jagged desert" is rough dunes, not mountain. All four declared values
     // are live — they used to be declared in SceneVisual but read by nothing.
@@ -788,9 +830,6 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
     // of the trait text — no biome had to plan for this.
     const craters: { x: number; z: number; r: number; d: number }[] = [];
     if (traits?.craters) {
-        for (let i = 0; i < 7; i++) {
-            craters.push({ x: (Math.random() - 0.5) * 0, z: 0, r: 0, d: 0 }); // placeholder replaced below
-        }
         craters.length = 0;
         const crnd = mulberry32(hashStr('craters'));
         for (let i = 0; i < 7; i++) {
@@ -801,26 +840,65 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
         }
     }
 
+    // The walking line: wild places wear a HOLLOW along the path the crumbs
+    // follow — packed, slightly sunken, relief kneeling beside it. The trail
+    // reads as geography, not a decal. Built biomes use the road mask instead.
+    const wildTrail = !roadMask && biome !== 'sea' && !traits?.submerged && !traits?.space;
+    const trailX = (wz: number) => noise2D(wz * 0.035, 7.3) * 3.2;
+
+    // The foreground knoll: one smooth hillock off to a side of the walking
+    // line, close to the camera — the thing a near shot composes against.
+    // Wild places only; built biomes get their foreground from props.
+    const knollOn = wildTrail && biome !== 'underground';
+    const knoll = {
+        x: (rnd() < 0.5 ? -1 : 1) * (5.5 + rnd() * 2.5),
+        z: 6.5 + rnd() * 2.5,
+        r: 5.5 + rnd() * 3,
+        h: 0.55 + rnd() * 0.5
+    };
+
     // The height field as a closure so the PAINT pass can find the low spots
-    // the drift pools in. Takes PLANE coords (world z = -y).
+    // the drift pools in. Takes PLANE coords (world z = -y). ALSO published
+    // as the scene's terrain sampler — everything placed afterwards snaps to it.
     const heightAt = (x: number, y: number): number => {
-        // Two octaves so terrain reads as landscape, not noise.
-        let h = noise2D(x * f, y * f) * a + noise2D(x * f * 2.7, y * f * 2.7) * a * 0.35;
+        // Per-term camera clearing: a dead-flat disc under the viewer reads as
+        // a billiard table (the float complaint), so only the BIG terms kneel
+        // near the camera — walking-scale tooth stays on everywhere.
+        const d = Math.hypot(x, y);
+        const clear = Math.min(1, Math.max(0, (d - 3.5) / 5.5));
+        // Distance-amplified swell: from a low camera the far field's relief
+        // foreshortens to nothing, so the landscape octave GROWS with range —
+        // the horizon rolls instead of ruling a flat line.
+        const far = Math.min(1, Math.max(0, (d - 14) / 41));
+        let h = noise2D(x * 0.021 + 13.1, y * 0.021 - 7.7) * swell * (0.35 + 1.3 * far)
+            + (noise2D(x * f, y * f) * a
+            + noise2D(x * f * 2.7, y * f * 2.7) * a * 0.35) * clear
+            + noise2D(x * 0.32, y * 0.32) * micro * (0.45 + 0.55 * clear);
         // Roadbed is packed flat.
-        if (roadMask) h *= 1 - roadMask(x, -y) * 0.9;
+        if (roadMask) h *= 1 - roadMask(x, -y) * 0.95;
+        if (wildTrail) {
+            const dt = Math.abs(x - trailX(-y));
+            const t = Math.min(1, Math.max(0, (dt - 1.7) / 2.6));
+            h = h * (0.45 + 0.55 * t) - 0.22 * (1 - t);
+        }
         for (const c of craters) {
             const dd = Math.hypot(x - c.x, -y - c.z);
-            if (dd < c.r) h -= c.d * (Math.cos((dd / c.r) * Math.PI) * 0.5 + 0.5);
-            else if (dd < c.r + 2.2) h += c.d * 0.3 * (1 - (dd - c.r) / 2.2);   // rim
+            if (dd < c.r) h -= c.d * clear * (Math.cos((dd / c.r) * Math.PI) * 0.5 + 0.5);
+            else if (dd < c.r + 2.2) h += c.d * 0.3 * clear * (1 - (dd - c.r) / 2.2);   // rim
         }
-        // Level clearing under the camera, easing out to full relief. Without it
-        // a high-amplitude biome (mountain) puts the camera INSIDE a hill and
-        // fills the lower half of the frame with an unreadable black mass.
-        // Kept small (4.5): a 7-unit dead-flat disc around the viewer reads as
-        // a billiard table from the lowered camera — the float complaint.
-        const d = Math.hypot(x, y);
-        return h * Math.min(1, Math.max(0, (d - 4.5) / 9));
+        if (knollOn) {
+            const kd = Math.hypot(x - knoll.x, y + knoll.z);
+            const kt = Math.max(0, 1 - (kd / knoll.r) * (kd / knoll.r));
+            h += knoll.h * kt * kt;
+        }
+        // Sea ground is a swell field: long low ridges marching under the
+        // water so the shallows catch light in BANDS, not a flat sheet.
+        if (biome === 'sea') {
+            h += Math.sin(x * 0.16 + y * 0.055 + noise2D(x * 0.05, y * 0.05) * 3.2) * 0.11 * (0.3 + 0.7 * clear);
+        }
+        return h;
     };
+    _groundY = (wx: number, wz: number) => heightAt(wx, -wz);
 
     for (let i = 0; i < pos.count; i++) {
         pos.setZ(i, heightAt(pos.getX(i), pos.getY(i)));
@@ -875,9 +953,9 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
         const broad2 = noise2D(x * 0.05 + 31.7, -z * 0.05 - 17.3);
         let col: THREE.Color | null = null, a = 0;
         if (broad > 0.18) { col = cGrowth; a = Math.min(0.30, (broad - 0.18) * 0.6); }
-        else if (broad < -0.22) { col = cRock; a = Math.min(0.28, (-broad - 0.22) * 0.55); }
+        else if (broad < -0.22) { col = cRock; a = Math.min(0.22, (-broad - 0.22) * 0.45); }
         if (broad2 > 0.22) { col = cDry; a = Math.min(0.30, (broad2 - 0.22) * 0.6); }
-        else if (broad2 < -0.22) { col = cDark; a = Math.min(0.30, (-broad2 - 0.22) * 0.6); }
+        else if (broad2 < -0.22) { col = cDark; a = Math.min(0.16, (-broad2 - 0.22) * 0.34); }
         if (col) dab(x, z, 5 + rnd() * 13, col, a);
     }
 
@@ -967,22 +1045,37 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
     const groundTex = new THREE.CanvasTexture(cv);
     groundTex.needsUpdate = true;
 
-    const LUSH = biome === 'forest' || biome === 'swamp' || biome === 'plains' || biome === 'crossroads';
+    // The height composite: the painted canvas ITSELF (dabs rise, cracks
+    // sink) with the surface library's dirt/snow grain tiled over it at 4x —
+    // then Sobel'd into a normal map. Texture-level 3D depth that renders:
+    // the key light rakes the paint, not just the geometry.
+    const hcv = document.createElement('canvas'); hcv.width = hcv.height = S;
+    const hctx = hcv.getContext('2d')!;
+    hctx.drawImage(cv, 0, 0);
+    const grainCv = surfaceTexture((biome === 'arctic' || biome === 'sea') ? 'snow' : 'dirt').image as HTMLCanvasElement;
+    hctx.globalAlpha = 0.6;
+    for (let ty = 0; ty < 4; ty++) for (let tx2 = 0; tx2 < 4; tx2++) {
+        hctx.drawImage(grainCv, tx2 * S / 4, ty * S / 4, S / 4, S / 4);
+    }
+    hctx.globalAlpha = 1;
+    const groundNrm = normalFromHeight(hcv, 11);
+
     const mat = triPatch(new THREE.MeshStandardMaterial({
         // The canvas owns the paint; the material just carries it.
         color: 0xffffff,
         map: groundTex,
+        normalMap: groundNrm,
+        normalScale: new THREE.Vector2(1.0, 1.0),
         roughness: pal.groundRough,
         metalness: biome === 'sea' ? 0.35 : 0.0,
-        flatShading: biome === 'mountain' || biome === 'fire' || visual?.terrain === 'jagged',
-        bumpMap: groundBump(LUSH ? 'litter' : 'dirt'),
-        bumpScale: 0.015
+        flatShading: biome === 'mountain' || biome === 'fire' || visual?.terrain === 'jagged'
         // Octave 2: a 4x-frequency world-space grain over the painted canvas —
         // the bottom third of the frame gets tooth under the viewer's nose.
-    }), biome === 'arctic' ? 'snow' : 'dirt', 1.3);
+    }), (biome === 'arctic' || biome === 'sea') ? 'snow' : 'dirt', 1.3);
     const floor = new THREE.Mesh(geo, mat);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;      // shadows are what actually GROUND objects
+    floor.castShadow = true;         // hills throw shade on their own valleys
     floor.userData.isWater = biome === 'sea';
     return mark(floor) as THREE.Mesh;
 }
@@ -1246,6 +1339,41 @@ function surfaceTexture(kind: SurfaceKind): THREE.CanvasTexture {
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.needsUpdate = true;
     _surfTex[kind] = t;
+    return t;
+}
+
+/**
+ * Sobel a canvas's luminance into a tangent-space normal map. The painted
+ * ground's dabs, cracks and speckle become PHYSICAL relief — the key light
+ * rakes across them instead of flat-printing them. Bake-time only.
+ */
+function normalFromHeight(src: HTMLCanvasElement, strength: number): THREE.CanvasTexture {
+    const S = src.width;
+    const data = (src.getContext('2d')!).getImageData(0, 0, S, S).data;
+    const h = new Float32Array(S * S);
+    for (let i = 0; i < S * S; i++) {
+        h[i] = (data[i * 4] * 0.2126 + data[i * 4 + 1] * 0.7152 + data[i * 4 + 2] * 0.0722) / 255;
+    }
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const ctx = cv.getContext('2d')!;
+    const out = ctx.createImageData(S, S);
+    const at = (x: number, y: number) => h[((y + S) % S) * S + ((x + S) % S)];
+    for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+            const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
+            const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
+            const inv = 1 / Math.hypot(dx, dy, 1);
+            const o = (y * S + x) * 4;
+            out.data[o] = (-dx * inv * 0.5 + 0.5) * 255;
+            out.data[o + 1] = (dy * inv * 0.5 + 0.5) * 255;
+            out.data[o + 2] = inv * 255;
+            out.data[o + 3] = 255;
+        }
+    }
+    ctx.putImageData(out, 0, 0);
+    const t = new THREE.CanvasTexture(cv);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.needsUpdate = true;
     return t;
 }
 
@@ -1518,7 +1646,7 @@ function lightPool(scene: THREE.Scene, x: number, z: number, r: number, col: num
         map: poolTexture(), color: col, transparent: true, opacity,
         depthWrite: false, blending: THREE.AdditiveBlending, fog: false
     }));
-    rim.position.set(x, 0.045, z);
+    rim.position.set(x, 0.045 + gy(x, z), z);
     rim.scale.setScalar(r * 1.3);
     rim.renderOrder = 2;
     scene.add(mark(rim));
@@ -1526,7 +1654,7 @@ function lightPool(scene: THREE.Scene, x: number, z: number, r: number, col: num
         map: poolTexture(), color: mix(col, 0xfff2d8, 0.5), transparent: true, opacity: opacity * 0.85,
         depthWrite: false, blending: THREE.AdditiveBlending, fog: false
     }));
-    core.position.set(x, 0.05, z);
+    core.position.set(x, 0.05 + gy(x, z), z);
     core.scale.setScalar(r * 0.55);
     core.renderOrder = 2;
     scene.add(mark(core));
@@ -1551,7 +1679,7 @@ function breadcrumbTrail(scene: THREE.Scene, pal: ScenePalette, rnd: () => numbe
         const z = -3.0 - i * 6.4 - rnd() * 2;
         const x = wander(z) + (rnd() < 0.5 ? -1 : 1) * (1.7 + rnd() * 0.9);
         const orb = new THREE.Mesh(new THREE.SphereGeometry(0.10, 8, 8), orbMat);
-        orb.position.set(x, 0.5 + rnd() * 0.3, z);
+        orb.position.set(x, 0.5 + rnd() * 0.3 + gy(x, z), z);
         scene.add(mark(orb));
         const halo = new THREE.Sprite(new THREE.SpriteMaterial({
             map: tex, color: col, transparent: true, opacity: 0.30,
@@ -1580,7 +1708,7 @@ function contactBlobs(scene: THREE.Scene, at: Spot[], pal: ScenePalette, radiusO
         map: blobTexture(), color: mix(pal.fog, 0x000000, 0.72),
         transparent: true, opacity, depthWrite: false, fog: false
     });
-    const blobs = scatterAt(g, m, at, (mm, p) => {
+    const blobs = scatterGround(g, m, at, (mm, p) => {
         mm.position.set(p.x, 0.03, p.z);
         mm.scale.setScalar(radiusOf(p));
     });
@@ -1604,7 +1732,7 @@ function driftSkirts(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () 
     // into the same shadow hue as everything else.
     bakeGradient(g, mix(pal.ground, 0x000000, 0.40), mix(pal.ground, pal.structure, 0.16), rnd);
     bakeOrientAO(g, pal, 1.15);
-    const skirts = scatterAt(g, paintMat(), at, (m, p) => {
+    const skirts = scatterGround(g, paintMat(), at, (m, p) => {
         m.position.set(p.x, -0.05, p.z);
         m.scale.set(p.s * 2.2, 0.40 + p.j * 0.28, p.s * 2.2);
         m.rotation.y = p.r;
@@ -1965,25 +2093,25 @@ function addTrees(
     // material tint is mid-foliage warmed slightly; hemi+sun paint the gradient.
     const crownTint = mix(p.foliage, p.key, 0.10);
 
-    scene.add(scatterAt(trunkGeo, paintMat(), at, (m, pt) => {
+    scene.add(scatterGround(trunkGeo, paintMat(), at, (m, pt) => {
         m.position.set(pt.x, 0, pt.z); m.scale.setScalar(pt.s);
         m.rotation.set(0, pt.r, (pt.j - 0.5) * lean);
     }));
-    const conifers = scatterAt(coniferGeo, leafMatFor(mix(crownTint, 0x000000, 0.12)), at, (m, pt) => {
+    const conifers = scatterGround(coniferGeo, leafMatFor(mix(crownTint, 0x000000, 0.12)), at, (m, pt) => {
         if (pt.j > 0.42) { m.scale.setScalar(0); return; }
         m.position.set(pt.x, trunkH * 0.72 * pt.s, pt.z);
         m.scale.setScalar(pt.s); m.rotation.y = pt.r;
     });
     conifers.customDepthMaterial = leafDepth();
     scene.add(conifers);
-    const crowns = scatterAt(crownGeo, leafMatFor(mix(crownTint, 0xffffff, 0.12)), at, (m, pt) => {
+    const crowns = scatterGround(crownGeo, leafMatFor(mix(crownTint, 0xffffff, 0.12)), at, (m, pt) => {
         if (pt.j <= 0.42 || pt.j > 0.78) { m.scale.setScalar(0); return; }
         m.position.set(pt.x, trunkH * 0.92 * pt.s, pt.z);
         m.scale.setScalar(pt.s); m.rotation.y = pt.r;
     });
     crowns.customDepthMaterial = leafDepth();
     scene.add(crowns);
-    const umbrellas = scatterAt(umbrellaGeo, leafMatFor(mix(crownTint, p.key, 0.14)), at, (m, pt) => {
+    const umbrellas = scatterGround(umbrellaGeo, leafMatFor(mix(crownTint, p.key, 0.14)), at, (m, pt) => {
         if (pt.j <= 0.78) { m.scale.setScalar(0); return; }
         m.position.set(pt.x, trunkH * 1.02 * pt.s, pt.z);
         m.scale.setScalar(pt.s); m.rotation.y = pt.r;
@@ -1994,7 +2122,7 @@ function addTrees(
     // Undergrowth: a small fluff bush at every trunk base. Trees rising bare
     // out of flat ground is a big part of what reads as "basic" -- growth
     // clusters where things grow.
-    const bushes = scatterAt(makeCrownGeo(rnd), leafMatFor(mix(crownTint, p.ground, 0.35)), at, (m, pt) => {
+    const bushes = scatterGround(makeCrownGeo(rnd), leafMatFor(mix(crownTint, p.ground, 0.35)), at, (m, pt) => {
         m.position.set(pt.x + (pt.j - 0.5) * 0.8, 0.28 * pt.s, pt.z + (pt.j - 0.5) * 0.6);
         m.scale.setScalar(0.3 * pt.s);
         m.rotation.y = pt.r * 2.0;
@@ -2032,7 +2160,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
         // its arches — sentient glass, not painted concrete. Otherwise each
         // face owns ONE value by facing; the mottle stays off the dark sides.
         const mat = pal.prismatic ? (prismatize(g), prismaticMat()) : (bakeFacetValues(g, pal, { rnd }), structMat());
-        scene.add(scatterAt(g, mat, at, (m, p) => {
+        scene.add(scatterGround(g, mat, at, (m, p) => {
             m.position.set(p.x, 3.5 * p.s * (0.5 + p.j), p.z);
             m.scale.set(p.s * (0.5 + p.j), p.s * (0.5 + p.j * 1.6), p.s * (0.5 + p.j));
             m.rotation.y = p.r;
@@ -2040,7 +2168,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
     },
     blobs: ({ scene, at, pal, rnd }) => {
         const g = bakeFacetValues(new THREE.IcosahedronGeometry(1.6, 2), pal, { rnd });
-        scene.add(scatterAt(g, paintMat(), at, (m, p) => {
+        scene.add(scatterGround(g, paintMat(), at, (m, p) => {
             m.position.set(p.x, 0.7 * p.s, p.z);
             m.scale.set(p.s * (0.8 + p.j), p.s * (0.55 + p.j * 0.7), p.s * (0.8 + p.j));
             m.rotation.y = p.r;
@@ -2048,7 +2176,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
     },
     blocks: ({ scene, at, structMat, vis, rnd, pal }) => {
         const g = bakeFacetValues(seussify(new THREE.BoxGeometry(2.4, 2.4, 2.4, 1, 4, 1), 0.30, 0.12, 0.08, rnd), pal, { rnd });
-        scene.add(scatterAt(g, structMat(), at, (m, p) => {
+        scene.add(scatterGround(g, structMat(), at, (m, p) => {
             m.position.set(p.x, 1.2 * p.s * (0.4 + p.j), p.z);
             m.scale.set(p.s * (0.7 + p.j * 0.8), p.s * (0.4 + p.j * 1.4), p.s * (0.7 + p.j * 0.6));
             m.rotation.y = vis.order === 'artificial' ? p.r : Math.round(p.r * 2.55) * 0.35;
@@ -2072,7 +2200,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
             g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
             mat = new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true, gradientMap: toonRamp() });
         }
-        scene.add(scatterAt(g, mat, at, (m, p) => {
+        scene.add(scatterGround(g, mat, at, (m, p) => {
             m.position.set(p.x, 0.1, p.z);
             m.scale.setScalar(p.s * (0.7 + p.j * 0.9));
             m.rotation.y = p.r;
@@ -2083,7 +2211,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
         // the world at the rim), which reads as a hole with walls, not a
         // rendering bug. Pure black is a void; a gradient is a place.
         const mouthMat = new THREE.MeshBasicMaterial({ map: mouthTexture(pal), transparent: true, depthWrite: false, fog: false });
-        scene.add(scatterAt(new THREE.CircleGeometry(1.9, 20), mouthMat, at, (m, p) => {
+        scene.add(scatterGround(new THREE.CircleGeometry(1.9, 20), mouthMat, at, (m, p) => {
             const sc = p.s * (0.7 + p.j * 0.9);
             m.position.set(p.x - Math.sin(p.r) * 0.4 * sc, 0.1, p.z - Math.cos(p.r) * 0.4 * sc);
             m.scale.setScalar(sc);
@@ -2093,7 +2221,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
     shards: ({ scene, at, structMat, pal, rnd }) => {
         const g = new THREE.BoxGeometry(0.28, 4.6, 2.0, 1, 4, 1);
         const mat = pal.prismatic ? (prismatize(g), prismaticMat()) : (bakeFacetValues(g, pal, { rnd }), structMat());
-        scene.add(scatterAt(g, mat, at, (m, p) => {
+        scene.add(scatterGround(g, mat, at, (m, p) => {
             m.position.set(p.x, 2.0 * p.s, p.z);
             m.scale.setScalar(p.s * (0.5 + p.j));
             m.rotation.set((p.j - 0.5) * 0.5, p.r, (p.j - 0.5) * 0.35);
@@ -2108,12 +2236,12 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
         const capGeo = new THREE.SphereGeometry(1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2);
         capGeo.scale(1.35, 0.55, 1.35);
         bakeFacetValues(capGeo, pal, { base: pal.foliage, rnd });
-        scene.add(scatterAt(stemGeo, paintMat(), at, (m, p) => {
+        scene.add(scatterGround(stemGeo, paintMat(), at, (m, p) => {
             m.position.set(p.x, 1.3 * p.s * (0.7 + p.j * 0.9), p.z);
             m.scale.set(p.s, p.s * (0.7 + p.j * 0.9), p.s);
             m.rotation.set(0, p.r, (p.j - 0.5) * 0.22);
         }));
-        scene.add(scatterAt(capGeo, paintMat(), at, (m, p) => {
+        scene.add(scatterGround(capGeo, paintMat(), at, (m, p) => {
             const h = 2.6 * p.s * (0.7 + p.j * 0.9);
             const lean = (p.j - 0.5) * 0.22;
             m.position.set(p.x - Math.sin(lean) * h, Math.cos(lean) * h, p.z);
@@ -2129,13 +2257,13 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
         const shaftGeo = bakeFacetValues(seussify(new THREE.CylinderGeometry(0.42, 0.52, 6.4, 10, 5), 0.20, 0.08, 0.04, rnd), pal, { rnd });
         const capGeo = bakeFacetValues(new THREE.BoxGeometry(1.35, 0.42, 1.35), pal, { rnd });
         const height = (p: Spot, order?: string) => order === 'artificial' ? 1 : 0.35 + p.j * 0.85;
-        scene.add(scatterAt(shaftGeo, paintMat(), at, (m, p) => {
+        scene.add(scatterGround(shaftGeo, paintMat(), at, (m, p) => {
             const full = height(p, vis.order);
             m.position.set(p.x, 3.2 * p.s * full, p.z);
             m.scale.set(p.s, p.s * full, p.s);
             m.rotation.set(0, p.r, full < 0.95 ? (p.j - 0.5) * 0.10 : 0);
         }));
-        scene.add(scatterAt(capGeo, paintMat(), at, (m, p) => {
+        scene.add(scatterGround(capGeo, paintMat(), at, (m, p) => {
             const full = height(p, vis.order);
             if (full < 0.92) { m.scale.setScalar(0); return; }
             m.position.set(p.x, 6.4 * p.s + 0.22, p.z);
@@ -2148,7 +2276,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
         const geo = bakeFacetValues(makeTrunkGeo(3.6, 0.36, rnd), pal, {
             base: traits.glowing ? mix(pal.structure, pal.emissive, 0.35) : pal.structure, rnd
         });
-        scene.add(scatterAt(geo, paintMat(), at, (m, p) => {
+        scene.add(scatterGround(geo, paintMat(), at, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.scale.set(p.s * 0.8, p.s * (0.6 + p.j * 1.2), p.s * 0.8);
             m.rotation.set((p.j - 0.5) * 0.5, p.r, (p.j - 0.5) * 0.65);
@@ -2161,7 +2289,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
         const mat = glowing
             ? new THREE.MeshStandardMaterial({ color: mix(pal.emissive, 0xffffff, 0.30), emissive: pal.emissive, emissiveIntensity: EMIT.orb, roughness: 0.4 })
             : (bakeFacetValues(geo, pal, { rnd }), paintMat());
-        scene.add(scatterAt(geo, mat, at, (m, p) => {
+        scene.add(scatterGround(geo, mat, at, (m, p) => {
             m.position.set(p.x, 2 + p.j * 7, p.z);
             m.scale.setScalar(0.35 + p.j * 1.1);
         }));
@@ -2182,7 +2310,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
             y += h * 0.92;
         }
         const geo = bakeFacetValues(mergeGeometries(stack)!, pal, { rnd });
-        scene.add(scatterAt(geo, paintMat(), at, (m, p) => {
+        scene.add(scatterGround(geo, paintMat(), at, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.scale.set(p.s, p.s * (1.0 + p.j * 1.1), p.s);
             m.rotation.y = p.r;
@@ -2199,7 +2327,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
             stack.push(slab);
         }
         const geo = bakeFacetValues(mergeGeometries(stack)!, pal, { rnd });
-        scene.add(scatterAt(geo, paintMat(), at, (m, p) => {
+        scene.add(scatterGround(geo, paintMat(), at, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.scale.set(p.s * (0.9 + p.j * 0.6), p.s * (0.7 + p.j * 0.8), p.s * (0.9 + p.j * 0.6));
             m.rotation.set((p.j - 0.5) * 0.14, p.r, (p.j - 0.5) * 0.14);
@@ -2221,7 +2349,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
                 clump.push({ x: p.x + (rnd() - 0.5) * 1.6, z: p.z + (rnd() - 0.5) * 1.6, s: p.s * (0.5 + rnd() * 0.8), r: rnd() * Math.PI, j: rnd() });
             }
         }
-        scene.add(scatterAt(geo, mat, clump, (m, p) => {
+        scene.add(scatterGround(geo, mat, clump, (m, p) => {
             m.position.set(p.x, 2.1 * p.s, p.z);
             m.scale.set(p.s, p.s * (0.7 + p.j), p.s);
             m.rotation.set((p.j - 0.5) * 0.3, p.r, (p.j - 0.5) * 0.3);
@@ -2358,7 +2486,7 @@ function composeMasses(
         scene.add(mark(roof));
         const stalGeo = bakeFacetValues(new THREE.ConeGeometry(0.5, 3.0, 7), pal, { rnd });
         jitterGeometry(stalGeo, 0.12, rnd);
-        scene.add(scatterAt(stalGeo, paintMat(), spots(22, 4, 34, rnd), (m, p) => {
+        scene.add(scatterGround(stalGeo, paintMat(), spots(22, 4, 34, rnd), (m, p) => {
             m.position.set(p.x, 9.0, p.z); m.rotation.z = Math.PI; m.scale.setScalar(0.3 + p.j * 0.6);
         }));
     }
@@ -2371,7 +2499,7 @@ function composeMasses(
     if (!traits.barren && !rockFam && dens > 0.2 && vis.order !== 'artificial') {
         const growth = clusterSpots(Math.round(40 + dens * 90), 3, 34, rnd);
         const bushGeo = makeBushGeo(rnd);   // skirt + lobes + tuft: a silhouette of parts, not a ball
-        const bushes = scatterAt(bushGeo, leafMatFor(pal.foliage), growth, (m, p) => {
+        const bushes = scatterGround(bushGeo, leafMatFor(pal.foliage), growth, (m, p) => {
             m.position.set(p.x, 0, p.z); m.scale.setScalar(p.s * 0.9); m.rotation.y = p.r;
         });
         bushes.customDepthMaterial = leafDepth();
@@ -2379,7 +2507,7 @@ function composeMasses(
     }
     const rubbleSpots = spots(Math.round(8 + dens * 20), 4, 30, rnd);
     const rubbleGeo = bakeFacetValues(new THREE.DodecahedronGeometry(0.7, 0), pal, { rnd });
-    scene.add(scatterAt(rubbleGeo, paintMat(), rubbleSpots, (m, p) => {
+    scene.add(scatterGround(rubbleGeo, paintMat(), rubbleSpots, (m, p) => {
         m.position.set(p.x, 0.28, p.z); m.rotation.set(p.r, p.j * Math.PI, p.r);
     }));
     contactBlobs(scene, rubbleSpots, pal, (p) => 0.9 * p.s, 0.30);
@@ -2413,7 +2541,7 @@ function buildFraming(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, 
         // Lush places frame with the bush beside you: soft, dark within the
         // palette, organic silhouette — never a black crystal shard.
         const bushGeo = makeBushGeo(rnd);
-        const bushes = scatterAt(bushGeo, leafMatFor(mix(pal.foliage, 0x000000, 0.45)), framers, (m, p) => {
+        const bushes = scatterGround(bushGeo, leafMatFor(mix(pal.foliage, 0x000000, 0.45)), framers, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.scale.set(p.s * 1.3, p.s, p.s * 1.3);
             m.rotation.y = p.r;
@@ -2428,7 +2556,7 @@ function buildFraming(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, 
         });
         const geo = new THREE.SphereGeometry(1, 8, 6);
         jitterGeometry(geo, 0.16, rnd);
-        scene.add(scatterAt(geo, mat, framers, (m, p) => {
+        scene.add(scatterGround(geo, mat, framers, (m, p) => {
             m.position.set(p.x, 0.25 * p.s, p.z);
             m.scale.set(p.s * 1.6, p.s * 0.8, p.s * 1.15);
             m.rotation.set(0, p.r, (p.j - 0.5) * 0.1);
@@ -2484,7 +2612,7 @@ function buildFraming(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, 
         const ringAt = ringSpots(15, 55 + rnd() * 8, rnd);
         for (let v = 0; v < 3; v++) {
             const sub = ringAt.filter((_, i) => i % 3 === v);
-            scene.add(scatterAt(variants[v], paintMat(), sub, (m, p) => {
+            scene.add(scatterGround(variants[v], paintMat(), sub, (m, p) => {
                 m.position.set(p.x, 0.9 * p.s, p.z);
                 m.scale.set(p.s * (1.1 + p.j), p.s * (0.55 + p.j * 0.5), p.s * (1.1 + p.j));
                 m.rotation.y = p.r;
@@ -2523,7 +2651,7 @@ function buildFraming(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, 
                 }
             }
             if (winSpots.length) {
-                const wins = scatterAt(new THREE.PlaneGeometry(0.22, 0.22), winMat, winSpots, (m, p) => {
+                const wins = scatterGround(new THREE.PlaneGeometry(0.22, 0.22), winMat, winSpots, (m, p) => {
                     m.position.set(p.x, 0.9 + p.j * 1.2, p.z);
                     m.rotation.y = p.r;
                 });
@@ -2564,8 +2692,8 @@ function buildNearField(scene: THREE.Scene, pal: ScenePalette, rnd: () => number
     // Pebbles must sit IN the ground, not pop off it: their sun-facing facets
     // catch light the flat ground plane refuses, so they take a darker albedo.
     const pebbleMat = new THREE.MeshStandardMaterial({ color: mix(mix(pal.structure, pal.ground, 0.55), 0x000000, 0.22), roughness: 0.95, flatShading: true });
-    scene.add(scatterAt(new THREE.DodecahedronGeometry(0.16, 0), pebbleMat,
-        spots(36, 2, 11, rnd).filter(p => ok(p.x, p.z)), (m, p) => {
+    scene.add(scatterGround(new THREE.DodecahedronGeometry(0.16, 0), pebbleMat,
+        spots(36, 2, 11, rnd).filter(p => ok(p.x, p.z) && fieldFree(p.x, p.z, 0.2)), (m, p) => {
             m.position.set(p.x, 0.04, p.z);
             m.scale.setScalar(0.4 + p.j * 0.8);
             m.rotation.set(p.r, p.j * Math.PI, p.r * 0.7);
@@ -2580,11 +2708,11 @@ function buildNearField(scene: THREE.Scene, pal: ScenePalette, rnd: () => number
             [fluffCluster(3, 0.36, new THREE.Vector3(0, 0.16, 0), 0.5, rnd), leafMatFor(mix(pal.foliage, pal.key, 0.20))],      // the spiky trio
             [fluffCluster(7, 0.22, new THREE.Vector3(0, 0.12, 0), 0.9, rnd), leafMatFor(mix(pal.foliage, 0x000000, 0.22))]      // the low dark mat
         ];
-        const at = spots(48, 2, 10, rnd).filter(p => ok(p.x, p.z));
+        const at = spots(48, 2, 10, rnd).filter(p => ok(p.x, p.z) && fieldFree(p.x, p.z, 0.35));
         kits.forEach(([geo, mat], k) => {
             const sub = at.filter((_, i) => i % 3 === k);
             if (!sub.length) return;
-            const im = scatterAt(geo, mat, sub, (m, p) => {
+            const im = scatterGround(geo, mat, sub, (m, p) => {
                 m.position.set(p.x, 0, p.z);
                 m.scale.set(
                     p.s * (0.55 + p.j * 0.7),
@@ -2612,7 +2740,7 @@ function buildNearField(scene: THREE.Scene, pal: ScenePalette, rnd: () => number
                 r: rnd() * Math.PI, j: rnd()
             });
         }
-        const wm = scatterAt(wingGeo, wingMat, wings, (m, p) => {
+        const wm = scatterGround(wingGeo, wingMat, wings, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.scale.set(p.s * (2.2 + p.j * 1.6), p.s * (1.9 + p.j * 1.3), p.s * (1.6 + p.j));
             m.rotation.set(0, p.r, (p.j - 0.5) * 0.22);
@@ -2624,7 +2752,7 @@ function buildNearField(scene: THREE.Scene, pal: ScenePalette, rnd: () => number
         // own silhouette (boulder family: squat, flat-based, bold facets).
         const wingRock = bakeFacetValues(makeRockGeo(rnd, 'boulder'), pal, { rnd });
         const at: Spot[] = [{ x: (rnd() < 0.5 ? -1 : 1) * (3.6 + rnd() * 1.8), z: 4.4 + rnd() * 1.6, s: 1, r: rnd() * Math.PI, j: rnd() }];
-        scene.add(scatterAt(wingRock, paintMat(), at, (m, p) => {
+        scene.add(scatterGround(wingRock, paintMat(), at, (m, p) => {
             m.position.set(p.x, -0.06, p.z);
             m.scale.setScalar(2.0 + p.j * 1.2);
             m.rotation.y = p.r;
@@ -2765,7 +2893,7 @@ function waterTexture(pal: ScenePalette): THREE.CanvasTexture {
 function waterDisc(scene: THREE.Scene, x: number, z: number, y: number, r: number, pal: ScenePalette) {
     const water = new THREE.Mesh(new THREE.CircleGeometry(r, 24), new THREE.MeshBasicMaterial({ map: waterTexture(pal), fog: true }));
     water.rotation.x = -Math.PI / 2;
-    water.position.set(x, y, z);
+    water.position.set(x, y + gy(x, z), z);
     water.userData.isWater = true;
     scene.add(mark(water));
 }
@@ -2796,7 +2924,7 @@ function streetLamp(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () =
     // lantern light.
     const verdi = mix(pal.structure, 0x4a7a66, 0.42);
     bakeGradient(poleGeo, mix(verdi, 0x000000, 0.38), mix(verdi, pal.key, 0.30), rnd);
-    scene.add(scatterAt(poleGeo, paintMat(), at, (m, p) => {
+    scene.add(scatterGround(poleGeo, paintMat(), at, (m, p) => {
         m.position.set(p.x, 0, p.z);
         m.scale.setScalar(0.9 + p.j * 0.35);
         m.rotation.y = p.r;
@@ -2830,13 +2958,13 @@ function streetLamp(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () =
     frameParts.push(roof.translate(0, 0.165, 0));                                        // roof
     frameParts.push(new THREE.SphereGeometry(0.026, 6, 5).translate(0, 0.25, 0));        // finial
     const cageGeo = vcolor(mergeGeometries(frameParts)!, mix(verdi, 0x000000, 0.45));
-    scene.add(scatterAt(cageGeo, craftMat(), heads, (m, p, i) => {
+    scene.add(scatterGround(cageGeo, craftMat(), heads, (m, p, i) => {
         const t = armOf(p, variant === 2 && i % 2 === 1);
         m.position.set(t.x, t.y, t.z);
         m.scale.setScalar(0.9 + p.j * 0.35);
     }));
     const emberMat = new THREE.MeshStandardMaterial({ color: mix(warm, 0xffffff, 0.4), emissive: warm, emissiveIntensity: EMIT.ember, roughness: 0.4 });
-    const embers = scatterAt(new THREE.SphereGeometry(0.085, 8, 6), emberMat, heads, (m, p, i) => {
+    const embers = scatterGround(new THREE.SphereGeometry(0.085, 8, 6), emberMat, heads, (m, p, i) => {
         const t = armOf(p, variant === 2 && i % 2 === 1);
         m.position.set(t.x, t.y, t.z);
         m.scale.setScalar(0.9 + p.j * 0.35);
@@ -2849,7 +2977,7 @@ function streetLamp(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () =
         color: warm, transparent: true, opacity: 0.30,
         blending: THREE.AdditiveBlending, depthWrite: false, fog: false
     });
-    const panes = scatterAt(new THREE.BoxGeometry(0.135, 0.17, 0.135), paneMat, heads, (m, p, i) => {
+    const panes = scatterGround(new THREE.BoxGeometry(0.135, 0.17, 0.135), paneMat, heads, (m, p, i) => {
         const t = armOf(p, variant === 2 && i % 2 === 1);
         m.position.set(t.x, t.y, t.z);
         m.scale.setScalar(0.9 + p.j * 0.35);
@@ -2903,7 +3031,7 @@ function fountain(scene: THREE.Scene, x: number, z: number, pal: ScenePalette, r
         put(new THREE.CylinderGeometry(1.12, 1.12, 0.10, 8), pale, 3.02);
     }
     const stone = new THREE.Mesh(mergeGeometries(parts)!, craftMat('stone'));
-    stone.position.set(x, 0, z);
+    stone.position.set(x, gy(x, z), z);
     stone.rotation.y = rnd() * Math.PI;
     stone.castShadow = true;
     scene.add(mark(stone));
@@ -2912,13 +3040,13 @@ function fountain(scene: THREE.Scene, x: number, z: number, pal: ScenePalette, r
         const water = new THREE.Mesh(new THREE.CircleGeometry(1.82, 8), new THREE.MeshBasicMaterial({ map: waterTexture(pal), fog: true }));
         water.rotation.x = -Math.PI / 2;
         water.rotation.z = stone.rotation.y + Math.PI / 8;
-        water.position.set(x, 1.035, z);
+        water.position.set(x, 1.035 + gy(x, z), z);
         scene.add(mark(water));
         if (variant === 1) {
             const upper = new THREE.Mesh(new THREE.CircleGeometry(0.92, 8), new THREE.MeshBasicMaterial({ map: waterTexture(pal), fog: true }));
             upper.rotation.x = -Math.PI / 2;
             upper.rotation.z = water.rotation.z;
-            upper.position.set(x, 2.985, z);
+            upper.position.set(x, 2.985 + gy(x, z), z);
             scene.add(mark(upper));
         }
     } else {
@@ -2926,7 +3054,7 @@ function fountain(scene: THREE.Scene, x: number, z: number, pal: ScenePalette, r
         const moss = new THREE.Mesh(new THREE.CircleGeometry(1.6, 8),
             new THREE.MeshBasicMaterial({ color: mix(pal.foliage, 0x000000, 0.45), fog: true }));
         moss.rotation.x = -Math.PI / 2;
-        moss.position.set(x, 1.03, z);
+        moss.position.set(x, 1.03 + gy(x, z), z);
         scene.add(mark(moss));
     }
     // Pickups in the bowl — dressing with a function.
@@ -2937,7 +3065,7 @@ function fountain(scene: THREE.Scene, x: number, z: number, pal: ScenePalette, r
         const a = rnd() * Math.PI * 2, rr = 0.3 + rnd() * 0.35;
         gemSpots.push({ x: x + Math.cos(a) * rr, z: z + Math.sin(a) * rr, s: 1, r: rnd() * Math.PI, j: rnd() });
     }
-    const gems = scatterAt(new THREE.OctahedronGeometry(0.09, 0), gemMat, gemSpots, (m, p) => {
+    const gems = scatterGround(new THREE.OctahedronGeometry(0.09, 0), gemMat, gemSpots, (m, p) => {
         m.position.set(p.x, 2.16, p.z);
         m.rotation.set(p.j, p.r, p.j * 0.5);
     });
@@ -2989,7 +3117,7 @@ function statue(scene: THREE.Scene, x: number, z: number, ry: number, pal: Scene
     const fm = new THREE.Mesh(fig, craftMat('stone'));
     fm.castShadow = true;
     group.add(fm);
-    group.position.set(x, 0, z);
+    group.position.set(x, gy(x, z), z);
     group.rotation.y = ry;
     scene.add(mark(group));
     contactBlobs(scene, [{ x, z, s: 1, r: 0, j: 0.5 }], pal, () => 2.0, 0.32);
@@ -3018,7 +3146,7 @@ function planter(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => n
         parts.push(vcolor(new THREE.BoxGeometry(1.56, 0.09, 0.48).translate(0, 0.62, 0), soil));
     }
     const geo = mergeGeometries(parts)!;
-    scene.add(scatterAt(geo, craftMat('stone'), at, (m, p) => {
+    scene.add(scatterGround(geo, craftMat('stone'), at, (m, p) => {
         m.position.set(p.x, 0, p.z);
         m.rotation.y = p.r;
         m.scale.setScalar(0.9 + p.j * 0.3);
@@ -3060,12 +3188,12 @@ function planter(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => n
             });
         }
     }
-    scene.add(scatterAt(stemGeo, stemMat, stems, (m, p) => {
+    scene.add(scatterGround(stemGeo, stemMat, stems, (m, p) => {
         m.position.set(p.x, soilY * (0.9 + p.j * 0.2), p.z);
         m.rotation.set((p.j - 0.5) * 0.5, p.r, (p.j - 0.5) * 0.6);
         m.scale.setScalar(p.s);
     }));
-    scene.add(scatterAt(cupGeo, cupMat, stems, (m, p) => {
+    scene.add(scatterGround(cupGeo, cupMat, stems, (m, p) => {
         m.position.set(p.x + (p.j - 0.5) * 0.15, soilY * (0.9 + p.j * 0.2), p.z + (p.j - 0.5) * 0.18);
         m.rotation.set((p.j - 0.5) * 0.5, p.r, (p.j - 0.5) * 0.6);
         m.scale.setScalar(p.s);
@@ -3108,12 +3236,12 @@ function wildflowerDrift(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd:
             });
         }
     }
-    scene.add(scatterAt(stemGeo, stemMat, stems, (m, p) => {
+    scene.add(scatterGround(stemGeo, stemMat, stems, (m, p) => {
         m.position.set(p.x, 0, p.z);
         m.rotation.set((p.j - 0.5) * 0.6, p.r, (p.j - 0.5) * 0.7);
         m.scale.setScalar(p.s);
     }));
-    scene.add(scatterAt(cupGeo, cupMat, stems, (m, p) => {
+    scene.add(scatterGround(cupGeo, cupMat, stems, (m, p) => {
         m.position.set(p.x + (p.j - 0.5) * 0.12, 0, p.z + (p.j - 0.5) * 0.14);
         m.rotation.set((p.j - 0.5) * 0.6, p.r, (p.j - 0.5) * 0.7);
         m.scale.setScalar(p.s);
@@ -3154,7 +3282,7 @@ function windowCards(scene: THREE.Scene, walls: CardWall[], pal: ScenePalette, r
     lists.forEach((L, v) => {
         if (!L.spots.length) return;
         const mat = new THREE.MeshBasicMaterial({ map: mullionTexture(v), color: warm, fog: true, side: THREE.DoubleSide });
-        const im = scatterAt(geo, mat, L.spots, (m, p, i) => {
+        const im = scatterGround(geo, mat, L.spots, (m, p, i) => {
             m.position.set(p.x, L.y[i], p.z);
             m.rotation.set(0, L.ry[i], L.lean[i]);
             m.scale.set(p.s * (0.85 + p.j * 0.4), p.s, 1);
@@ -3208,7 +3336,7 @@ function archHouse(scene: THREE.Scene, x: number, z: number, ry: number, pal: Sc
     }));
     door.position.set(W * 0.18, 1.1, D / 2 + 0.03);
     g.add(door);
-    g.position.set(x, 0, z);
+    g.position.set(x, gy(x, z), z);
     g.rotation.y = ry;
     g.rotation.z = lean;   // ONE lean — walls, roof and door all agree
     scene.add(mark(g));
@@ -3299,7 +3427,7 @@ function gateArch(scene: THREE.Scene, x: number, z: number, ry: number, pal: Sce
             const icGeo = bakeFacetValues(new THREE.ConeGeometry(0.09, 0.8, 5), pal, { base: mix(pal.foliage, 0xffffff, 0.3), rnd });
             const icSpots: Spot[] = [];
             for (let i = 0; i < 5; i++) icSpots.push({ x: (rnd() - 0.5) * 4, z: 0, s: 0.6 + rnd() * 0.8, r: 0, j: rnd() });
-            const ic = scatterAt(icGeo, paintMat(), icSpots, (m, p) => {
+            const ic = scatterFree(icGeo, paintMat(), icSpots, (m, p) => {
                 m.position.set(p.x, 4.15 - 0.4 * p.s, p.z);
                 m.rotation.z = Math.PI;
                 m.scale.setScalar(p.s);
@@ -3312,7 +3440,7 @@ function gateArch(scene: THREE.Scene, x: number, z: number, ry: number, pal: Sce
         new THREE.MeshBasicMaterial({ map: mouthTexture(pal), transparent: true, depthWrite: false, fog: false }));
     mouth.position.y = 1.95;
     g.add(mouth);
-    g.position.set(x, 0, z);
+    g.position.set(x, gy(x, z), z);
     g.rotation.y = ry;
     scene.add(mark(g));
     contactBlobs(scene, [
@@ -3354,13 +3482,13 @@ function bridge(scene: THREE.Scene, x: number, z: number, ry: number, pal: Scene
         const lx = -span / 2 + 0.4 + i * 0.62;
         for (const s of [-1, 1]) capSpots.push({ x: lx, z: s * 0.92, s: 0.9 + rnd() * 0.25, r: 0, j: rnd() });
     }
-    const caps = scatterAt(capGeo, paintMat(), capSpots, (m, p) => {
+    const caps = scatterFree(capGeo, paintMat(), capSpots, (m, p) => {
         m.position.set(p.x, 1.04 + arch(p.x), p.z);
         m.scale.setScalar(p.s);
         m.rotation.y = (p.j - 0.5) * 0.1;
     });
     g.add(caps);
-    g.position.set(x, 0, z);
+    g.position.set(x, gy(x, z), z);
     g.rotation.y = ry;
     scene.add(mark(g));
     contactBlobs(scene, [
@@ -3396,7 +3524,7 @@ function stairRun(scene: THREE.Scene, x: number, z: number, ry: number, pal: Sce
         dark: mix(pal.fog, 0x000000, 0.6), jitter: 0.08, rnd
     });
     const m = new THREE.Mesh(geo, craftMat('stone'));
-    m.position.set(x, 0, z);
+    m.position.set(x, gy(x, z), z);
     m.rotation.y = ry;
     m.castShadow = true;
     scene.add(mark(m));
@@ -3417,7 +3545,7 @@ function canalCoping(scene: THREE.Scene, edge: { x: number; z: number; ry: numbe
             vcolor(new THREE.BoxGeometry(0.92, 0.12, 0.52).translate(0, -0.03, 0), seam)
         ])!;
         jitterGeometry(g, 0.03, rnd);
-        const im = scatterAt(g, craftMat('stone'), sub.map(e => ({ x: e.x, z: e.z, s: 0.95 + rnd() * 0.2, r: e.ry, j: rnd() })), (m, p, i) => {
+        const im = scatterGround(g, craftMat('stone'), sub.map(e => ({ x: e.x, z: e.z, s: 0.95 + rnd() * 0.2, r: e.ry, j: rnd() })), (m, p, i) => {
             m.position.set(p.x, variant === 2 ? 0.22 - i * 0.07 : 0.22, p.z);
             m.rotation.y = p.r;
             m.scale.setScalar(p.s);
@@ -3438,7 +3566,7 @@ function bench(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => num
         vcolor(new THREE.BoxGeometry(1.65, 0.13, 0.58).translate(0, 0.50, 0), seatCol)
     ])!;
     jitterGeometry(geo, 0.02, rnd);
-    scene.add(scatterAt(geo, craftMat(stone ? 'stone' : 'wood'), at, (m, p) => {
+    scene.add(scatterGround(geo, craftMat(stone ? 'stone' : 'wood'), at, (m, p) => {
         m.position.set(p.x, 0, p.z);
         m.rotation.y = p.r;
         if (variant === 2) m.rotation.z = 0.07 + p.j * 0.06;   // settled crooked
@@ -3458,7 +3586,7 @@ function signCard(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => 
         const sub = at.filter((_, i) => i % 3 === v);
         if (!sub.length) continue;
         const mat = new THREE.MeshBasicMaterial({ map: glyphTexture(v), color: mix(cardCol, 0xffffff, 0.4), fog: true, side: THREE.DoubleSide });
-        const cards = scatterAt(cardGeo, mat, sub, (m, p) => {
+        const cards = scatterGround(cardGeo, mat, sub, (m, p) => {
             const y = variant === 2 ? 1.5 + p.j * 0.9 : variant === 1 ? 1.5 : 1.62;
             const off = variant === 1 ? 0.5 : 0;
             m.position.set(p.x + Math.sin(p.r) * off, y, p.z + Math.cos(p.r) * off);
@@ -3477,7 +3605,7 @@ function signCard(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => 
             postParts.push(vcolor(new THREE.CylinderGeometry(0.03, 0.03, 0.8, 5).rotateZ(Math.PI / 2).translate(0, 2.02, 0), 0x2a2018));
         }
         const postGeo = mergeGeometries(postParts)!;
-        scene.add(scatterAt(postGeo, craftMat('wood'), at, (m, p) => {
+        scene.add(scatterGround(postGeo, craftMat('wood'), at, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.rotation.y = p.r;
             m.scale.setScalar(0.9 + p.j * 0.2);
@@ -3540,7 +3668,7 @@ function crate(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => num
     else if (variant === 2) { put(0.72, 0, 0); put(0.44, 0.55, 0.30); }
     else put(0.62, 0, 0);
     const geo = mergeGeometries(parts)!;
-    scene.add(scatterAt(geo, craftMat('wood'), at, (m, p) => {
+    scene.add(scatterGround(geo, craftMat('wood'), at, (m, p) => {
         m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.85 + p.j * 0.4);
     }));
     contactBlobs(scene, at, pal, () => 0.72, 0.3);
@@ -3566,7 +3694,7 @@ function barrel(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => nu
     else if (variant === 2) { mk(false, 0, 0); mk(true, 0.55, 0.32); }
     else mk(false, 0, 0);
     const geo = mergeGeometries(parts)!;
-    scene.add(scatterAt(geo, craftMat('wood'), at, (m, p) => {
+    scene.add(scatterGround(geo, craftMat('wood'), at, (m, p) => {
         m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.85 + p.j * 0.35);
     }));
     contactBlobs(scene, at, pal, () => 0.6, 0.3);
@@ -3598,7 +3726,7 @@ function cart(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => numb
         sack2.scale(1, 0.7, 1); sack2.translate(0.32, 0.78, -0.15); parts.push(sack2);
     }
     const geo = mergeGeometries(parts)!;
-    scene.add(scatterAt(geo, craftMat('wood'), at, (m, p) => {
+    scene.add(scatterGround(geo, craftMat('wood'), at, (m, p) => {
         m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.9 + p.j * 0.3);
     }));
     contactBlobs(scene, at, pal, () => 1.1, 0.3);
@@ -3633,7 +3761,7 @@ function well(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => numb
     const bucket = stylize(new THREE.CylinderGeometry(0.14, 0.11, 0.20, 8), pal, { base: wood, erode: 0.02, rnd });
     bucket.translate(0.55, 0.92, 0.3); parts.push(bucket);
     const geo = mergeGeometries(parts)!;
-    scene.add(scatterAt(geo, craftMat('stone'), at, (m, p) => {
+    scene.add(scatterGround(geo, craftMat('stone'), at, (m, p) => {
         m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.9 + p.j * 0.3);
     }));
     contactBlobs(scene, at, pal, () => 1.2, 0.32);
@@ -3942,7 +4070,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
                 { trunkH: 5.6, trunkR: 0.3, tiers: 3, canopyR: 2.5, canopyH: 2.6, lean: 0.3 }, pal, rnd);
             // Saplings: soft fluff puffs, not little pyramids.
             const saplingGeo = fluffCluster(5, 0.45, new THREE.Vector3(0, 0.4, 0), 1.1, rnd);
-            const saplings = scatterAt(saplingGeo, leafMatFor(mix(pal.foliage, pal.ground, 0.15)), spots(70, 3, 28, rnd), (m, p) => {
+            const saplings = scatterGround(saplingGeo, leafMatFor(mix(pal.foliage, pal.ground, 0.15)), spots(70, 3, 28, rnd), (m, p) => {
                 m.position.set(p.x, 0, p.z); m.scale.setScalar(p.s); m.rotation.y = p.r;
             });
             saplings.customDepthMaterial = leafDepth();
@@ -3952,13 +4080,13 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             // laid down; stumps are short and dark.
             const logSpots = spots(9, 5, 30, rnd);
             const logMat = new THREE.MeshStandardMaterial({ color: mix(pal.structure, 0x000000, 0.35), roughness: 0.95 });
-            scene.add(scatterAt(makeTrunkGeo(2.6, 0.22, rnd), logMat, logSpots, (m, p) => {
+            scene.add(scatterGround(makeTrunkGeo(2.6, 0.22, rnd), logMat, logSpots, (m, p) => {
                 m.position.set(p.x, 0.22, p.z);
                 m.rotation.set(Math.PI / 2 + (p.j - 0.5) * 0.2, p.r, 0);
                 m.scale.setScalar(0.7 + p.j * 0.7);
             }));
             const stumpSpots = spots(12, 4, 28, rnd);
-            scene.add(scatterAt(new THREE.CylinderGeometry(0.24, 0.32, 0.5, 7), logMat, stumpSpots, (m, p) => {
+            scene.add(scatterGround(new THREE.CylinderGeometry(0.24, 0.32, 0.5, 7), logMat, stumpSpots, (m, p) => {
                 m.position.set(p.x, 0.25, p.z);
                 m.rotation.y = p.r;
                 m.scale.setScalar(0.7 + p.j * 0.8);
@@ -3970,7 +4098,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
         case 'desert': {
             const rockSpots = spots(24, 8, 40, rnd);
             const rockGeo = bakeFacetValues(new THREE.DodecahedronGeometry(1.1, 0), pal, { rnd });
-            scene.add(scatterAt(rockGeo, paintMat(), rockSpots, (m, p) => {
+            scene.add(scatterGround(rockGeo, paintMat(), rockSpots, (m, p) => {
                 m.position.set(p.x, 0.4 + p.j * 0.5, p.z);
                 m.scale.set(p.s * 1.3, p.s * 0.6, p.s * 1.3);
                 m.rotation.set(p.j, p.r, p.j);
@@ -3978,7 +4106,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             contactBlobs(scene, rockSpots, pal, (p) => p.s * 1.6, 0.30);
             const pillarSpots = spots(9, 11, 36, rnd);
             const pillarGeo = bakeFacetValues(new THREE.CylinderGeometry(0.08, 0.2, 3.2, 5), pal, { rnd });
-            scene.add(scatterAt(pillarGeo, paintMat(), pillarSpots, (m, p) => {
+            scene.add(scatterGround(pillarGeo, paintMat(), pillarSpots, (m, p) => {
                 m.position.set(p.x, 1.6, p.z); m.rotation.z = (p.j - 0.5) * 0.4;
             }));
             contactBlobs(scene, pillarSpots, pal, () => 0.7, 0.30);
@@ -3991,7 +4119,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             const cactusGeo = mergeGeometries(cactusParts)!;
             const cactusMat = new THREE.MeshStandardMaterial({ color: mix(pal.foliage, 0x2a7a3a, 0.5), roughness: 0.85 });
             const cactusSpots = spots(12, 8, 36, rnd);
-            scene.add(scatterAt(cactusGeo, cactusMat, cactusSpots, (m, p) => {
+            scene.add(scatterGround(cactusGeo, cactusMat, cactusSpots, (m, p) => {
                 m.position.set(p.x, 0, p.z);
                 m.scale.setScalar(p.s * (0.6 + p.j * 0.8));
                 m.rotation.y = p.r;
@@ -4005,19 +4133,19 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             jitterGeometry(shardGeo, 0.14, rnd);
             const iceGeo = bakeFacetValues(shardGeo, pal, { base: pal.foliage, snow: true, rnd });
             const shardSpots = spots(42, 7, 42, rnd);
-            scene.add(scatterAt(iceGeo, paintMat(), shardSpots, (m, p) => {
+            scene.add(scatterGround(iceGeo, paintMat(), shardSpots, (m, p) => {
                 m.position.set(p.x, 2.2 * p.s, p.z); m.scale.setScalar(p.s);
                 m.rotation.set((p.j - 0.5) * 0.3, p.r, (p.j - 0.5) * 0.3);
             }));
             contactBlobs(scene, shardSpots, pal, (p) => p.s * 1.1, 0.26);
             const iceRockGeo = bakeFacetValues(new THREE.IcosahedronGeometry(0.8, 0), pal, { snow: true, rnd });
-            scene.add(scatterAt(iceRockGeo, paintMat(), spots(26, 5, 34, rnd), (m, p) => {
+            scene.add(scatterGround(iceRockGeo, paintMat(), spots(26, 5, 34, rnd), (m, p) => {
                 m.position.set(p.x, 0.3, p.z); m.scale.set(p.s, 0.6, p.s);
             }));
             // Wind-carved snowdrifts: smooth, bright, half-buried lenses.
             const driftGeo = new THREE.SphereGeometry(1, 10, 8);
             const driftMat = new THREE.MeshStandardMaterial({ color: mix(pal.ground, 0xffffff, 0.45), roughness: 0.9 });
-            scene.add(scatterAt(driftGeo, driftMat, spots(18, 5, 34, rnd), (m, p) => {
+            scene.add(scatterGround(driftGeo, driftMat, spots(18, 5, 34, rnd), (m, p) => {
                 m.position.set(p.x, -0.12, p.z);
                 m.scale.set(p.s * (1.2 + p.j), p.s * 0.32, p.s * (1.0 + p.j * 0.7));
                 m.rotation.y = p.r;
@@ -4026,7 +4154,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
         }
         case 'sea': {
             const seaRockGeo = bakeFacetValues(new THREE.DodecahedronGeometry(1.4, 0), pal, { rnd });
-            scene.add(scatterAt(seaRockGeo, paintMat(), spots(15, 9, 38, rnd), (m, p) => {
+            scene.add(scatterGround(seaRockGeo, paintMat(), spots(15, 9, 38, rnd), (m, p) => {
                 m.position.set(p.x, -0.2 + p.j * 0.8, p.z);
                 m.scale.set(p.s, p.s * 0.9, p.s); m.rotation.set(p.j, p.r, p.j);
             }));
@@ -4039,13 +4167,13 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             jitterGeometry(cragGeo, 0.35, rnd);
             const cragFacetGeo = bakeFacetValues(cragGeo, pal, { rnd });
             const cragSpots = spots(15, 22, 46, rnd);
-            scene.add(scatterAt(cragFacetGeo, paintMat(), cragSpots, (m, p) => {
+            scene.add(scatterGround(cragFacetGeo, paintMat(), cragSpots, (m, p) => {
                 m.position.set(p.x, 3.5 * p.s, p.z);
                 m.scale.set(p.s, p.s * (1.1 + p.j * 0.9), p.s); m.rotation.y = p.r;
             }));
             contactBlobs(scene, cragSpots, pal, (p) => p.s * 3.4, 0.30);
             const talusGeo = bakeFacetValues(new THREE.DodecahedronGeometry(0.9, 0), pal, { rnd });
-            scene.add(scatterAt(talusGeo, paintMat(), spots(32, 5, 30, rnd), (m, p) => {
+            scene.add(scatterGround(talusGeo, paintMat(), spots(32, 5, 30, rnd), (m, p) => {
                 m.position.set(p.x, 0.35, p.z); m.rotation.set(p.j, p.r, p.j);
             }));
             break;
@@ -4053,12 +4181,12 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
         case 'underground': {
             const miteGeo = bakeFacetValues(new THREE.ConeGeometry(0.7, 3.4, 6), pal, { rnd });
             const miteSpots = spots(48, 4, 34, rnd);
-            scene.add(scatterAt(miteGeo, paintMat(), miteSpots, (m, p) => {
+            scene.add(scatterGround(miteGeo, paintMat(), miteSpots, (m, p) => {
                 m.position.set(p.x, 1.7 * p.s, p.z); m.scale.setScalar(p.s);
             }));
             contactBlobs(scene, miteSpots, pal, (p) => p.s * 0.9, 0.32);
             const titeGeo = bakeFacetValues(new THREE.ConeGeometry(0.5, 2.8, 6), pal, { rnd });
-            scene.add(scatterAt(titeGeo, paintMat(), spots(38, 4, 34, rnd), (m, p) => {
+            scene.add(scatterGround(titeGeo, paintMat(), spots(38, 4, 34, rnd), (m, p) => {
                 m.position.set(p.x, 9.2, p.z); m.rotation.z = Math.PI; m.scale.setScalar(p.s);
             }));
             glowDots(scene, spots(28, 4, 28, rnd), pal.emissive, (p) => 0.4 + p.j * 3.5, 0.10);
@@ -4075,7 +4203,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             });
             // The Blinx city bulges and leans — towers bow like drawn ones.
             const towerGeo = seussify(new THREE.BoxGeometry(3, 9, 3, 1, 6, 1), 0.5, 0.14, 0.12, rnd);
-            scene.add(scatterAt(towerGeo, towerMat, blocks, (m, p) => {
+            scene.add(scatterGround(towerGeo, towerMat, blocks, (m, p) => {
                 m.position.set(p.x, 4.5 * (0.4 + p.j * 1.8), p.z);
                 m.scale.set(p.s, 0.4 + p.j * 1.8, p.s);
                 m.rotation.y = Math.round(p.r) * (Math.PI / 4);
@@ -4094,7 +4222,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             // the most primitive-looking layer in the biome.
             const reedBlade = new THREE.PlaneGeometry(0.5, 1.6).translate(0, 0.8, 0);
             const reedGeo = mergeGeometries([reedBlade, reedBlade.clone().rotateY(Math.PI / 2)])!;
-            const reeds = scatterAt(reedGeo, leafMatFor(pal.foliage), spots(140, 3, 30, rnd), (m, p) => {
+            const reeds = scatterGround(reedGeo, leafMatFor(pal.foliage), spots(140, 3, 30, rnd), (m, p) => {
                 m.position.set(p.x, 0, p.z);
                 m.scale.set(0.8 + p.j * 0.6, p.s, 0.8 + p.j * 0.6);
                 m.rotation.set((p.j - 0.5) * 0.2, p.r, (p.j - 0.5) * 0.2);
@@ -4105,11 +4233,11 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             break;
         }
         case 'plains': {
-            scene.add(scatterAt(new THREE.ConeGeometry(0.14, 0.7, 4), foliMat(), spots(240, 2, 42, rnd), (m, p) => {
+            scene.add(scatterGround(new THREE.ConeGeometry(0.14, 0.7, 4), foliMat(), spots(240, 2, 42, rnd), (m, p) => {
                 m.position.set(p.x, 0.35, p.z); m.rotation.z = (p.j - 0.5) * 0.35;
             }));
             const plainRockGeo = bakeFacetValues(new THREE.DodecahedronGeometry(0.5, 0), pal, { rnd });
-            scene.add(scatterAt(plainRockGeo, paintMat(), spots(18, 6, 36, rnd), (m, p) => {
+            scene.add(scatterGround(plainRockGeo, paintMat(), spots(18, 6, 36, rnd), (m, p) => {
                 m.position.set(p.x, 0.2, p.z); m.rotation.set(p.j, p.r, p.j);
             }));
             break;
@@ -4117,14 +4245,14 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
         case 'ruin': {
             const colGeo = bakeFacetValues(new THREE.CylinderGeometry(0.5, 0.55, 6, 8), pal, { rnd });
             const colSpots = spots(22, 8, 36, rnd);
-            scene.add(scatterAt(colGeo, paintMat(), colSpots, (m, p) => {
+            scene.add(scatterGround(colGeo, paintMat(), colSpots, (m, p) => {
                 const broken = 0.25 + p.j * 0.85;
                 m.position.set(p.x, 3 * broken, p.z); m.scale.set(1, broken, 1);
                 m.rotation.z = p.j > 0.75 ? (p.j - 0.5) * 0.35 : 0;
             }));
             contactBlobs(scene, colSpots, pal, () => 1.1, 0.32);
             const slabGeo = bakeFacetValues(new THREE.BoxGeometry(1.4, 0.5, 1.4), pal, { rnd });
-            scene.add(scatterAt(slabGeo, paintMat(), spots(28, 5, 30, rnd), (m, p) => {
+            scene.add(scatterGround(slabGeo, paintMat(), spots(28, 5, 30, rnd), (m, p) => {
                 m.position.set(p.x, 0.25, p.z);
                 m.rotation.set((p.j - 0.5) * 0.3, p.r, (p.j - 0.5) * 0.3);
             }));
@@ -4132,7 +4260,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
         }
         case 'void': {
             const shards = spots(64, 4, 38, rnd);
-            scene.add(scatterAt(new THREE.TetrahedronGeometry(1.2, 0), glowMat(), shards, (m, p) => {
+            scene.add(scatterGround(new THREE.TetrahedronGeometry(1.2, 0), glowMat(), shards, (m, p) => {
                 m.position.set(p.x, -6 + p.j * 16, p.z);
                 m.rotation.set(p.r, p.j * Math.PI, p.r);
                 m.scale.setScalar(0.3 + p.j * 1.4);
@@ -4142,7 +4270,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
         case 'fire': {
             const fireRockGeo = bakeFacetValues(new THREE.DodecahedronGeometry(1.3, 0), pal, { rnd });
             const fireSpots = spots(28, 7, 40, rnd);
-            scene.add(scatterAt(fireRockGeo, paintMat(), fireSpots, (m, p) => {
+            scene.add(scatterGround(fireRockGeo, paintMat(), fireSpots, (m, p) => {
                 m.position.set(p.x, 0.3 + p.j * 0.8, p.z);
                 m.scale.set(p.s, p.s * (0.7 + p.j * 1.5), p.s);
                 m.rotation.set(p.j, p.r, p.j);
@@ -4221,7 +4349,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             const grassTint = mix(pal.foliage, pal.ground, 0.3);
             const grassGeo = fluffCluster(2, 0.34, new THREE.Vector3(0, 0.14, 0), 0.55, rnd);
             const grassSpots = spots(340, 1.2, 38, rnd).filter(pt => mask(pt.x, pt.z) < 0.22);
-            const grass = scatterAt(grassGeo, leafMatFor(grassTint), grassSpots, (m, pt) => {
+            const grass = scatterGround(grassGeo, leafMatFor(grassTint), grassSpots, (m, pt) => {
                 m.position.set(pt.x, 0, pt.z);
                 m.scale.setScalar(0.55 + pt.j * 0.8);
                 m.rotation.y = pt.r;
@@ -4233,13 +4361,13 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             // --- verge stones: hug the road edges ---
             const stoneGeo = bakeFacetValues(makeRockGeo(rnd), pal, { rnd });
             const vergeSpots = spots(90, 2, 30, rnd).filter(pt => { const m2 = mask(pt.x, pt.z); return m2 > 0.15 && m2 < 0.6; });
-            scene.add(scatterAt(stoneGeo, paintMat(), vergeSpots, (m, pt) => {
+            scene.add(scatterGround(stoneGeo, paintMat(), vergeSpots, (m, pt) => {
                 m.position.set(pt.x, 0.03, pt.z);
                 m.scale.setScalar(0.1 + pt.j * 0.16);
                 m.rotation.y = pt.r;
             }));
             // a few larger boulders off in the grass
-            scene.add(scatterAt(stoneGeo, paintMat(), spots(10, 7, 30, rnd).filter(pt => mask(pt.x, pt.z) < 0.1), (m, pt) => {
+            scene.add(scatterGround(stoneGeo, paintMat(), spots(10, 7, 30, rnd).filter(pt => mask(pt.x, pt.z) < 0.1), (m, pt) => {
                 m.position.set(pt.x, 0.05, pt.z);
                 m.scale.setScalar(0.35 + pt.j * 0.4);
                 m.rotation.y = pt.r;
@@ -4259,7 +4387,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
                 }
             }
             if (flowerSpots.length) {
-                scene.add(scatterAt(new THREE.SphereGeometry(0.055, 6, 5), flowerMat, flowerSpots, (m, pt) => {
+                scene.add(scatterGround(new THREE.SphereGeometry(0.055, 6, 5), flowerMat, flowerSpots, (m, pt) => {
                     m.position.set(pt.x, 0.24 + pt.j * 0.1, pt.z);
                 }));
             }
@@ -4575,29 +4703,29 @@ function addBraziers(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, t
     const postGeo = bakeFacetValues(new THREE.CylinderGeometry(0.05, 0.08, 1.0, 6), pal, { base: mix(pal.structure, 0x000000, 0.24), rnd });
     const footGeo = bakeFacetValues(new THREE.CylinderGeometry(0.13, 0.18, 0.16, 6), pal, { base: mix(pal.structure, 0x000000, 0.20), rnd });
     // Bowl + post + foot, one list so parts stay married.
-    scene.add(scatterAt(bowlGeo, paintMat(), at, (m, p) => {
+    scene.add(scatterGround(bowlGeo, paintMat(), at, (m, p) => {
         m.position.set(p.x, 1.02, p.z);
         m.scale.setScalar(0.8 + p.j * 0.6);
     }));
-    scene.add(scatterAt(postGeo, paintMat(), at, (m, p) => {
+    scene.add(scatterGround(postGeo, paintMat(), at, (m, p) => {
         m.position.set(p.x, 0.5, p.z);
         m.scale.setScalar(0.8 + p.j * 0.6);
     }));
-    scene.add(scatterAt(footGeo, paintMat(), at, (m, p) => {
+    scene.add(scatterGround(footGeo, paintMat(), at, (m, p) => {
         m.position.set(p.x, 0.08, p.z);
         m.scale.setScalar(0.8 + p.j * 0.6);
     }));
     // The coal bed: a flat ember disc in the bowl mouth — the flame now sits
     // IN something, and the bowl's inside carries light instead of shadow.
     const coalGeo = new THREE.CircleGeometry(0.20, 8).rotateX(-Math.PI / 2);
-    scene.add(scatterAt(coalGeo, flameMat, at, (m, p) => {
+    scene.add(scatterGround(coalGeo, flameMat, at, (m, p) => {
         m.position.set(p.x, 1.115, p.z);
         m.scale.setScalar(0.8 + p.j * 0.6);
     }));
     // The flame: a teardrop, slightly alive in shape — and its light pool.
     const flameGeo = new THREE.SphereGeometry(0.16, 8, 8);
     flameGeo.scale(1, 1.7, 1);
-    scene.add(scatterAt(flameGeo, flameMat, at, (m, p) => {
+    scene.add(scatterGround(flameGeo, flameMat, at, (m, p) => {
         m.position.set(p.x, 1.28, p.z);
         m.scale.setScalar(0.8 + p.j * 0.7);
     }));
@@ -4684,7 +4812,7 @@ function buildOverhead(scene: THREE.Scene, pal: ScenePalette, rnd: () => number,
                 if (pennants) {
                     const fly = (sub: Spot[], mat: THREE.Material, off: number) => {
                         if (!sub.length) return;
-                        const flags = scatterAt(flagGeo, mat, sub, (m, p, k) => {
+                        const flags = scatterFree(flagGeo, mat, sub, (m, p, k) => {
                             const pt = pts[1 + (k * 2 + off) * 2];
                             m.position.set(p.x, pt.y - 0.02, p.z);
                             m.rotation.set(0, (p.j - 0.5) * 0.5, (p.j - 0.5) * 0.16);
@@ -4701,7 +4829,7 @@ function buildOverhead(scene: THREE.Scene, pal: ScenePalette, rnd: () => number,
                         // the street below instead of just sparkling overhead.
                         if (k % 2 === 0) registerLight(p.x, pts[1 + k * 2].y - 0.14, p.z, bulbCol, 3, 7, 1);
                     });
-                    const bulbs = scatterAt(new THREE.SphereGeometry(0.085, 6, 5), bulbMat, hang, (m, p, k) => {
+                    const bulbs = scatterFree(new THREE.SphereGeometry(0.085, 6, 5), bulbMat, hang, (m, p, k) => {
                         m.position.set(p.x, pts[1 + k * 2].y - 0.14, p.z);
                     });
                     bulbs.castShadow = false;
