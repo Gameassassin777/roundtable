@@ -127,12 +127,18 @@ function scatterAt(
  */
 function buildSky(pal: ScenePalette) {
     const geo = new THREE.SphereGeometry(160, 32, 24);
+    // Blinx skies are DESIGNED, not gradient wallpaper: a saturated mid band
+    // between horizon and zenith (dusk purples, noon cyans), so the sky has
+    // three voices instead of a two-stop lerp. The mid band leans slightly
+    // toward the sun colour — scattered light, not a grey midpoint.
+    const midHex = mix(mix(pal.fog, pal.sky, 0.5), pal.sunColor, 0.10);
     const mat = new THREE.ShaderMaterial({
         side: THREE.BackSide,
         depthWrite: false,
         fog: false,
         uniforms: {
             top:        { value: new THREE.Color(pal.sky) },
+            mid:        { value: new THREE.Color(midHex) },
             bottom:     { value: new THREE.Color(pal.fog) },
             sunDir:     { value: new THREE.Vector3(...pal.sunDir) },
             sunColor:   { value: new THREE.Color(pal.sunColor) },
@@ -152,7 +158,7 @@ function buildSky(pal: ScenePalette) {
                 gl_Position = projectionMatrix * viewMatrix * wp;
             }`,
         fragmentShader: `
-            uniform vec3 top; uniform vec3 bottom; uniform vec3 sunDir; uniform vec3 sunColor;
+            uniform vec3 top; uniform vec3 mid; uniform vec3 bottom; uniform vec3 sunDir; uniform vec3 sunColor;
             uniform float sunSize; uniform float sunGlow; uniform float horizonGlow; uniform float starAmount;
             uniform float cloud; uniform vec3 cloudColor; uniform float time;
             varying vec3 vDir;
@@ -184,7 +190,9 @@ function buildSky(pal: ScenePalette) {
             void main() {
                 vec3 d = normalize(vDir);
                 float h = clamp(d.y * 1.45 + 0.30, 0.0, 1.0);
-                vec3 col = mix(bottom, top, h);
+                // Three voices: horizon haze -> saturated mid band -> zenith.
+                vec3 col = h < 0.5 ? mix(bottom, mid, h * 2.0)
+                                   : mix(mid, top, (h - 0.5) * 2.0);
 
                 float mu = clamp(dot(d, normalize(sunDir)), -1.0, 1.0);
 
@@ -222,7 +230,17 @@ function buildSky(pal: ScenePalette) {
                 col += sunColor * halo * sunGlow;
                 if (sunGlow > 0.001) {
                     float disc = smoothstep(cos(sunSize * 1.9), cos(sunSize), mu);
-                    col = mix(col, sunColor * 1.9, disc);
+                    // Big bodies are WORLDS, not lights: a giant moon gets mare
+                    // blotches, a fat dusk sun gets a molten mottle. fbm inside
+                    // the disc only — the halo stays clean.
+                    if (sunSize > 0.045) {
+                        vec2 muv = d.xz / max(d.y + 0.35, 0.12);
+                        float mare = fbm(muv * 6.0 + 13.7);
+                        float crater = smoothstep(0.45, 0.75, mare) * 0.28;
+                        col = mix(col, sunColor * 1.9 * (1.0 - crater), disc);
+                    } else {
+                        col = mix(col, sunColor * 1.9, disc);
+                    }
                 }
 
                 // Dither the source gradient too — 8-bit smooth skies
@@ -238,6 +256,41 @@ function buildSky(pal: ScenePalette) {
     dome.userData.skyMat = mat;
     dome.renderOrder = -1;
     return mark(dome) as THREE.Mesh;
+}
+
+// ---------- sky furniture: geometric cumulus ----------
+
+/**
+ * Blinx never leaves the upper third empty. Under an open sky, scatter real
+ * cumulus: squashed fluff clusters (the same painted-quad kit as the foliage,
+ * so they light like the world does), pre-tinted toward the palette's cloud
+ * colour, hung low near the horizon and high overhead. They are STATIC — they
+ * bake into the backdrop like every other solid; the dome's shader clouds
+ * supply the drift.
+ */
+function buildCumulus(scene: THREE.Scene, pal: ScenePalette, rnd: () => number) {
+    // Blinx clouds are near-WHITE bodies with soft self-shade — never grey
+    // blobs (the first pass read as floating rocks). Bright tint, an emissive
+    // lift so they stay luminous in dim scenes, kept small, high and far so
+    // they read as a cloud LAYER, not as debris.
+    const tint = mix(pal.cloudColor, 0xffffff, 0.5);
+    const mat = new THREE.MeshStandardMaterial({
+        color: tint, map: leafTexture(), alphaTest: 0.5,
+        side: THREE.DoubleSide, roughness: 1.0, fog: false,
+        emissive: mix(pal.cloudColor, 0xffffff, 0.6), emissiveIntensity: 0.30
+    });
+    for (let i = 0; i < 11; i++) {
+        const low = i % 2 === 0;
+        const a = rnd() * Math.PI * 2;
+        const r = 68 + rnd() * 48;
+        const y = low ? 15 + rnd() * 7 : 26 + rnd() * 12;
+        const g = fluffCluster(9, 2.0 + rnd() * 1.2, new THREE.Vector3(0, 0, 0), 0.40, rnd);
+        const puff = new THREE.Mesh(g, mat);
+        puff.position.set(Math.cos(a) * r, y, Math.sin(a) * r);
+        puff.scale.set(1.7 + rnd() * 1.2, 1, 1.1 + rnd() * 0.8);
+        puff.rotation.y = rnd() * Math.PI;
+        scene.add(mark(puff));
+    }
 }
 
 // ---------- crystals: trait prop for glowing/crystalline scenes ----------
@@ -450,8 +503,8 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
         tmp.copy(cGround);
         if (broad > 0.18) tmp.lerp(cGrowth, Math.min(0.42, (broad - 0.18) * 0.85));
         else if (broad < -0.22) tmp.lerp(cRock, Math.min(0.38, (-broad - 0.22) * 0.75));
-        if (broad2 > 0.28) tmp.lerp(cDry, Math.min(0.30, (broad2 - 0.28) * 0.6));
-        else if (broad2 < -0.28) tmp.lerp(cDark, Math.min(0.30, (-broad2 - 0.28) * 0.6));
+        if (broad2 > 0.22) tmp.lerp(cDry, Math.min(0.44, (broad2 - 0.22) * 0.8));
+        else if (broad2 < -0.22) tmp.lerp(cDark, Math.min(0.44, (-broad2 - 0.22) * 0.8));
         if (roadMask) {
             // Worn dirt: lighter packed earth, slightly warmed, with the fine
             // noise wobbling the edge so no two metres of verge match.
@@ -530,6 +583,97 @@ function bakeGradient(geo: THREE.BufferGeometry, cBottom: number, cTop: number, 
     return geo;
 }
 
+// ---------- the Blinx pass: painted surfaces + elastic geometry ----------
+//
+// Studying Blinx frame-by-frame: nothing is flat-shaded vinyl and NOTHING is
+// straight. Surfaces carry hand-painted value dabs (2-3 values of the same
+// hue, mottled), and every built thing bends, bulges or tapers like a Seuss
+// drawing. These three helpers are that style, baked.
+
+/** Hand-painted mottle: soft value dabs on white, so material colour tints it.
+ *  Used as `map` on solid masses — the "crafted illustration" tell that flat
+ *  albedo can never produce. Also fed in as a gentle bump so the dabs catch
+ *  light instead of reading as printed decals. */
+let _mottleTex: THREE.CanvasTexture | null = null;
+function mottleTexture(): THREE.CanvasTexture {
+    if (_mottleTex) return _mottleTex;
+    const S = 256;
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const ctx = cv.getContext('2d')!;
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, S, S);
+    // Deterministic dab field — one shared texture, so it must not change
+    // between worlds (per-world variation comes from the material tint).
+    const drnd = mulberry32(hashStr('mottle'));
+    const dab = (x: number, y: number, r: number, dark: boolean, a: number) => {
+        const g = ctx.createRadialGradient(x, y, r * 0.1, x, y, r);
+        const c = dark ? '96,96,96' : '255,255,255';
+        g.addColorStop(0, `rgba(${c},${a})`);
+        g.addColorStop(0.7, `rgba(${c},${a * 0.55})`);
+        g.addColorStop(1, `rgba(${c},0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    };
+    for (let i = 0; i < 150; i++) {
+        dab(drnd() * S, drnd() * S, 5 + drnd() * 34, drnd() < 0.55, 0.05 + drnd() * 0.13);
+    }
+    // A few broader washes so the dabs sit inside larger value shifts.
+    for (let i = 0; i < 14; i++) {
+        dab(drnd() * S, drnd() * S, 40 + drnd() * 60, drnd() < 0.5, 0.05 + drnd() * 0.06);
+    }
+    _mottleTex = new THREE.CanvasTexture(cv);
+    _mottleTex.wrapS = _mottleTex.wrapT = THREE.RepeatWrapping;
+    _mottleTex.needsUpdate = true;
+    return _mottleTex;
+}
+
+/**
+ * The Seuss deform: bend + mid-bulge + top taper applied along a geometry's
+ * height. Axis-aligned boxes and cylinders are the strongest "programmer art"
+ * signal there is; a bowed, pot-bellied tower reads as drawn by hand. Keep
+ * amplitudes small — this is elasticity, not meltdown.
+ */
+function seussify(geo: THREE.BufferGeometry, bend: number, bulge: number, taper: number, rnd: () => number): THREE.BufferGeometry {
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox!;
+    const span = Math.max(0.0001, bb.max.y - bb.min.y);
+    const dir = rnd() < 0.5 ? 1 : -1;                 // lean left or right
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+        const y = pos.getY(i);
+        const t = (y - bb.min.y) / span;
+        const k = 1 - taper * t + bulge * Math.sin(t * Math.PI);
+        pos.setX(i, pos.getX(i) * k + Math.sin(t * Math.PI * 0.5) * bend * dir);
+        pos.setZ(i, pos.getZ(i) * k);
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    return geo;
+}
+
+/**
+ * Clustered scatter: nature clumps. A uniform random field is the "asset
+ * sprinkled by a tool" look; real growth and real ruins bunch into groups
+ * with bare ground between. ~45% of spots gather around a few centres
+ * (gaussian), the rest fill the gaps.
+ */
+function clusterSpots(n: number, min: number, max: number, rnd: () => number): Spot[] {
+    const out: Spot[] = [];
+    const centres = spots(Math.max(2, Math.round(n / 9)), min, max * 0.8, rnd);
+    const gauss = () => (rnd() + rnd() + rnd() - 1.5) * 2.2;    // cheap approx N(0, ~0.7)
+    for (let i = 0; i < n; i++) {
+        if (rnd() < 0.45) {
+            const c = centres[i % centres.length];
+            const x = c.x + gauss(), z = c.z + gauss();
+            const r = Math.hypot(x, z);
+            if (r < min || r > max) { i--; continue; }
+            out.push({ x, z, s: 0.7 + rnd() * 0.9, r: rnd() * Math.PI, j: rnd() });
+        } else {
+            out.push(spots(1, min, max, rnd)[0]);
+        }
+    }
+    return out;
+}
+
 // ---------- the fluff kit: how stylised 3D actually gets soft ----------
 //
 // Research (douges.dev fluffy-trees, craftzdog ghibli-shader): beautiful
@@ -606,7 +750,9 @@ function windowTexture(): THREE.CanvasTexture {
     }
     _winTex = new THREE.CanvasTexture(cv);
     _winTex.wrapS = _winTex.wrapT = THREE.RepeatWrapping;
-    _winTex.repeat.set(0.8, 1.2);
+    // Dense panes: a hero tower is 3x a normal one, and garage-door windows
+    // were the tell. Small lit rectangles read as architecture at any scale.
+    _winTex.repeat.set(1.6, 2.6);
     _winTex.needsUpdate = true;
     return _winTex;
 }
@@ -702,18 +848,34 @@ function makeRockGeo(rnd: () => number): THREE.BufferGeometry {
  * This is what gives the frame a middle distance and a far distance instead of
  * "ground plane, then sky".
  */
-function buildRidges(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, noise2D: (x: number, y: number) => number) {
+function buildRidges(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, noise2D: (x: number, y: number) => number, mode = 0) {
+    // The horizon has a PERSONALITY per world: sawtooth peaks, rolling dunes,
+    // or flat-topped mesas. One zigzag ring reused everywhere was its own
+    // kind of generic — three profiles keeps horizons as varied as the sets.
+    // Kept LOW and pulled toward the SKY colour, not just the fog: a pale
+    // zigzag floating over a dark midground reads as a paper crown.
     const rings = [
-        { r: 62, hMax: 8,  mixK: 0.58 },
-        { r: 96, hMax: 14, mixK: 0.78 }
+        { r: 62, hMax: 6,  mixK: 0.58 },
+        { r: 96, hMax: 10, mixK: 0.78 }
     ];
     for (const ring of rings) {
         const seg = 96;
         const verts: number[] = [];
         const hAt = (i: number) => {
             const a = (i % seg) / seg * Math.PI * 2;
+            if (mode === 1) {
+                // dunes: long low swells, soft shoulders
+                const n = noise2D(Math.cos(a) * 1.6, Math.sin(a) * 1.6);
+                return Math.max(0.5, (0.18 + Math.max(0, n) * 0.9) * ring.hMax * 0.6);
+            }
             const n = noise2D(Math.cos(a) * 3.1, Math.sin(a) * 3.1);
-            return Math.max(0.5, (0.3 + Math.abs(n)) * ring.hMax);
+            const raw = Math.max(0.5, (0.3 + Math.abs(n)) * ring.hMax);
+            if (mode === 2) {
+                // mesas: heights snapped to a few strata — flat tops, cliffed sides
+                const step = ring.hMax * 0.46;
+                return Math.max(step * 0.5, Math.round(raw / step) * step);
+            }
+            return raw;
         };
         for (let i = 0; i < seg; i++) {
             const a0 = i / seg * Math.PI * 2, a1 = (i + 1) / seg * Math.PI * 2;
@@ -726,7 +888,9 @@ function buildRidges(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, n
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
         const mat = new THREE.MeshBasicMaterial({
-            color: mix(mix(pal.ground, pal.structure, 0.4), pal.fog, ring.mixK),
+            // Distant land sits BETWEEN fog and sky in value — never brighter
+            // than the sky it silhouettes against.
+            color: mix(mix(pal.ground, pal.structure, 0.4), mix(pal.fog, pal.sky, 0.45), ring.mixK),
             fog: false, side: THREE.DoubleSide
         });
         const m = new THREE.Mesh(geo, mat);
@@ -766,6 +930,11 @@ function addTrees(
     crownGeo.scale(canopyR * 0.8, canopyR * 0.8, canopyR * 0.8);
     const coniferGeo = makeConiferGeo(rnd);
     coniferGeo.scale(canopyR * 0.82, canopyR * 0.82, canopyR * 0.82);
+    // Third species — the flat-topped umbrella (acacia/baobab voice). Wide
+    // thin disc of fluff on the trunk's crown. Three silhouettes is the
+    // difference between "a wood" and "a clone stamp".
+    const umbrellaGeo = fluffCluster(9, 2.3, new THREE.Vector3(0, 0, 0), 0.30, rnd);
+    umbrellaGeo.scale(canopyR * 0.95, canopyR * 0.95, canopyR * 0.95);
 
     // Crown colour: the fluff lights itself via spherized normals, so the
     // material tint is mid-foliage warmed slightly; hemi+sun paint the gradient.
@@ -776,19 +945,26 @@ function addTrees(
         m.rotation.set(0, pt.r, (pt.j - 0.5) * lean);
     }));
     const conifers = scatterAt(coniferGeo, leafMatFor(crownTint), at, (m, pt) => {
-        if (pt.j > 0.62) { m.scale.setScalar(0); return; }
+        if (pt.j > 0.42) { m.scale.setScalar(0); return; }
         m.position.set(pt.x, trunkH * 0.72 * pt.s, pt.z);
         m.scale.setScalar(pt.s); m.rotation.y = pt.r;
     });
     conifers.customDepthMaterial = leafDepth();
     scene.add(conifers);
     const crowns = scatterAt(crownGeo, leafMatFor(mix(crownTint, 0xffffff, 0.06)), at, (m, pt) => {
-        if (pt.j <= 0.62) { m.scale.setScalar(0); return; }
+        if (pt.j <= 0.42 || pt.j > 0.78) { m.scale.setScalar(0); return; }
         m.position.set(pt.x, trunkH * 0.92 * pt.s, pt.z);
         m.scale.setScalar(pt.s); m.rotation.y = pt.r;
     });
     crowns.customDepthMaterial = leafDepth();
     scene.add(crowns);
+    const umbrellas = scatterAt(umbrellaGeo, leafMatFor(mix(crownTint, p.key, 0.05)), at, (m, pt) => {
+        if (pt.j <= 0.78) { m.scale.setScalar(0); return; }
+        m.position.set(pt.x, trunkH * 1.02 * pt.s, pt.z);
+        m.scale.setScalar(pt.s); m.rotation.y = pt.r;
+    });
+    umbrellas.customDepthMaterial = leafDepth();
+    scene.add(umbrellas);
 
     // Undergrowth: a small fluff bush at every trunk base. Trees rising bare
     // out of flat ground is a big part of what reads as "basic" -- growth
@@ -818,8 +994,14 @@ type FamilyCtx = {
 };
 
 const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
-    spires: ({ scene, at, structMat }) => {
-        scene.add(scatterAt(new THREE.BoxGeometry(1.5, 7, 1.5), structMat(), at, (m, p) => {
+    spires: ({ scene, at, structMat, rnd, pal }) => {
+        // Bowed, slightly pot-bellied towers — nothing axis-aligned. Height
+        // segments so the bend reads as a curve, not a kink.
+        const g = seussify(new THREE.BoxGeometry(1.5, 7, 1.5, 1, 6, 1), 0.55, 0.16, 0.10, rnd);
+        // A glass metropolis bands its towers like the rainbow bridge bands
+        // its arches — sentient glass, not painted concrete.
+        const mat = pal.prismatic ? (prismatize(g), prismaticMat()) : structMat();
+        scene.add(scatterAt(g, mat, at, (m, p) => {
             m.position.set(p.x, 3.5 * p.s * (0.5 + p.j), p.z);
             m.scale.set(p.s * (0.5 + p.j), p.s * (0.5 + p.j * 1.6), p.s * (0.5 + p.j));
             m.rotation.y = p.r;
@@ -833,8 +1015,9 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
             m.rotation.y = p.r;
         }));
     },
-    blocks: ({ scene, at, structMat, vis }) => {
-        scene.add(scatterAt(new THREE.BoxGeometry(2.4, 2.4, 2.4), structMat(), at, (m, p) => {
+    blocks: ({ scene, at, structMat, vis, rnd }) => {
+        const g = seussify(new THREE.BoxGeometry(2.4, 2.4, 2.4, 1, 4, 1), 0.30, 0.12, 0.08, rnd);
+        scene.add(scatterAt(g, structMat(), at, (m, p) => {
             m.position.set(p.x, 1.2 * p.s * (0.4 + p.j), p.z);
             m.scale.set(p.s * (0.7 + p.j * 0.8), p.s * (0.4 + p.j * 1.4), p.s * (0.7 + p.j * 0.6));
             m.rotation.y = vis.order === 'artificial' ? p.r : Math.round(p.r * 2.55) * 0.35;
@@ -863,9 +1046,22 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
             m.scale.setScalar(p.s * (0.7 + p.j * 0.9));
             m.rotation.y = p.r;
         }));
+        // The Blinx value anchor: a dark MOUTH inside every arch — a place to
+        // go. Absolute-dark shapes punched into a lit field are what give the
+        // frame depth punctuation (Forgotten City's cave mouths). Under a
+        // rainbow bridge it simply reads as the bridge's own shadow.
+        const mouthMat = new THREE.MeshBasicMaterial({ color: mix(pal.fog, 0x000000, 0.80), fog: false });
+        scene.add(scatterAt(new THREE.CircleGeometry(2.15, 20), mouthMat, at, (m, p) => {
+            const sc = p.s * (0.7 + p.j * 0.9);
+            m.position.set(p.x - Math.sin(p.r) * 0.4 * sc, 0.1, p.z - Math.cos(p.r) * 0.4 * sc);
+            m.scale.setScalar(sc);
+            m.rotation.y = p.r;
+        }));
     },
-    shards: ({ scene, at, structMat }) => {
-        scene.add(scatterAt(new THREE.BoxGeometry(0.28, 4.6, 2.0), structMat(), at, (m, p) => {
+    shards: ({ scene, at, structMat, pal }) => {
+        const g = new THREE.BoxGeometry(0.28, 4.6, 2.0, 1, 4, 1);
+        const mat = pal.prismatic ? (prismatize(g), prismaticMat()) : structMat();
+        scene.add(scatterAt(g, mat, at, (m, p) => {
             m.position.set(p.x, 2.0 * p.s, p.z);
             m.scale.setScalar(p.s * (0.5 + p.j));
             m.rotation.set((p.j - 0.5) * 0.5, p.r, (p.j - 0.5) * 0.35);
@@ -897,7 +1093,8 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
     // Colonnade: full shafts when something BUILT this, broken stubs when
     // nature (or time) did. Capitals only survive on intact columns.
     columns: ({ scene, at, pal, rnd, vis }) => {
-        const shaftGeo = bakeGradient(new THREE.CylinderGeometry(0.42, 0.52, 6.4, 10),
+        // A whisper of bend even in built shafts — hand-placed, not machined.
+        const shaftGeo = bakeGradient(seussify(new THREE.CylinderGeometry(0.42, 0.52, 6.4, 10, 5), 0.20, 0.08, 0.04, rnd),
             mix(pal.structure, 0x000000, 0.25), mix(pal.structure, pal.key, 0.30), rnd);
         const capGeo = new THREE.BoxGeometry(1.35, 0.42, 1.35);
         bakeGradient(capGeo, mix(pal.structure, 0x000000, 0.20), mix(pal.structure, pal.key, 0.25), rnd);
@@ -1006,6 +1203,31 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
 const FAM_KEYS = Object.keys(MASS_FAMILIES);
 
 /**
+ * Glasslight banding: hue climbs the geometry's height — red foot to violet
+ * crown, the solidified-rainbow read. Arches band along their arc; towers
+ * and shards band by height. Vertex hues over a toon ramp: no texture, no
+ * shader, survives the bake.
+ */
+function prismatize(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox!;
+    const span = Math.max(0.0001, bb.max.y - bb.min.y);
+    const pos = geo.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+        const u = Math.min(1, Math.max(0, (pos.getY(i) - bb.min.y) / span));
+        c.setHSL((1 - u) * 0.78, 0.72, 0.58);
+        colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return geo;
+}
+function prismaticMat() {
+    return new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true, gradientMap: toonRamp() });
+}
+
+/**
  * The shared composition recipe. Silhouette precedence: the DM's explicit
  * choice > keyword traits > deterministic hash. 'none' means NONE (a place
  * empty of masses) — it used to fall through to the hash pick, which put
@@ -1029,7 +1251,33 @@ function composeMasses(
     // one of the reasons scenes used to feel identical even across families.
     const massSpots = vis.order === 'artificial'
         ? ringSpots(Math.max(6, Math.round(nMass * 0.6)), 14 + (h % 8), rnd)
-        : spots(nMass, 6 + (h % 3) * 5, 30 + (h % 4) * 6, rnd);
+        : clusterSpots(nMass, 6 + (h % 3) * 5, 30 + (h % 4) * 6, rnd);
+    // The Blinx focal rule: every place has ONE oversized theme object the
+    // frame is organised around (the face tower, the giant mushroom, the
+    // hourglass). One hero instance of the mass family, 2-3x normal scale.
+    // Not for floating orbs (they ARE all hero). A BUILT place's hero is its
+    // CAPITAL — one tower held centre-back that outranks the ring.
+    if (fam && fam !== 'orbs' && fam !== 'none') {
+        // Blocks grow modestly: a 3x cube is a monolith, not a hero — it
+        // fills half the frame with one black wall (the cereal-ocean slab).
+        const b0 = fam === 'blocks' ? 1.5 : 2.1;
+        const b1 = fam === 'blocks' ? 1.8 : 2.6;
+        if (vis.order === 'artificial') {
+            massSpots.push({
+                x: (h % 2 ? 1 : -1) * (1.5 + (h >> 4) % 2),
+                z: -(15 + (h >> 6) % 6),
+                s: b1 + ((h >> 9) % 8) / 10,
+                r: rnd() * Math.PI, j: 0.9
+            });
+        } else {
+            massSpots.push({
+                x: (h % 2 ? 1 : -1) * (4.5 + (h >> 4) % 4),
+                z: -(13 + (h >> 6) % 9),
+                s: b0 + ((h >> 9) % 10) / 10,
+                r: rnd() * Math.PI, j: 0.85
+            });
+        }
+    }
     if (fam && MASS_FAMILIES[fam]) {
         // massMat overrides the family's structure material when the PLACE
         // demands it (a city's towers carry lit windows whatever silhouette
@@ -1038,12 +1286,21 @@ function composeMasses(
         MASS_FAMILIES[fam]({ scene, at: massSpots, pal, rnd, vis, traits, structMat: massMat ?? structMat, foliMat, glowMat });
     }
     // Enclosed spaces have a ceiling — stalactites from above. Jittered so
-    // they read as wet rock, not machined cones.
+    // they read as wet rock, not machined cones. Kept small, high and few,
+    // over a haze ROOF: fangs hanging from a pure black void read as icicles
+    // floating in space; they need a ceiling to grow from.
     if (traits.enclosed) {
+        const roof = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: softSprite(), color: mix(pal.fog, 0x000000, 0.55),
+            transparent: true, opacity: 0.6, depthWrite: false, fog: false
+        }));
+        roof.position.set(0, 13.5, -14);
+        roof.scale.set(80, 18, 1);
+        scene.add(mark(roof));
         const stalGeo = new THREE.ConeGeometry(0.5, 3.0, 7);
         jitterGeometry(stalGeo, 0.12, rnd);
-        scene.add(scatterAt(stalGeo, structMat(), spots(34, 4, 34, rnd), (m, p) => {
-            m.position.set(p.x, 9.4, p.z); m.rotation.z = Math.PI; m.scale.setScalar(0.5 + p.j);
+        scene.add(scatterAt(stalGeo, structMat(), spots(22, 4, 34, rnd), (m, p) => {
+            m.position.set(p.x, 11.5, p.z); m.rotation.z = Math.PI; m.scale.setScalar(0.3 + p.j * 0.6);
         }));
     }
     // Growth where things grow — never in barren places, sparse places, or
@@ -1053,7 +1310,7 @@ function composeMasses(
     // reads as a green traffic cone.
     const rockFam = fam === 'hoodoos' || fam === 'plates';
     if (!traits.barren && !rockFam && dens > 0.2 && vis.order !== 'artificial') {
-        const growth = spots(Math.round(40 + dens * 90), 3, 34, rnd);
+        const growth = clusterSpots(Math.round(40 + dens * 90), 3, 34, rnd);
         const bushGeo = fluffCluster(7, 0.8, new THREE.Vector3(0, 0.7, 0), 1.0, rnd);
         const bushes = scatterAt(bushGeo, leafMatFor(pal.foliage), growth, (m, p) => {
             m.position.set(p.x, 0, p.z); m.scale.setScalar(p.s * 0.9); m.rotation.y = p.r;
@@ -1160,11 +1417,19 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
     // In a glowing place the masses themselves carry the light — a crystal
     // cavern's rock is lit by its crystals, not just dotted with them. Without
     // this, glowing enclosed scenes render as black walls with bright dots.
+    // Solid masses carry the painted mottle (map + whisper of bump) — the
+    // Blinx lesson: hand-dabbed value noise is what separates "crafted
+    // illustration" from "material ball". White texture, so the palette
+    // colour still owns the hue.
     const structMat = () => new THREE.MeshStandardMaterial({
         color: pal.structure, roughness: 0.9, flatShading: true,
+        map: mottleTexture(), bumpMap: mottleTexture(), bumpScale: 0.02,
         emissive: pal.emissive, emissiveIntensity: pal.emissiveOn ? 0.22 : 0
     });
-    const foliMat = () => new THREE.MeshStandardMaterial({ color: pal.foliage, roughness: 0.85, flatShading: true });
+    const foliMat = () => new THREE.MeshStandardMaterial({
+        color: pal.foliage, roughness: 0.85, flatShading: true,
+        map: mottleTexture(), bumpMap: mottleTexture(), bumpScale: 0.015
+    });
     const glowMat = () => new THREE.MeshStandardMaterial({
         color: pal.foliage, emissive: pal.emissive,
         emissiveIntensity: pal.emissiveOn ? 1.4 : 0, roughness: 0.6
@@ -1304,9 +1569,12 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             // from inside the buildings, not from dots floating in the air.
             const towerMat = new THREE.MeshStandardMaterial({
                 color: pal.structure, roughness: 0.8,
+                map: mottleTexture(), bumpMap: mottleTexture(), bumpScale: 0.02,
                 emissive: 0xffffff, emissiveMap: windowTexture(), emissiveIntensity: 0.9
             });
-            scene.add(scatterAt(new THREE.BoxGeometry(3, 9, 3), towerMat, blocks, (m, p) => {
+            // The Blinx city bulges and leans — towers bow like drawn ones.
+            const towerGeo = seussify(new THREE.BoxGeometry(3, 9, 3, 1, 6, 1), 0.5, 0.14, 0.12, rnd);
+            scene.add(scatterAt(towerGeo, towerMat, blocks, (m, p) => {
                 m.position.set(p.x, 4.5 * (0.4 + p.j * 1.8), p.z);
                 m.scale.set(p.s, 0.4 + p.j * 1.8, p.s);
                 m.rotation.y = Math.round(p.r) * (Math.PI / 4);
@@ -1734,6 +2002,112 @@ function buildAtmosphere(scene: THREE.Scene, pal: ScenePalette, rnd: () => numbe
     scene.add(mark(mist));
 }
 
+// ---------- braziers: the Temple of Lost Time lesson ----------
+
+/**
+ * Colored fire in a dark bowl, repeated. Blinx spends its entire brightness
+ * budget on accents like this: a dark world, and then fire — orange AND teal,
+ * side by side, physically impossible and perceptually delightful. The flame
+ * takes the scene's emissive hue when the place glows (confident wrongness),
+ * classic warm orange otherwise. Each gets a real light pool — the Kuwahara
+ * pass eats bare bright pixels but keeps gradients (the lantern lesson).
+ */
+function addBraziers(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, traits: SceneTraits, biome: string, visual?: SceneVisual | null) {
+    const temple = biome === 'ruin' || biome === 'underground'
+        || (biome === 'synthetic' && visual?.silhouette === 'columns');
+    if (!temple) return;
+    const flameCol = pal.emissiveOn ? pal.emissive : 0xff8a2a;
+    const bowlMat = new THREE.MeshStandardMaterial({ color: mix(pal.structure, 0x000000, 0.45), roughness: 0.9 });
+    const flameMat = new THREE.MeshStandardMaterial({
+        color: mix(flameCol, 0xffffff, 0.45), emissive: flameCol, emissiveIntensity: 2.6, roughness: 0.5
+    });
+    const at = spots(5 + Math.floor(rnd() * 3), 4, 24, rnd);
+    // Bowl + post, one list so parts stay married.
+    scene.add(scatterAt(new THREE.CylinderGeometry(0.30, 0.16, 0.22, 8), bowlMat, at, (m, p) => {
+        m.position.set(p.x, 1.02, p.z);
+        m.scale.setScalar(0.8 + p.j * 0.6);
+    }));
+    scene.add(scatterAt(new THREE.CylinderGeometry(0.05, 0.08, 1.0, 6), bowlMat, at, (m, p) => {
+        m.position.set(p.x, 0.5, p.z);
+    }));
+    // The flame: a teardrop, slightly alive in shape — and its light pool.
+    const flameGeo = new THREE.SphereGeometry(0.16, 8, 8);
+    flameGeo.scale(1, 1.7, 1);
+    scene.add(scatterAt(flameGeo, flameMat, at, (m, p) => {
+        m.position.set(p.x, 1.28, p.z);
+        m.scale.setScalar(0.8 + p.j * 0.7);
+    }));
+    for (const p of at) {
+        const pool = new THREE.PointLight(flameCol, 4.5, 11, 1.5);
+        pool.position.set(p.x, 1.7, p.z);
+        scene.add(mark(pool));
+    }
+}
+
+// ---------- the overhead layer: the upper third is never empty ----------
+
+/**
+ * Blinx frames occupy their upper third — wires, banners, hanging lamps, a
+ * canopy roof. An empty top half reads as a stage set. Built places string
+ * lantern lights across the street; woods close a canopy overhead. These sit
+ * high and near, so they bake as soft overhead silhouettes.
+ */
+function buildOverhead(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, biome: string, traits: SceneTraits) {
+    if (traits.enclosed || traits.space || traits.submerged) return;
+
+    if (biome === 'urban' || biome === 'crossroads') {
+        // Lantern strings: catenary wires with warm bulbs, crossing the view.
+        const wireMat = new THREE.MeshBasicMaterial({ color: mix(pal.structure, 0x000000, 0.55), fog: false });
+        const bulbMat = new THREE.MeshStandardMaterial({
+            color: 0xffe9c0, emissive: pal.emissiveOn ? pal.emissive : 0xffc36a,
+            emissiveIntensity: 1.9, roughness: 0.4, fog: false
+        });
+        const bulbSpots: Spot[] = [];
+        for (let s = 0; s < 3; s++) {
+            const z = -5 - s * 5.5 - rnd() * 2;
+            const y0 = 6.2 + rnd() * 1.6, sag = 1.0 + rnd() * 0.6;
+            const span = 26 + rnd() * 10;
+            const pts: THREE.Vector3[] = [];
+            for (let i = 0; i <= 16; i++) {
+                const u = i / 16;
+                pts.push(new THREE.Vector3((u - 0.5) * span, y0 - Math.sin(u * Math.PI) * sag, z));
+            }
+            const wire = new THREE.Mesh(
+                new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.016, 4),
+                wireMat
+            );
+            scene.add(mark(wire));
+            // Bulbs hang slightly BELOW the wire, every other span point.
+            bulbSpots.length = 0;
+            for (let i = 1; i < 16; i += 2) bulbSpots.push({ x: pts[i].x, z, s: 1, r: 0, j: rnd() });
+            const bulbs = scatterAt(new THREE.SphereGeometry(0.085, 6, 5), bulbMat, bulbSpots, (m, p, i2) => {
+                m.position.set(p.x, pts[1 + i2 * 2].y - 0.14, p.z);
+            });
+            bulbs.castShadow = false;
+            scene.add(bulbs);
+        }
+        return;
+    }
+
+    if ((biome === 'forest' || biome === 'swamp') && !traits.barren) {
+        // The wood's roof: dark-in-palette fluff masses overhead, so the upper
+        // frame is canopy, not sky. Kept HIGH and leaf-toned — too low and too
+        // black it reads as a hovering mothership, not a ceiling of leaf.
+        const mat = leafMatFor(mix(pal.foliage, 0x000000, 0.20));
+        for (let i = 0; i < 4; i++) {
+            const a = -Math.PI / 2 + (rnd() - 0.5) * Math.PI * 1.6;
+            const r = 9 + rnd() * 14;
+            const g = fluffCluster(10, 2.0 + rnd() * 1.2, new THREE.Vector3(0, 0, 0), 0.5, rnd);
+            const puff = new THREE.Mesh(g, mat);
+            puff.position.set(Math.cos(a) * r, 10.5 + rnd() * 4, Math.sin(a) * r);
+            puff.scale.set(1.6 + rnd() * 0.9, 1, 1.2 + rnd() * 0.7);
+            puff.rotation.y = rnd() * Math.PI;
+            puff.customDepthMaterial = leafDepth();
+            scene.add(mark(puff));
+        }
+    }
+}
+
 /**
  * Rebuild the stage for `tags` using `pal`. Caller owns lights + clear colour.
  * Deterministic per (biome, location) so a place stays the same place.
@@ -1760,6 +2134,8 @@ export function generateScene(scene: THREE.Scene, tags: SceneTags | any, pal: Sc
 
     buildProps(scene, biome, pal, rnd, roadMask, traits, t.visual);
     buildFraming(scene, pal, rnd, traits, t.visual, biome);
+    addBraziers(scene, pal, rnd, traits, biome, t.visual);
+    buildOverhead(scene, pal, rnd, biome, traits);
     buildNearField(scene, pal, rnd, roadMask, traits, biome);
     // Traits layer specifics onto KNOWN biomes too — underground + "crystal"
     // in the text = a crystal cavern without any new biome existing.
@@ -1790,8 +2166,13 @@ export function generateScene(scene: THREE.Scene, tags: SceneTags | any, pal: Sc
     if (!traits.enclosed && !traits.space && !traits.submerged) buildWeather(scene, (t.weather as string) ?? 'clear', pal);
     buildMotes(scene, biome, pal, rnd, traits);
     buildAtmosphere(scene, pal, rnd, traits);
-    // Horizon ridgelines everywhere a horizon makes sense.
-    if (biome !== 'underground' && biome !== 'void' && !traits.enclosed && !traits.space && !traits.submerged) buildRidges(scene, pal, rnd, noise2D);
+    // Horizon ridgelines everywhere a horizon makes sense — peaks, dunes or
+    // mesas per world. And the sky gets its furniture: real cumulus bodies,
+    // because a Blinx sky is never an empty gradient.
+    if (biome !== 'underground' && biome !== 'void' && !traits.enclosed && !traits.space && !traits.submerged) {
+        buildRidges(scene, pal, rnd, noise2D, seed % 3);
+        if (pal.cloud > 0.15) buildCumulus(scene, pal, rnd);
+    }
 
     // Depth fog, tuned so the MASS BAND (10-30 units out) keeps its identity:
     // at the old ×1.3 even a clear forest was 70% fogged at 15 units — the

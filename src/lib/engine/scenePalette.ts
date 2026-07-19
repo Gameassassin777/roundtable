@@ -398,7 +398,9 @@ const TIMES: Record<string, TimeXform> = {
     morning: {
         tint: 0xffd9a0, skyTint: 0xffc98a, t: 0.18, bright: 1.02, skyBright: 1.08,
         keyK: 1.15, hemiK: 0.95, ambK: 0.85, sat: 1.05, emissiveBoost: false,
-        sunDir: norm([0.75, 0.26, -0.60]), sunColor: 0xffd39a, sunSize: 0.030, sunGlow: 0.55,
+        // Azimuths hug the -z camera axis: a disc 55deg off-axis is a disc
+        // nobody ever sees on a portrait phone (the invisible-sun bug).
+        sunDir: norm([0.52, 0.28, -0.81]), sunColor: 0xffd39a, sunSize: 0.030, sunGlow: 0.55,
         horizonGlow: 0.70, starAmount: 0, exposure: 1.06, cloudColor: 0xfff0dc
     },
     day: {
@@ -410,8 +412,9 @@ const TIMES: Record<string, TimeXform> = {
     dusk: {
         tint: 0xff8a3a, skyTint: 0xff7a2a, t: 0.34, bright: 0.68, skyBright: 0.95,
         keyK: 0.85, hemiK: 0.70, ambK: 0.70, sat: 1.20, emissiveBoost: true,
-        // Sun on the deck: long raking shadows, huge disc, hot horizon band.
-        sunDir: norm([-0.82, 0.10, -0.56]), sunColor: 0xff7a30, sunSize: 0.050, sunGlow: 0.95,
+        // Sun on the deck: long raking shadows, a FAT disc (Blinx dusk skies
+        // are built around a huge low body), hot horizon band.
+        sunDir: norm([-0.18, 0.13, -0.97]), sunColor: 0xff7a30, sunSize: 0.072, sunGlow: 0.95,
         horizonGlow: 1.00, starAmount: 0.22, exposure: 1.12, cloudColor: 0xffc9a0
     },
     night: {
@@ -422,7 +425,9 @@ const TIMES: Record<string, TimeXform> = {
         // moonlight should reveal the ground, not erase it.
         tint: 0x16264f, skyTint: 0x16294f, t: 0.72, bright: 0.34, skyBright: 0.82,
         keyK: 0.55, hemiK: 0.62, ambK: 0.85, sat: 0.90, emissiveBoost: true,
-        sunDir: norm([-0.45, 0.70, -0.55]), sunColor: 0xbcd0ff, sunSize: 0.026, sunGlow: 0.60,
+        // The giant moon: Time Square's whole identity is that huge disc over
+        // the rooftops. sunSize > 0.045 switches on the shader's mare mottle.
+        sunDir: norm([-0.15, 0.44, -0.88]), sunColor: 0xd8e4ff, sunSize: 0.058, sunGlow: 0.70,
         horizonGlow: 0.22, starAmount: 1, exposure: 1.55, cloudColor: 0x4a5878
     }
 };
@@ -685,7 +690,9 @@ export function resolveScene(tags: SceneTags | undefined | null): ScenePalette {
     // Foggy weather lifts the shadows toward the fog itself (airy, readable
     // darks); night gets a whisper of indigo so blacks aren't dead.
     const gradeLift = wx.t > 0.1 ? shade(fog, 0.45)
-        : t.time_of_day === 'night' ? 0x141c30 : 0x000000;
+        : t.time_of_day === 'night' ? 0x141c30
+        : t.mood === 'dark' ? shade(fog, 0.5)      // crushed blacks carry the fog, not dead void
+        : 0x000000;
     // Bloom is earned by light sources: emissives and a visible sun disc.
     // An overcast matte day barely blooms — and shouldn't.
     const bloom = Math.min(1.0, Math.max(0.25,
