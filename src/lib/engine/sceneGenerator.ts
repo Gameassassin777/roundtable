@@ -344,7 +344,9 @@ function buildSkyHem(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, t
         // Pale lavender-pink family, clearly DIMMER than any lit pool — a
         // blank white hole reads as a rendering bug, not a moon.
         const giantCol = new THREE.Color(mix(mix(mix(pal.fog, pal.sunColor, 0.25), 0xffffff, 0.28), 0xe4d4f8, 0.35));
-        const blotCol = new THREE.Color(mix(giantCol.getHex(), mix(pal.sky, 0x000000, 0.45), 0.55));
+        // The continent is mauve-grey, only ~15-25% darker than the disc —
+        // 50% dark read as a centered PUPIL (shots21). Off-center, low contrast.
+        const blotCol = new THREE.Color(mix(mix(giantCol.getHex(), 0x8a7a96, 0.35), 0x000000, 0.12));
         const gc = (c: THREE.Color, a: number) =>
             `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
         // flat body, feather-soft rim (the far layer spends NO sharpness)
@@ -354,16 +356,16 @@ function buildSkyHem(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, t
         body.addColorStop(1, gc(giantCol, 0));
         gctx.fillStyle = body;
         gctx.beginPath(); gctx.arc(GS / 2, GS / 2, GS * 0.5, 0, Math.PI * 2); gctx.fill();
-        // ONE darker irregular continent — 2-3 soft ellipses fused into a
-        // single off-center landmass, never a compass circle, never crater noise.
-        const bx = GS * (0.34 + rnd() * 0.16), by = GS * (0.34 + rnd() * 0.16);
+        // ONE landmass: 2-3 overlapping soft irregular blobs fused, drifting
+        // off toward a limb — never centered, never a compass circle.
+        const bx = GS * (0.58 + rnd() * 0.10), by = GS * (0.38 + rnd() * 0.12);
         for (let b = 0; b < 3; b++) {
-            const cx2 = bx + (rnd() - 0.5) * GS * 0.15;
-            const cy2 = by + (rnd() - 0.5) * GS * 0.13;
-            const r = GS * (0.07 + rnd() * 0.08);
+            const cx2 = bx + (rnd() - 0.5) * GS * 0.20;
+            const cy2 = by + (rnd() - 0.5) * GS * 0.16;
+            const r = GS * (0.08 + rnd() * 0.09);
             const g = gctx.createRadialGradient(cx2, cy2, r * 0.15, cx2, cy2, r);
-            g.addColorStop(0, gc(blotCol, 0.55));
-            g.addColorStop(0.7, gc(blotCol, 0.32));
+            g.addColorStop(0, gc(blotCol, 0.38));
+            g.addColorStop(0.7, gc(blotCol, 0.22));
             g.addColorStop(1, gc(blotCol, 0));
             gctx.fillStyle = g;
             gctx.beginPath();
@@ -2508,12 +2510,21 @@ function planter(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => n
     const wid = variant === 2 ? 0.55 : variant === 1 ? 0.4 : 0.3;
     const soilY = variant === 2 ? 0.50 : variant === 1 ? 0.64 : 0.66;
     const stemGeo = vcolor(new THREE.CylinderGeometry(0.014, 0.02, 0.34, 5).translate(0, 0.17, 0), mix(pal.foliage, 0x000000, 0.35));
+    // The colorway is chosen PER SCENE from the palette family — no two
+    // scenes grow the same garden (the flower-pot complaint: one recipe is
+    // fine, one LOOK everywhere is not).
+    const ways: [number, number, number][] = [
+        [mix(0xff5a1e, pal.key, 0.25), 0xffd94a, 0xff7a2a],
+        [mix(pal.key, 0xffffff, 0.30), mix(pal.emissiveOn ? pal.emissive : 0xffc36a, 0xffffff, 0.25), mix(pal.key, 0xffffff, 0.15)],
+        [mix(0xff4a7a, pal.key, 0.30), 0xfff0f4, 0xff4a7a]
+    ];
+    const way = ways[Math.floor(rnd() * 3)];
     const cupGeo = mergeGeometries([
-        vcolor(new THREE.ConeGeometry(0.075, 0.15, 6).translate(0, 0.40, 0), mix(0xff5a1e, pal.key, 0.25)),
-        vcolor(new THREE.SphereGeometry(0.045, 6, 5).translate(0, 0.48, 0), 0xffd94a)
+        vcolor(new THREE.ConeGeometry(0.075, 0.15, 6).translate(0, 0.40, 0), way[0]),
+        vcolor(new THREE.SphereGeometry(0.045, 6, 5).translate(0, 0.48, 0), way[1])
     ])!;
     const stemMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
-    const cupMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: 0xff7a2a, emissiveIntensity: 0.35 });
+    const cupMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: way[2], emissiveIntensity: 0.35 });
     const stems: Spot[] = [];
     for (const p of at) {
         const k = 0.9 + p.j * 0.3;
@@ -2921,6 +2932,174 @@ function signCard(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => 
     }
 }
 
+// ==========================================================================
+// stylize — the universal Blinx treatment for ANY object, Blinx-made or not
+// (_style laws S1/S2/S6/S9): pose it (one gesture), hand-erode it, bake one
+// honest value per facing with the cap rule, then lay the base patina.
+// The style is a renderer, not an asset list: anything passed through here
+// comes out belonging to the world. The everyday recipes below are normal
+// objects — crates, barrels, carts, wells, fences — none of them Blinx
+// props, all of them Blinx-styled.
+// ==========================================================================
+
+function stylize(
+    geo: THREE.BufferGeometry, pal: ScenePalette,
+    opts: {
+        base: number; cap?: number; dark?: number; snow?: boolean;
+        bend?: number; bulge?: number; taper?: number; lean?: number;
+        erode?: number; jitter?: number; grimeH?: number; rnd: () => number;
+    }
+): THREE.BufferGeometry {
+    const rnd = opts.rnd;
+    let g = geo;
+    if (opts.bend || opts.bulge || opts.taper) g = seussify(g, opts.bend ?? 0, opts.bulge ?? 0, opts.taper ?? 0, rnd);
+    if (opts.lean) { g.rotateZ(opts.lean); g.rotateX((rnd() - 0.5) * Math.abs(opts.lean) * 0.6); }
+    if (opts.erode) jitterGeometry(g, opts.erode, rnd);
+    g = bakeFacetValues(g, pal, { base: opts.base, cap: opts.cap, dark: opts.dark, snow: opts.snow, jitter: opts.jitter ?? 0.05, rnd });
+    if (opts.grimeH) grimeBake(g, opts.grimeH, pal);
+    return g;
+}
+
+/** RECIPE crate — the everyday box, Blinx-treated: ONE lean, hand-eroded
+ *  edges, grime at the foot. Variants: 0 single, 1 stacked, 2 big-and-small. */
+function crate(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number, variant: number) {
+    const wood = mix(pal.structure, 0x8a6a42, 0.5);
+    const parts: THREE.BufferGeometry[] = [];
+    const put = (s: number, x: number, z: number, y?: number) => {
+        const g = stylize(new THREE.BoxGeometry(s, s, s), pal, { base: wood, erode: 0.02, lean: (rnd() - 0.5) * 0.10, grimeH: s, rnd });
+        g.translate(x, y ?? s / 2, z); parts.push(g);
+    };
+    if (variant === 1) { put(0.62, 0, 0); put(0.48, 0.06, 0.03, 0.62 + 0.24); }
+    else if (variant === 2) { put(0.72, 0, 0); put(0.44, 0.55, 0.30); }
+    else put(0.62, 0, 0);
+    const geo = mergeGeometries(parts)!;
+    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+        m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.85 + p.j * 0.4);
+    }));
+    contactBlobs(scene, at, pal, () => 0.72, 0.3);
+}
+
+/** RECIPE barrel — a bulged lathe with two dark iron bands, gently eroded.
+ *  Variants: 0 upright, 1 lying, 2 upright + one down. */
+function barrel(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number, variant: number) {
+    const wood = mix(pal.structure, 0x7a5636, 0.55);
+    const band = mix(wood, 0x000000, 0.55);
+    const parts: THREE.BufferGeometry[] = [];
+    const mk = (lying: boolean, ox: number, oz: number) => {
+        const body = stylize(new THREE.CylinderGeometry(0.30, 0.30, 0.78, 10, 3), pal, { base: wood, bulge: 0.16, erode: 0.015, grimeH: 0.5, rnd });
+        const b1 = vcolor(new THREE.CylinderGeometry(0.335, 0.335, 0.05, 10).toNonIndexed(), band);
+        const b2 = vcolor(new THREE.CylinderGeometry(0.335, 0.335, 0.05, 10).toNonIndexed(), band);
+        b1.translate(0, 0.22, 0); b2.translate(0, -0.22, 0);
+        const g = mergeGeometries([body, b1, b2])!;
+        if (lying) { g.rotateZ(Math.PI / 2 + (rnd() - 0.5) * 0.1); g.translate(ox, 0.31, oz); }
+        else g.translate(ox, 0.39, oz);
+        parts.push(g);
+    };
+    if (variant === 1) mk(true, 0, 0);
+    else if (variant === 2) { mk(false, 0, 0); mk(true, 0.55, 0.32); }
+    else mk(false, 0, 0);
+    const geo = mergeGeometries(parts)!;
+    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+        m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.85 + p.j * 0.35);
+    }));
+    contactBlobs(scene, at, pal, () => 0.6, 0.3);
+}
+
+/** RECIPE cart — two big faceted wheels, a tilted plank bed, a pull bar;
+ *  the everyday workhorse, posed. Variants: 0 loaded, 1 empty, 2 broken wheel. */
+function cart(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number, variant: number) {
+    const wood = mix(pal.structure, 0x8a6a42, 0.45);
+    const dark = mix(wood, 0x000000, 0.5);
+    const parts: THREE.BufferGeometry[] = [];
+    const bedTilt = variant === 2 ? 0.20 : 0.05 + rnd() * 0.06;
+    const bed = stylize(new THREE.BoxGeometry(1.5, 0.12, 0.9), pal, { base: wood, erode: 0.02, grimeH: 0.2, rnd });
+    bed.rotateZ(bedTilt); bed.translate(0, 0.62, 0); parts.push(bed);
+    for (const s of [-1, 1]) {
+        const broken = variant === 2 && s === 1;
+        const r = broken ? 0.28 : 0.42;
+        const wheel = stylize(new THREE.CylinderGeometry(r, r, 0.09, 10), pal, { base: dark, erode: 0.02, rnd });
+        wheel.rotateX(Math.PI / 2);
+        wheel.translate(broken ? 0.18 : 0, r + (broken ? -0.04 : 0), s * 0.52);
+        parts.push(wheel);
+    }
+    const bar = vcolor(new THREE.CylinderGeometry(0.03, 0.035, 1.25, 6).toNonIndexed(), dark);
+    bar.rotateZ(1.05); bar.translate(-0.95, 0.52, 0); parts.push(bar);
+    if (variant === 0) {
+        const sack = stylize(new THREE.SphereGeometry(0.30, 8, 6), pal, { base: mix(wood, 0xd8c8a8, 0.5), erode: 0.05, rnd });
+        sack.scale(1, 0.72, 1); sack.translate(-0.25, 0.80, 0.12); parts.push(sack);
+        const sack2 = stylize(new THREE.SphereGeometry(0.24, 8, 6), pal, { base: mix(wood, 0xc8b494, 0.45), erode: 0.05, rnd });
+        sack2.scale(1, 0.7, 1); sack2.translate(0.32, 0.78, -0.15); parts.push(sack2);
+    }
+    const geo = mergeGeometries(parts)!;
+    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+        m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.9 + p.j * 0.3);
+    }));
+    contactBlobs(scene, at, pal, () => 1.1, 0.3);
+}
+
+/** RECIPE well — octagonal ring wall, pale coping rim, two posts and a little
+ *  SAGGING roof (one gesture), a bucket on the rim. Variants: 0 roofed,
+ *  1 open, 2 roofed + dark dry mouth. */
+function well(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number, variant: number) {
+    const stone = mix(pal.structure, 0x8f8678, 0.4);
+    const pale = mix(stone, 0xffffff, 0.4);
+    const wood = mix(pal.structure, 0x6a4c30, 0.5);
+    const parts: THREE.BufferGeometry[] = [];
+    const ring = stylize(new THREE.CylinderGeometry(0.85, 0.95, 0.75, 8), pal, { base: stone, erode: 0.03, grimeH: 0.7, rnd });
+    ring.translate(0, 0.38, 0); parts.push(ring);
+    const rim = stylize(new THREE.CylinderGeometry(0.94, 0.94, 0.10, 8), pal, { base: pale, erode: 0.015, rnd });
+    rim.translate(0, 0.79, 0); parts.push(rim);
+    const mouth = vcolor(new THREE.CircleGeometry(0.78, 8).toNonIndexed(), variant === 2 ? 0x050403 : mix(pal.fog, 0x000000, 0.8));
+    mouth.rotateX(-Math.PI / 2); mouth.translate(0, 0.80, 0); parts.push(mouth);
+    if (variant !== 1) {
+        for (const s of [-1, 1]) {
+            const post = stylize(new THREE.BoxGeometry(0.10, 1.35, 0.10), pal, { base: wood, lean: s * 0.03 + (rnd() - 0.5) * 0.04, erode: 0.015, rnd });
+            post.translate(s * 0.82, 1.45, 0); parts.push(post);
+        }
+        // The sagging roof: two slabs meeting at a ridge that dips mid-span.
+        for (const s of [-1, 1]) {
+            const slab = stylize(new THREE.BoxGeometry(1.05, 0.07, 1.15), pal, { base: mix(wood, pal.key, 0.12), erode: 0.02, rnd });
+            slab.rotateZ(s * (0.42 + rnd() * 0.06));
+            slab.translate(s * 0.42, 2.22 - 0.06, 0); parts.push(slab);
+        }
+    }
+    const bucket = stylize(new THREE.CylinderGeometry(0.14, 0.11, 0.20, 8), pal, { base: wood, erode: 0.02, rnd });
+    bucket.translate(0.55, 0.92, 0.3); parts.push(bucket);
+    const geo = mergeGeometries(parts)!;
+    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+        m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.9 + p.j * 0.3);
+    }));
+    contactBlobs(scene, at, pal, () => 1.2, 0.32);
+}
+
+/** RECIPE fenceRun — posts and two rails along a line; every post leans its
+ *  own way (gesture per post), the lower rail sometimes missing (broken).
+ *  Variants: 0 straight, 1 zigzag, 2 broken. */
+function fenceRun(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number, variant: number) {
+    const wood = mix(pal.structure, 0x7a5c3a, 0.5);
+    const parts: THREE.BufferGeometry[] = [];
+    const nP = 4 + Math.floor(rnd() * 3);
+    for (const p of at) {
+        const dx = Math.cos(p.r), dz = -Math.sin(p.r);
+        for (let i = 0; i < nP; i++) {
+            const wob = variant === 1 ? ((i % 2) - 0.5) * 0.55 : 0;
+            const post = stylize(new THREE.BoxGeometry(0.09, 0.85, 0.09), pal, { base: wood, lean: (rnd() - 0.5) * 0.16, erode: 0.015, grimeH: 0.4, rnd });
+            post.translate(p.x + dx * i * 0.62 - dz * wob, 0.42, p.z + dz * i * 0.62 + dx * wob);
+            parts.push(post);
+        }
+        for (const ry of [0.55, 0.30]) {
+            if (variant === 2 && ry === 0.30 && rnd() < 0.6) continue;   // the broken rail
+            const rail = vcolor(new THREE.BoxGeometry(nP * 0.62, 0.06, 0.05).toNonIndexed(), mix(wood, 0x000000, 0.12));
+            rail.rotateY(p.r);
+            rail.translate(p.x + dx * (nP - 1) * 0.31, ry, p.z + dz * (nP - 1) * 0.31);
+            parts.push(rail);
+        }
+    }
+    const geo = mergeGeometries(parts)!;
+    scene.add(mark(new THREE.Mesh(geo, craftMat())));
+    contactBlobs(scene, at, pal, () => 1.0, 0.26);
+}
+
 /**
  * The habitation pass (laws E3/B5): hero props and street furniture that make
  * a place LIVED-IN — lamps at path corners and pool gaps, planters flanking
@@ -3036,6 +3215,34 @@ function buildHabitation(
         }
         canalCoping(scene, edge, pal, rnd, 1);
         bridge(scene, px, pz + 4.1, 0.08, pal, rnd, 0);
+    }
+
+    // --- the everyday set: normal objects (crates, barrels, carts, wells,
+    //     fences) put through stylize(). Seeded rotation picks 2–3 per scene
+    //     so no single prop becomes the next flower pot — dressing VARIES
+    //     per scene while the laws stay fixed.
+    if (roadMask) {
+        const ok = (x: number, z: number) => roadMask(x, z) < 0.35;
+        const place = (fn: (at: Spot[]) => void, n: number, off: number) => {
+            const at: Spot[] = [];
+            for (let i = 0; i < n * 4 && at.length < n; i++) {
+                const z = -7 - rnd() * 22;
+                const x = wander(z) + (rnd() < 0.5 ? -1 : 1) * (off + rnd() * 1.6);
+                if (ok(x, z)) at.push({ x, z, s: 1, r: rnd() * Math.PI * 2, j: rnd() });
+            }
+            if (at.length) fn(at);
+        };
+        const kits = ['crate', 'barrel', 'cart', 'well', 'fence'] as const;
+        const start = Math.floor(rnd() * kits.length);
+        const nPick = 2 + Math.floor(rnd() * 2);
+        for (let i = 0; i < nPick; i++) {
+            const k = kits[(start + i * 2) % kits.length];
+            if (k === 'crate') place(at => crate(scene, at, pal, rnd, Math.floor(rnd() * 3)), 3, 3.4);
+            else if (k === 'barrel') place(at => barrel(scene, at, pal, rnd, Math.floor(rnd() * 3)), 3, 3.2);
+            else if (k === 'cart') place(at => cart(scene, at, pal, rnd, Math.floor(rnd() * 3)), 1, 3.8);
+            else if (k === 'well') place(at => well(scene, at, pal, rnd, Math.floor(rnd() * 3)), 1, 5.0);
+            else place(at => fenceRun(scene, at, pal, rnd, Math.floor(rnd() * 3)), 2, 3.0);
+        }
     }
 }
 
