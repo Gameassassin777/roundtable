@@ -27,6 +27,66 @@ const hashStr = (s: string) => {
 
 const mark = (o: THREE.Object3D) => { o.userData.procedural = true; return o; };
 
+// ---- unified light registry -------------------------------------------------
+// Recipes used to scatter ad-hoc PointLights with hand-tuned decays (1.3-1.5):
+// some lit, some didn't, none cast shadows, and every light meant a shader
+// recompile per scene. Now every emissive recipe REGISTERS its light and
+// materializeLights() builds them all at once: physical decay-2 falloff,
+// sorted by priority, the top few casting real shadow maps. All mark()ed
+// procedural, so they bake into the backdrop and hide with the static layer —
+// zero per-frame lights afterwards. This is what makes "unlimited" affordable.
+const EMIT = { flame: 2.6, ember: 2.0, orb: 2.0, dot: 1.6, gem: 1.6, crystal: 1.35, hero: 0.85, window: 0.9, accent: 0.35 } as const;
+type LightSrc = { x: number; y: number; z: number; col: number; i: number; dist: number; pri: number; shadow: boolean };
+let _lights: LightSrc[] = [];
+function registerLight(x: number, y: number, z: number, col: number, i: number, dist: number, pri: number, shadow = false) {
+    if (_lights.length < 256) _lights.push({ x, y, z, col, i, dist, pri, shadow });
+}
+const MAX_POINT_LIGHTS = 20;
+const SHADOW_LIGHTS = 3;
+function materializeLights(scene: THREE.Scene) {
+    // PINNED counts. NUM_POINT_LIGHTS and the shadow-sampler count are baked
+    // into every lit shader, so a scene-varying count means a FULL shader
+    // recompile on every scene change — that was the 90-second stall. Exactly
+    // 20 lights, exactly 3 shadowed, in every scene: programs compile once
+    // per app lifetime, and scene changes never recompile.
+    const sorted = [..._lights].sort((a, b) => b.pri - a.pri || b.i - a.i).slice(0, MAX_POINT_LIGHTS);
+    const lights: THREE.PointLight[] = [];
+    for (const L of sorted) {
+        const pl = new THREE.PointLight(L.col, L.i, L.dist, 2);
+        pl.position.set(L.x, L.y, L.z);
+        pl.userData.src = L;
+        lights.push(pl);
+    }
+    while (lights.length < MAX_POINT_LIGHTS) {
+        const d = new THREE.PointLight(0x000000, 0, 0, 2);   // dark padding
+        d.position.set(0, -100, 0);
+        lights.push(d);
+    }
+    // Shadow budget: eligible real sources first (cube shadows = 6 passes
+    // each, so only sources with real reach); padding lights pick up the
+    // remaining slots so the shadow count never varies.
+    let need = SHADOW_LIGHTS;
+    for (const pl of lights) {
+        const L = pl.userData.src as LightSrc | undefined;
+        if (!need || !L?.shadow || L.dist < 8) continue;
+        pl.castShadow = true;
+        pl.shadow.mapSize.set(512, 512);
+        pl.shadow.bias = -0.004;
+        pl.shadow.camera.near = 0.25;
+        pl.shadow.camera.far = L.dist;
+        need--;
+    }
+    for (let i = lights.length - 1; i >= 0 && need > 0; i--, need--) {
+        const pl = lights[i];
+        pl.castShadow = true;
+        pl.shadow.mapSize.set(256, 256);
+        pl.shadow.camera.near = 0.5;
+        pl.shadow.camera.far = 1;      // sees nothing: free placeholder passes
+    }
+    for (const pl of lights) scene.add(mark(pl));
+    _lights = [];
+}
+
 /** Families with hand-authored geometry. Anything else the AI invents gets the
  *  synthetic set — NOT the crossroads set, which would give an invented
  *  "obsidian cathedral" a dirt road and a signpost. */
@@ -45,6 +105,9 @@ function disposeProcedural(scene: THREE.Scene) {
                 if (Array.isArray(n.material)) n.material.forEach((m: any) => m.dispose());
                 else n.material.dispose();
             }
+            // Lights carry shadow-map render targets — free them explicitly or
+            // every regenerate leaks GPU memory in the shadow-map cache.
+            if (n.isLight && n.dispose) n.dispose();
         });
     }
 }
@@ -269,65 +332,105 @@ function buildSky(pal: ScenePalette) {
  * near-sharp / mid-painted / far-soft / flat-sky stack — near-black, irregular
  * (towers, gables, crenellations), never a straight line.
  */
-function buildSkyHem(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, traits: SceneTraits, biome: string): number | null {
+function buildSkyHem(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, traits: SceneTraits, biome: string, visual?: SceneVisual | null): number | null {
     if (traits.enclosed || traits.space || traits.submerged) return null;
     if (biome === 'void' || biome === 'underground' || biome === 'sea') return null;
 
-    // --- the skyline hem: a far flat card of near-black rooftops ---
-    const hemCol = new THREE.Color(mix(mix(pal.fog, pal.sky, 0.2), 0x000000, 0.78));
-    const H_W = 1024, H_H = 192;
-    const hcv = document.createElement('canvas'); hcv.width = H_W; hcv.height = H_H;
-    const hctx = hcv.getContext('2d')!;
-    hctx.clearRect(0, 0, H_W, H_H);
-    hctx.fillStyle = `rgb(${Math.round(hemCol.r * 255)},${Math.round(hemCol.g * 255)},${Math.round(hemCol.b * 255)})`;
-    hctx.beginPath();
-    hctx.moveTo(0, H_H);
-    let hx = 0;
-    let hy = H_H * (0.45 + rnd() * 0.2);
-    hctx.lineTo(hx, hy);
-    while (hx < H_W) {
-        const w = 14 + rnd() * 46;
-        const kind = rnd();
-        if (kind < 0.30) {
-            // a tower: tall block, maybe gabled
-            const th = H_H * (0.18 + rnd() * 0.42);
-            hctx.lineTo(hx, th);
-            hctx.lineTo(hx + w, th);
-            if (rnd() < 0.5) { hctx.lineTo(hx + w / 2, th - H_H * (0.08 + rnd() * 0.10)); hctx.lineTo(hx + w, th); }
-        } else if (kind < 0.55) {
-            // crenellations: a run of little merlon teeth
-            const bh = H_H * (0.38 + rnd() * 0.22);
-            hctx.lineTo(hx, bh);
-            const teeth = 2 + Math.floor(rnd() * 4);
-            const tw = w / (teeth * 2);
-            for (let t2 = 0; t2 < teeth; t2++) {
-                hctx.lineTo(hx + t2 * tw * 2, bh - H_H * 0.07);
-                hctx.lineTo(hx + t2 * tw * 2 + tw, bh - H_H * 0.07);
-                hctx.lineTo(hx + t2 * tw * 2 + tw, bh);
-                hctx.lineTo(hx + (t2 + 1) * tw * 2, bh);
+    // --- the skyline hem: TWO value-stepped layers, never one black band ---
+    // A flat near-black card against a day sky is the "black rectangles"
+    // complaint. Real skyline depth is aerial perspective: each farther layer
+    // melts LIGHTER toward the sky hue, and every layer carries an internal
+    // vertical gradient (dark crown -> fog-melted base). Darkness scales with
+    // the sky's own luminance: night can afford a deep silhouette, day cannot.
+    const dayness = luminance(mix(pal.sky, pal.fog, 0.35));   // 0 night .. 1 bright day
+    const built = biome === 'urban' || biome === 'crossroads' || visual?.order === 'artificial';
+    const drawSkyline = (rnd2: () => number, colTop: THREE.Color, colBase: THREE.Color, amp: number): THREE.CanvasTexture => {
+        const H_W = 1024, H_H = 192;
+        const hcv = document.createElement('canvas'); hcv.width = H_W; hcv.height = H_H;
+        const hctx = hcv.getContext('2d')!;
+        hctx.clearRect(0, 0, H_W, H_H);
+        const rgb = (c: THREE.Color) => `rgb(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)})`;
+        const grad = hctx.createLinearGradient(0, 0, 0, H_H);
+        grad.addColorStop(0, rgb(colTop));
+        grad.addColorStop(1, rgb(colBase));
+        hctx.fillStyle = grad;
+        hctx.beginPath();
+        hctx.moveTo(0, H_H);
+        let hx = 0;
+        let hy = H_H * (0.45 + rnd2() * 0.2);
+        hctx.lineTo(hx, hy);
+        while (hx < H_W) {
+            const w = 14 + rnd2() * 46;
+            const kind = rnd2();
+            if (built ? kind < 0.34 : kind < 0.16) {
+                // a tower: tall block, maybe gabled — and built worlds add spires
+                const th = H_H * (0.18 + rnd2() * 0.42) * amp;
+                hctx.lineTo(hx, th);
+                if (built && rnd2() < 0.4) {
+                    hctx.lineTo(hx + w * 0.35, th);
+                    hctx.lineTo(hx + w * 0.5, th - H_H * (0.10 + rnd2() * 0.14) * amp);
+                    hctx.lineTo(hx + w * 0.65, th);
+                } else if (rnd2() < 0.5) {
+                    hctx.lineTo(hx + w / 2, th - H_H * (0.08 + rnd2() * 0.10) * amp);
+                    hctx.lineTo(hx + w, th);
+                }
+                hctx.lineTo(hx + w, th);
+            } else if (kind < 0.48 && built) {
+                // crenellations: a run of little merlon teeth
+                const bh = H_H * (0.38 + rnd2() * 0.22) * amp;
+                hctx.lineTo(hx, bh);
+                const teeth = 2 + Math.floor(rnd2() * 4);
+                const tw = w / (teeth * 2);
+                for (let t2 = 0; t2 < teeth; t2++) {
+                    hctx.lineTo(hx + t2 * tw * 2, bh - H_H * 0.07 * amp);
+                    hctx.lineTo(hx + t2 * tw * 2 + tw, bh - H_H * 0.07 * amp);
+                    hctx.lineTo(hx + t2 * tw * 2 + tw, bh);
+                    hctx.lineTo(hx + (t2 + 1) * tw * 2, bh);
+                }
+                hctx.lineTo(hx + w, bh);
+            } else if (kind < 0.68) {
+                // a gable: one confident triangle
+                const ph = H_H * (0.30 + rnd2() * 0.30) * amp;
+                hctx.lineTo(hx + w / 2, ph - H_H * (0.10 + rnd2() * 0.12) * amp);
+                hctx.lineTo(hx + w, ph);
+            } else if (!built && kind < 0.86) {
+                // a hill shoulder: a smooth hump, not a block — wild skylines roll
+                const hh = H_H * (0.30 + rnd2() * 0.28) * amp;
+                hctx.quadraticCurveTo(hx + w * 0.5, hh - H_H * 0.22 * amp, hx + w, hh);
+                hy = hh;
+            } else {
+                // a long low roofline, sagging a little
+                const nh = Math.max(H_H * 0.15, Math.min(H_H * 0.8, hy + (rnd2() - 0.5) * H_H * 0.16));
+                hctx.lineTo(hx + w, nh);
+                hy = nh;
             }
-            hctx.lineTo(hx + w, bh);
-        } else if (kind < 0.75) {
-            // a gable: one confident triangle
-            const ph = H_H * (0.30 + rnd() * 0.30);
-            hctx.lineTo(hx + w / 2, ph - H_H * (0.10 + rnd() * 0.12));
-            hctx.lineTo(hx + w, ph);
-        } else {
-            // a long low roofline, sagging a little
-            const nh = Math.max(H_H * 0.15, Math.min(H_H * 0.8, hy + (rnd() - 0.5) * H_H * 0.16));
-            hctx.lineTo(hx + w, nh);
-            hy = nh;
+            hx += w;
         }
-        hx += w;
-    }
-    hctx.lineTo(H_W, H_H);
-    hctx.closePath();
-    hctx.fill();
-    const hemTex = new THREE.CanvasTexture(hcv);
-    hemTex.needsUpdate = true;
+        hctx.lineTo(H_W, H_H);
+        hctx.closePath();
+        hctx.fill();
+        const tex = new THREE.CanvasTexture(hcv);
+        tex.needsUpdate = true;
+        return tex;
+    };
+    const skyHue = mix(pal.fog, pal.sky, 0.45);
+    // FAR layer: lighter, lower, farther — half-melted into the haze.
+    const farDark = 0.40 - dayness * 0.20;
+    const farCol = new THREE.Color(mix(skyHue, 0x000000, farDark));
+    const farMelt = new THREE.Color(mix(farCol.getHex(), pal.fog, 0.55));
+    const farHem = new THREE.Mesh(
+        new THREE.PlaneGeometry(270, 17),
+        new THREE.MeshBasicMaterial({ map: drawSkyline(rnd, farCol, farMelt, 0.72), transparent: true, fog: false, depthWrite: false })
+    );
+    farHem.position.set(0, 7.2, -112);
+    scene.add(mark(farHem));
+    // NEAR layer: one value step darker, taller, closer — the crisp silhouette.
+    const nearDark = 0.60 - dayness * 0.22;
+    const nearCol = new THREE.Color(mix(mix(pal.fog, pal.sky, 0.30), 0x000000, nearDark));
+    const nearMelt = new THREE.Color(mix(nearCol.getHex(), pal.fog, 0.38));
     const hem = new THREE.Mesh(
         new THREE.PlaneGeometry(240, 20),
-        new THREE.MeshBasicMaterial({ map: hemTex, transparent: true, fog: false, depthWrite: false })
+        new THREE.MeshBasicMaterial({ map: drawSkyline(rnd, nearCol, nearMelt, 1.0), transparent: true, fog: false, depthWrite: false })
     );
     hem.position.set(0, 8, -95);
     scene.add(mark(hem));
@@ -448,14 +551,14 @@ function addCrystals(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits,
         // pass averages away timid emissives) — but past ~1.4 the facets blow
         // to white slabs and the crystal loses its hue AND its shape. Blinx's
         // crystals stay saturated: white-hot core is the HALO sprite's job.
-        emissiveIntensity: 1.35, roughness: 0.3
+        emissiveIntensity: EMIT.crystal, roughness: 0.3
     });
     // The hero path clamps harder: 2x facets at 1.35 tone-map to white slabs
     // (16-glow-cavern). The core stays INSIDE the emissive hue at <=85%
     // brightness — the white-hot read belongs to the halo sprite alone.
     const heroMat = new THREE.MeshStandardMaterial({
         color: mix(col, 0xffffff, 0.05), emissive: mix(col, 0x000000, 0.15),
-        emissiveIntensity: 0.85, roughness: 0.3
+        emissiveIntensity: EMIT.hero, roughness: 0.3
     });
     const geo = new THREE.OctahedronGeometry(1, 0);
     geo.scale(0.42, 1.5, 0.42);
@@ -473,9 +576,6 @@ function addCrystals(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits,
         c.rotation.set((rnd() - 0.5) * 0.8, rnd() * Math.PI, (rnd() - 0.5) * 0.6);
         hero.add(c);
     }
-    const pool = new THREE.PointLight(col, 9, 30, 1.3);
-    pool.position.set(0, 1.8, 0);
-    hero.add(pool);
     // A soft additive halo sprite: broad gradients survive the paint pass,
     // bright pixels average away. The sprite IS the visible glow; the light
     // is what it paints onto the ground.
@@ -488,12 +588,12 @@ function addCrystals(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits,
     hero.add(halo);
     // Secondary pools so the whole cavern breathes with the glow colour.
     for (let i = 0; i < 5; i++) {
-        const p2 = new THREE.PointLight(col, 4, 20, 1.4);
         const aa = rnd() * Math.PI * 2, rr = 8 + rnd() * 16;
-        p2.position.set(Math.cos(aa) * rr, 1.2, Math.sin(aa) * rr);
-        scene.add(mark(p2));
+        registerLight(Math.cos(aa) * rr, 1.2, Math.sin(aa) * rr, col, 8, 20, 1);
     }
     hero.position.set(-3.2, 0, -4.5);
+    // The hero's real light: shadowed, high-priority — the cavern's sun.
+    registerLight(-3.2, 1.8, -4.5, col, 30, 30, 4, true);
     scene.add(mark(hero));
 }
 
@@ -506,15 +606,13 @@ function addGlowPools(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits
     const col = traits.glowColor ?? pal.emissive;
     const tex = softSprite();
     const orbMat = new THREE.MeshStandardMaterial({
-        color: mix(col, 0xffffff, 0.3), emissive: col, emissiveIntensity: 2.0, roughness: 0.4
+        color: mix(col, 0xffffff, 0.3), emissive: col, emissiveIntensity: EMIT.orb, roughness: 0.4
     });
     for (let i = 0; i < n; i++) {
         const a = -Math.PI / 2 + (rnd() - 0.5) * Math.PI * 1.2;   // biased toward the view
         const r = 4 + rnd() * 26;
         const x = Math.cos(a) * r, z = Math.sin(a) * r;
-        const p2 = new THREE.PointLight(col, 2.5, 14, 1.5);
-        p2.position.set(x, 1.1, z);
-        scene.add(mark(p2));
+        registerLight(x, 1.1, z, col, 4, 12, 1);
         // Blinx's light stack, all four layers: a PHYSICAL source orb (lights
         // are objects, never abstractions), a small halo, and the painted
         // ground pool that ties it to the floor.
@@ -540,7 +638,7 @@ function addGlowPools(scene: THREE.Scene, pal: ScenePalette, traits: SceneTraits
  */
 function glowDots(scene: THREE.Scene, at: Spot[], col: number, yOf: (p: Spot) => number, size = 0.11) {
     const orbMat = new THREE.MeshStandardMaterial({
-        color: mix(col, 0xffffff, 0.45), emissive: col, emissiveIntensity: 1.6, roughness: 0.4
+        color: mix(col, 0xffffff, 0.45), emissive: col, emissiveIntensity: EMIT.dot, roughness: 0.4
     });
     scene.add(scatterAt(new THREE.SphereGeometry(size, 8, 6), orbMat, at, (m, p) => {
         m.position.set(p.x, yOf(p), p.z);
@@ -1065,24 +1163,33 @@ function blobTexture(): THREE.CanvasTexture {
     return _blobTex;
 }
 
-/** The dark-mouth gradient: darkest core, rim a dark shade of the world's own
- *  atmosphere hue, soft outer falloff. Blinx's "absolute dark" punctuations
- *  are always this — a hole you believe has walls. */
+/** The passage shade: NOT a black hole. A tunnel you believe has walls and a
+ *  floor — darkest at the top (ceiling shade), stepping LIGHTER toward the
+ *  bottom (the road continuing into shade), rim feathered to zero. Always a
+ *  deep shade of the world's own atmosphere hue, never pure black: a perfect
+ *  black disc on a pale arch reads as a hole punched in the world. */
 function mouthTexture(pal: ScenePalette): THREE.CanvasTexture {
     const S = 128;
     const cv = document.createElement('canvas'); cv.width = cv.height = S;
     const ctx = cv.getContext('2d')!;
-    const core = new THREE.Color(mix(pal.fog, 0x000000, 0.88));
-    const rim = new THREE.Color(mix(pal.fog, 0x000000, 0.42));
     const hx = (c: THREE.Color, a: number) =>
         `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
-    const g = ctx.createRadialGradient(S / 2, S / 2, S * 0.06, S / 2, S / 2, S * 0.5);
-    g.addColorStop(0, hx(core, 1));
-    g.addColorStop(0.55, hx(core, 0.98));
-    g.addColorStop(0.85, hx(rim, 0.9));
-    g.addColorStop(1, hx(rim, 0));
-    ctx.fillStyle = g;
+    // Vertical structure: ceiling gloom -> shaded but readable floor.
+    const v = ctx.createLinearGradient(0, 0, 0, S);
+    v.addColorStop(0.0, hx(new THREE.Color(mix(pal.fog, 0x000000, 0.58)), 0.94));
+    v.addColorStop(0.55, hx(new THREE.Color(mix(pal.fog, 0x000000, 0.42)), 0.85));
+    v.addColorStop(1.0, hx(new THREE.Color(mix(pal.fog, 0x000000, 0.20)), 0.60));
+    ctx.fillStyle = v;
     ctx.fillRect(0, 0, S, S);
+    // Feather the rim to nothing so the shade dissolves into the arch stones.
+    const r = ctx.createRadialGradient(S / 2, S / 2, S * 0.28, S / 2, S / 2, S * 0.5);
+    r.addColorStop(0, 'rgba(255,255,255,1)');
+    r.addColorStop(0.78, 'rgba(255,255,255,1)');
+    r.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.fillStyle = r;
+    ctx.fillRect(0, 0, S, S);
+    ctx.globalCompositeOperation = 'source-over';
     const tex = new THREE.CanvasTexture(cv);
     tex.needsUpdate = true;
     return tex;
@@ -1154,7 +1261,7 @@ function breadcrumbTrail(scene: THREE.Scene, pal: ScenePalette, rnd: () => numbe
     const wander = (t: number) => noise2D(t * 0.035, 7.3) * 3.2;   // the road's own curve
     const col = pal.emissiveOn ? pal.emissive : mix(0xffc36a, pal.key, 0.30);
     const orbMat = new THREE.MeshStandardMaterial({
-        color: mix(col, 0xffffff, 0.35), emissive: col, emissiveIntensity: 2.2, roughness: 0.4
+        color: mix(col, 0xffffff, 0.35), emissive: col, emissiveIntensity: EMIT.orb, roughness: 0.4
     });
     const tex = softSprite();
     for (let i = 0; i < 7; i++) {
@@ -1170,6 +1277,9 @@ function breadcrumbTrail(scene: THREE.Scene, pal: ScenePalette, rnd: () => numbe
         halo.position.copy(orb.position);
         halo.scale.set(1.8, 1.35, 1);
         scene.add(mark(halo));
+        // A real light per crumb: the path doesn't just sparkle, it ILLUMINATES
+        // the verge it passes — the recession reads in the ground itself.
+        registerLight(x, orb.position.y + 0.25, z, col, 3, 7, 1);
         lightPool(scene, x, z, 2.2, col, 0.55);
     }
 }
@@ -1707,7 +1817,7 @@ const MASS_FAMILIES: Record<string, (c: FamilyCtx) => void> = {
         const glowing = traits.glowing;
         const geo = new THREE.SphereGeometry(0.7, 14, 10);
         const mat = glowing
-            ? new THREE.MeshStandardMaterial({ color: mix(pal.emissive, 0xffffff, 0.30), emissive: pal.emissive, emissiveIntensity: 1.6, roughness: 0.4 })
+            ? new THREE.MeshStandardMaterial({ color: mix(pal.emissive, 0xffffff, 0.30), emissive: pal.emissive, emissiveIntensity: EMIT.orb, roughness: 0.4 })
             : (bakeFacetValues(geo, pal, { rnd }), paintMat());
         scene.add(scatterAt(geo, mat, at, (m, p) => {
             m.position.set(p.x, 2 + p.j * 7, p.z);
@@ -2337,7 +2447,7 @@ function streetLamp(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () =
         m.position.set(t.x, t.y, t.z);
         m.scale.setScalar(0.9 + p.j * 0.35);
     }));
-    const emberMat = new THREE.MeshStandardMaterial({ color: mix(warm, 0xffffff, 0.4), emissive: warm, emissiveIntensity: 2.0, roughness: 0.4 });
+    const emberMat = new THREE.MeshStandardMaterial({ color: mix(warm, 0xffffff, 0.4), emissive: warm, emissiveIntensity: EMIT.ember, roughness: 0.4 });
     const embers = scatterAt(new THREE.SphereGeometry(0.085, 8, 6), emberMat, heads, (m, p, i) => {
         const t = armOf(p, variant === 2 && i % 2 === 1);
         m.position.set(t.x, t.y, t.z);
@@ -2350,6 +2460,9 @@ function streetLamp(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () =
     heads.forEach((p, i) => {
         const t = armOf(p, variant === 2 && i % 2 === 1);
         hpos[i * 3] = t.x; hpos[i * 3 + 1] = t.y; hpos[i * 3 + 2] = t.z;
+        // Every head is a real shadowed lamp — streetlight that actually
+        // carves the pavement into lit islands and dark between.
+        registerLight(t.x, t.y, t.z, warm, 6, 9, 2, true);
     });
     const hgeo = new THREE.BufferGeometry();
     hgeo.setAttribute('position', new THREE.BufferAttribute(hpos, 3));
@@ -2413,7 +2526,7 @@ function fountain(scene: THREE.Scene, x: number, z: number, pal: ScenePalette, r
     }
     // Pickups in the bowl — dressing with a function.
     const gemCol = pal.emissiveOn ? pal.emissive : 0xffd98a;
-    const gemMat = new THREE.MeshStandardMaterial({ color: mix(gemCol, 0xffffff, 0.3), emissive: gemCol, emissiveIntensity: 1.6, roughness: 0.4 });
+    const gemMat = new THREE.MeshStandardMaterial({ color: mix(gemCol, 0xffffff, 0.3), emissive: gemCol, emissiveIntensity: EMIT.gem, roughness: 0.4 });
     const gemSpots: Spot[] = [];
     for (let i = 0; i < 3; i++) {
         const a = rnd() * Math.PI * 2, rr = 0.3 + rnd() * 0.35;
@@ -2425,6 +2538,8 @@ function fountain(scene: THREE.Scene, x: number, z: number, pal: ScenePalette, r
     });
     gems.castShadow = false;
     scene.add(gems);
+    // The bowl's treasure lights the water and the coping from inside.
+    registerLight(x, 2.3, z, gemCol, 3, 8, 1);
     contactBlobs(scene, [{ x, z, s: 1, r: 0, j: 0.5 }], pal, () => 3.0, 0.32);
     if (pal.starAmount > 0.5 || pal.emissiveOn) lightPool(scene, x, z, 3.4, pal.emissiveOn ? pal.emissive : 0xffc36a, 0.4);
 }
@@ -2524,7 +2639,7 @@ function planter(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => n
         vcolor(new THREE.SphereGeometry(0.045, 6, 5).translate(0, 0.48, 0), way[1])
     ])!;
     const stemMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
-    const cupMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: way[2], emissiveIntensity: 0.35 });
+    const cupMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: way[2], emissiveIntensity: EMIT.accent });
     const stems: Spot[] = [];
     for (const p of at) {
         const k = 0.9 + p.j * 0.3;
@@ -3273,7 +3388,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
     // it — "neon spires" are spires WITH lit panes, not bare slabs.
     const cityStruct = () => new THREE.MeshStandardMaterial({
         color: pal.structure, roughness: 0.85, flatShading: true,
-        emissive: 0xffffff, emissiveMap: windowTexture(), emissiveIntensity: 0.9
+        emissive: 0xffffff, emissiveMap: windowTexture(), emissiveIntensity: EMIT.window
     });
 
     // A Director-given silhouette REPLACES the biome's mass layer: "a forest
@@ -3429,7 +3544,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             const towerMat = new THREE.MeshStandardMaterial({
                 color: pal.structure, roughness: 0.8,
                 map: mottleTexture(), bumpMap: mottleTexture(), bumpScale: 0.02,
-                emissive: 0xffffff, emissiveMap: windowTexture(), emissiveIntensity: 0.9
+                emissive: 0xffffff, emissiveMap: windowTexture(), emissiveIntensity: EMIT.window
             });
             // The Blinx city bulges and leans — towers bow like drawn ones.
             const towerGeo = seussify(new THREE.BoxGeometry(3, 9, 3, 1, 6, 1), 0.5, 0.14, 0.12, rnd);
@@ -3552,15 +3667,15 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             cage.position.set(-0.72, 1.86, 0); sign.add(cage);
             const flame = new THREE.Mesh(
                 new THREE.SphereGeometry(0.11, 8, 6),
-                new THREE.MeshStandardMaterial({ color: 0xffc36a, emissive: 0xff9a2a, emissiveIntensity: 2.2 })
+                new THREE.MeshStandardMaterial({ color: 0xffc36a, emissive: 0xff9a2a, emissiveIntensity: EMIT.flame })
             );
             flame.position.copy(cage.position); sign.add(flame);
             // The Kuwahara pass eats tiny bright points (high-variance sectors
             // average away), so the ember alone vanishes in the painting. A
             // POOL of warm light survives — broad gradients bake beautifully.
             // Costs nothing at runtime: it's frozen into the backdrop.
-            const glow = new THREE.PointLight(0xff9a2a, 3.2, 7.5, 1.6);
-            glow.position.set(-0.72, 1.9, 0.15); sign.add(glow);
+            // World position of the cage (sign sits at 3.4,2.6 rotated -0.3):
+            registerLight(2.67, 1.9, 2.53, 0xff9a2a, 6, 8, 3, true);
             const hang = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.22, 5), new THREE.MeshToonMaterial({ color: woodLo, gradientMap: toonRamp() }));
             hang.position.set(-0.72, 2.06, 0); sign.add(hang);
             // base stones so the post grows out of something
@@ -3606,7 +3721,7 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
             // --- flowers: small bright clusters in the verge grass ---
             const flowerMat = new THREE.MeshStandardMaterial({
                 color: mix(pal.key, 0xffffff, 0.3),
-                emissive: mix(pal.key, 0xffffff, 0.2), emissiveIntensity: 0.35
+                emissive: mix(pal.key, 0xffffff, 0.2), emissiveIntensity: EMIT.accent
             });
             const flowerSpots: Spot[] = [];
             for (let c = 0; c < 9; c++) {
@@ -3756,6 +3871,50 @@ function buildAir(scene: THREE.Scene, biome: string, weather: string, pal: Scene
  * leaves, and (via glowy motes) fireflies after dark. All silhouette-simple —
  * painterly worlds want gestures of life, not anatomy.
  */
+let _butterflyTex: THREE.CanvasTexture | null = null;
+/** A proper wing: forewing + hindwing lobes rooted at the canvas' left edge
+ *  (the body line), painted pale so the material's colour owns the hue, with
+ *  a soft root shade and a dark painted outline — never a bare white quad. */
+function butterflyTexture(): THREE.CanvasTexture {
+    if (_butterflyTex) return _butterflyTex;
+    const S = 64;
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const ctx = cv.getContext('2d')!;
+    ctx.clearRect(0, 0, S, S);
+    const g = ctx.createLinearGradient(0, 0, S, 0);
+    g.addColorStop(0, 'rgba(226,210,190,1)');   // root shade at the body
+    g.addColorStop(0.45, 'rgba(248,240,228,1)');
+    g.addColorStop(1, 'rgba(255,252,246,1)');   // pale tip
+    ctx.fillStyle = g;
+    // Forewing: the big upper lobe.
+    ctx.beginPath();
+    ctx.moveTo(4, 34);
+    ctx.bezierCurveTo(2, 6, 40, 0, 58, 10);
+    ctx.bezierCurveTo(62, 16, 56, 30, 10, 38);
+    ctx.closePath(); ctx.fill();
+    // Hindwing: the smaller lower lobe.
+    ctx.beginPath();
+    ctx.moveTo(6, 38);
+    ctx.bezierCurveTo(20, 36, 40, 40, 38, 50);
+    ctx.bezierCurveTo(36, 60, 14, 60, 5, 46);
+    ctx.closePath(); ctx.fill();
+    // Painted outline + one wing spot — the hand-drawn read at any distance.
+    ctx.strokeStyle = 'rgba(64,44,30,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(4, 34);
+    ctx.bezierCurveTo(2, 6, 40, 0, 58, 10);
+    ctx.bezierCurveTo(62, 16, 56, 30, 10, 38);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(40, 18, 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(70,48,32,0.5)';
+    ctx.fill();
+    _butterflyTex = new THREE.CanvasTexture(cv);
+    _butterflyTex.needsUpdate = true;
+    return _butterflyTex;
+}
+
 function buildCreatures(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: () => number, traits: SceneTraits) {
     const noSky = traits.enclosed || traits.space || traits.submerged;
     const openLand = ['forest', 'crossroads', 'plains', 'mountain', 'ruin', 'swamp', 'urban', 'sea', 'arctic', 'desert'].includes(biome);
@@ -3788,13 +3947,30 @@ function buildCreatures(scene: THREE.Scene, biome: string, pal: ScenePalette, rn
     // --- butterflies: near the grass, daylight only ---
     if (!noSky && !traits.barren && ['crossroads', 'plains', 'forest'].includes(biome) && pal.starAmount < 0.5) {
         const group = new THREE.Group();
-        const wmat = new THREE.MeshBasicMaterial({ color: mix(pal.key, 0xffffff, 0.25), side: THREE.DoubleSide });
-        const wgeo = new THREE.PlaneGeometry(0.16, 0.12);
+        const wingTex = butterflyTexture();
+        // Per-scene colorways from the palette family — one garden's whites,
+        // another's ambers.
+        const tints = [
+            mix(pal.key, 0xffffff, 0.30),
+            mix(pal.emissiveOn ? pal.emissive : 0xffc36a, 0xffffff, 0.22),
+            mix(pal.key, 0xff8ad0, 0.42)
+        ];
+        const wmats = tints.map(c => new THREE.MeshBasicMaterial({
+            map: wingTex, color: c, side: THREE.DoubleSide, transparent: true, alphaTest: 0.35
+        }));
+        const bodyMat = new THREE.MeshBasicMaterial({ color: 0x2a2018 });
+        // Origin at the wing root so the render loop's rotation.y flap pivots
+        // AT THE BODY — the old centred quads spun mid-wing and read as squares.
+        const wgeo = new THREE.PlaneGeometry(0.24, 0.20).translate(0.12, 0, 0);
+        const bgeo = new THREE.BoxGeometry(0.018, 0.15, 0.018);
         for (let i = 0; i < 4; i++) {
             const b = new THREE.Group();
-            const L = new THREE.Mesh(wgeo, wmat); L.position.x = -0.07;
-            const R = new THREE.Mesh(wgeo, wmat); R.position.x = 0.07;
-            b.add(L, R);
+            const wm = wmats[i % wmats.length];
+            const R = new THREE.Mesh(wgeo, wm);
+            const L = new THREE.Mesh(wgeo, wm);
+            L.scale.x = -1;
+            const body = new THREE.Mesh(bgeo, bodyMat);
+            b.add(R, L, body);
             const home = spots(1, 3, 15, rnd)[0];
             b.userData.home = { x: home.x, z: home.z, ph: rnd() * Math.PI * 2 };
             group.add(b);
@@ -3863,7 +4039,7 @@ function addBraziers(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, t
     const flameCol = pal.emissiveOn ? pal.emissive : 0xff8a2a;
     const bowlMat = new THREE.MeshStandardMaterial({ color: mix(pal.structure, 0x000000, 0.45), roughness: 0.9 });
     const flameMat = new THREE.MeshStandardMaterial({
-        color: mix(flameCol, 0xffffff, 0.45), emissive: flameCol, emissiveIntensity: 2.6, roughness: 0.5
+        color: mix(flameCol, 0xffffff, 0.45), emissive: flameCol, emissiveIntensity: EMIT.flame, roughness: 0.5
     });
     const at = spots(5 + Math.floor(rnd() * 3), 4, 24, rnd);
     // Bowl + post, one list so parts stay married.
@@ -3882,9 +4058,8 @@ function addBraziers(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, t
         m.scale.setScalar(0.8 + p.j * 0.7);
     }));
     for (const p of at) {
-        const pool = new THREE.PointLight(flameCol, 3.5, 11, 1.5);
-        pool.position.set(p.x, 1.7, p.z);
-        scene.add(mark(pool));
+        // Shadowed fire: braziers are the Temple's suns — they carve the floor.
+        registerLight(p.x, 1.7, p.z, flameCol, 9, 12, 3, true);
         // The painted pool: Blinx's fourth layer of every light — and the one
         // that still reads after the paint bake averages the bloom away.
         lightPool(scene, p.x, p.z, 2.3, flameCol, 0.5);
@@ -3906,9 +4081,10 @@ function buildOverhead(scene: THREE.Scene, pal: ScenePalette, rnd: () => number,
     if (biome === 'urban' || biome === 'crossroads') {
         // Lantern strings: catenary wires with warm bulbs, crossing the view.
         const wireMat = new THREE.MeshBasicMaterial({ color: mix(pal.structure, 0x000000, 0.55), fog: false });
+        const bulbCol = pal.emissiveOn ? pal.emissive : 0xffc36a;
         const bulbMat = new THREE.MeshStandardMaterial({
-            color: 0xffe9c0, emissive: pal.emissiveOn ? pal.emissive : 0xffc36a,
-            emissiveIntensity: 1.9, roughness: 0.4, fog: false
+            color: 0xffe9c0, emissive: bulbCol,
+            emissiveIntensity: EMIT.ember, roughness: 0.4, fog: false
         });
         const bulbSpots: Spot[] = [];
         for (let s = 0; s < 3; s++) {
@@ -3927,7 +4103,12 @@ function buildOverhead(scene: THREE.Scene, pal: ScenePalette, rnd: () => number,
             scene.add(mark(wire));
             // Bulbs hang slightly BELOW the wire, every other span point.
             bulbSpots.length = 0;
-            for (let i = 1; i < 16; i += 2) bulbSpots.push({ x: pts[i].x, z, s: 1, r: 0, j: rnd() });
+            for (let i = 1; i < 16; i += 2) {
+                bulbSpots.push({ x: pts[i].x, z, s: 1, r: 0, j: rnd() });
+                // Every 4th bulb is a real light — the string washes the
+                // street below instead of just sparkling overhead.
+                if (i % 4 === 1) registerLight(pts[i].x, pts[i].y - 0.14, z, bulbCol, 3, 7, 1);
+            }
             const bulbs = scatterAt(new THREE.SphereGeometry(0.085, 6, 5), bulbMat, bulbSpots, (m, p, i2) => {
                 m.position.set(p.x, pts[1 + i2 * 2].y - 0.14, p.z);
             });
@@ -3979,7 +4160,7 @@ export function generateScene(scene: THREE.Scene, tags: SceneTags | any, pal: Sc
     // One giant + one jagged hem (D7): the far flat layer that keeps the world
     // from floating in space. The giant's azimuth comes back so the cumulus
     // layer never clips a hard wedge through the disc.
-    const giantAz = buildSkyHem(scene, pal, rnd, traits, biome);
+    const giantAz = buildSkyHem(scene, pal, rnd, traits, biome, t.visual);
 
     const roadMask = biome === 'crossroads' || biome === 'urban' ? makeRoadMask(noise2D) : undefined;
     const ground = buildGround(pal, biome, noise2D, roadMask, traits, t.visual, rnd);
@@ -4036,6 +4217,11 @@ export function generateScene(scene: THREE.Scene, tags: SceneTags | any, pal: Sc
         buildRidges(scene, pal, rnd, noise2D, seed % 3);
         if (pal.cloud > 0.15) buildCumulus(scene, pal, rnd, giantAz);
     }
+
+    // Every emissive recipe above REGISTERED its lights instead of creating
+    // them — build them all now: one shader compile, physical decay-2 falloff,
+    // shadow maps on the few highest-priority sources. Bake-only cost.
+    materializeLights(scene);
 
     // Depth fog, tuned so the MASS BAND (10-30 units out) keeps its identity:
     // at the old ×1.3 even a clear forest was 70% fogged at 15 units — the

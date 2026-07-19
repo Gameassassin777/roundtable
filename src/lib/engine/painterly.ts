@@ -22,8 +22,9 @@ import * as THREE from 'three';
 //   2. GRADE  — S-curve contrast + saturation + shadow lift, per palette, so
 //      every scene gets a deliberate value structure instead of fog murk.
 //   3. PAINT  — the Kuwahara (unchanged): flatten interiors into strokes.
-//   4. BLOOM  — bright-pass the PAINTED image, blur at quarter res, so glow
-//      pools / crystals / neon / the sun actually bleed light. Blooming the
+//   4. BLOOM  — bright-pass the PAINTED image, then blur a 4-level mip
+//      pyramid (¼ → 1/32), so glow pools / crystals / neon / the sun bleed
+//      light with a tight core and a physically-wide halo. Blooming the
 //      paint (not the raw render) softens stroke edges = more painterly, and
 //      rescues the tiny bright points the Kuwahara eats.
 //   5. COMPOSITE — paint + bloom, then interleaved-gradient-noise dither
@@ -150,14 +151,35 @@ void main() {
 }
 `;
 
-// Pass 5 — composite: paint + bloom, IGN dither against 8-bit banding (the
-// smooth sky gradient posterizes without it), and a luminance-masked canvas
-// grain: most visible in mid-tones, gone in deep black and blown white —
-// how real tooth reads. Interleaved gradient noise (Jimenez) is the cheap
-// blue-noise stand-in; one line, no textures, GLSL ES 1.00 safe.
+// Pass 4c — dual-Kawase style downsample: 4 corners + centre, the chain's
+// workhorse. Each mip level feeds the next so glow spreads PHYSICALLY wide —
+// a single quarter-res gaussian reads as vaseline, a mip pyramid reads as light.
+const DOWN_FRAG = /* glsl */ `
+uniform sampler2D tDiffuse;
+uniform vec2 texelSize;
+varying vec2 vUv;
+void main() {
+    vec3 c = texture2D(tDiffuse, vUv).rgb * 4.0;
+    c += texture2D(tDiffuse, vUv + vec2(-1.0, -1.0) * texelSize).rgb;
+    c += texture2D(tDiffuse, vUv + vec2( 1.0, -1.0) * texelSize).rgb;
+    c += texture2D(tDiffuse, vUv + vec2(-1.0,  1.0) * texelSize).rgb;
+    c += texture2D(tDiffuse, vUv + vec2( 1.0,  1.0) * texelSize).rgb;
+    gl_FragColor = vec4(c / 8.0, 1.0);
+}
+`;
+
+// Pass 5 — composite: paint + FOUR bloom octaves summed (tight core from the
+// small level, wide natural halo from the big ones), IGN dither against 8-bit
+// banding (the smooth sky gradient posterizes without it), and a luminance-
+// masked canvas grain: most visible in mid-tones, gone in deep black and
+// blown white — how real tooth reads. Interleaved gradient noise (Jimenez)
+// is the cheap blue-noise stand-in; one line, no textures, GLSL ES 1.00 safe.
 const COMPOSITE_FRAG = /* glsl */ `
 uniform sampler2D tPaint;
-uniform sampler2D tBloom;
+uniform sampler2D tB1;
+uniform sampler2D tB2;
+uniform sampler2D tB3;
+uniform sampler2D tB4;
 uniform float uBloom;
 uniform float uGrain;
 varying vec2 vUv;
@@ -170,7 +192,12 @@ float grain(vec2 p) {
 }
 
 void main() {
-    vec3 c = texture2D(tPaint, vUv).rgb + texture2D(tBloom, vUv).rgb * uBloom;
+    vec3 bloom =
+          texture2D(tB1, vUv).rgb * 0.45
+        + texture2D(tB2, vUv).rgb * 0.70
+        + texture2D(tB3, vUv).rgb * 1.00
+        + texture2D(tB4, vUv).rgb * 1.30;
+    vec3 c = texture2D(tPaint, vUv).rgb + bloom * uBloom * 0.55;
 
     float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
     float midMask = 0.35 + 0.65 * (1.0 - abs(l * 2.0 - 1.0));
@@ -222,18 +249,22 @@ export class PainterlyBaker {
     private rtScene: THREE.WebGLRenderTarget | null = null;
     private rtGrade: THREE.WebGLRenderTarget | null = null;
     private rtPaint: THREE.WebGLRenderTarget | null = null;
-    private rtBloomA: THREE.WebGLRenderTarget | null = null;
-    private rtBloomB: THREE.WebGLRenderTarget | null = null;
+    // Four bloom octaves (¼, ⅛, 1/16, 1/32) — the mip pyramid that makes glow
+    // read as LIGHT, not vaseline. Each level blurs then feeds the next.
+    private rtB: (THREE.WebGLRenderTarget | null)[] = [null, null, null, null];
+    private rtBt: (THREE.WebGLRenderTarget | null)[] = [null, null, null, null];
     private rtFinal: THREE.WebGLRenderTarget | null = null;
     private matGrade: THREE.ShaderMaterial;
     private matPaint: THREE.ShaderMaterial;
     private matBright: THREE.ShaderMaterial;
     private matBlur: THREE.ShaderMaterial;
+    private matDown: THREE.ShaderMaterial;
     private matComp: THREE.ShaderMaterial;
     private quad: THREE.Mesh;
     private fsScene: THREE.Scene;
     private fsCam: THREE.OrthographicCamera;
     private w = 0; private h = 0;
+    private ss = 1;   // scene-render supersample factor actually in use
 
     constructor() {
         this.matGrade = fsMat(GRADE_FRAG, {
@@ -256,9 +287,16 @@ export class PainterlyBaker {
             tDiffuse: { value: null },
             uDir: { value: new THREE.Vector2() }
         });
+        this.matDown = fsMat(DOWN_FRAG, {
+            tDiffuse: { value: null },
+            texelSize: { value: new THREE.Vector2() }
+        });
         this.matComp = fsMat(COMPOSITE_FRAG, {
             tPaint: { value: null },
-            tBloom: { value: null },
+            tB1: { value: null },
+            tB2: { value: null },
+            tB3: { value: null },
+            tB4: { value: null },
             uBloom: { value: 0.65 },
             uGrain: { value: 0.02 }
         });
@@ -272,18 +310,21 @@ export class PainterlyBaker {
 
     private ensure(w: number, h: number) {
         if (this.w === w && this.h === h && this.rtScene && this.rtFinal) return;
-        for (const rt of [this.rtScene, this.rtGrade, this.rtPaint, this.rtBloomA, this.rtBloomB, this.rtFinal]) rt?.dispose();
-        // MSAA on the scene target so the bake starts from clean edges —
-        // the paint pass flattens detail, but aliased stairsteps read as noise
-        // sectors and smear.
-        this.rtScene = new THREE.WebGLRenderTarget(w, h, { samples: 4 });
+        for (const rt of [this.rtScene, this.rtGrade, this.rtPaint, this.rtFinal, ...this.rtB, ...this.rtBt]) rt?.dispose();
+        // Supersampled scene render (1.5x where the pixel budget allows):
+        // MSAA alone leaves stairsteps that the paint pass reads as noise
+        // sectors; rendering big and letting the grade pass bilinear-downsample
+        // is real SSAA-quality edges, once per scene.
+        this.ss = Math.min(1.5, Math.sqrt(4.6e6 / Math.max(1, w * h)));
+        const sw = Math.max(1, Math.round(w * this.ss)), sh = Math.max(1, Math.round(h * this.ss));
+        this.rtScene = new THREE.WebGLRenderTarget(sw, sh, { samples: 4 });
         this.rtGrade = new THREE.WebGLRenderTarget(w, h);
         this.rtPaint = new THREE.WebGLRenderTarget(w, h);
-        // Bloom at quarter res: glow is low-frequency by nature, and the
-        // downsample is most of the blur.
-        const bw = Math.max(1, w >> 2), bh = Math.max(1, h >> 2);
-        this.rtBloomA = new THREE.WebGLRenderTarget(bw, bh);
-        this.rtBloomB = new THREE.WebGLRenderTarget(bw, bh);
+        for (let i = 0; i < 4; i++) {
+            const bw = Math.max(1, w >> (i + 2)), bh = Math.max(1, h >> (i + 2));
+            this.rtB[i] = new THREE.WebGLRenderTarget(bw, bh);
+            this.rtBt[i] = new THREE.WebGLRenderTarget(bw, bh);
+        }
         this.rtFinal = new THREE.WebGLRenderTarget(w, h);
         this.rtFinal.texture.colorSpace = THREE.SRGBColorSpace;
         this.w = w; this.h = h;
@@ -330,22 +371,30 @@ export class PainterlyBaker {
         this.matPaint.uniforms.texelSize.value.set(1 / W, 1 / H);
         pass(this.matPaint, this.rtPaint!);
 
-        // 4. BLOOM (bright-pass, then H+V gaussian twice)
+        // 4. BLOOM — 4-octave mip pyramid. Bright-pass into level 0; each
+        // level gets one H+V gaussian (the halo at that scale), then a
+        // dual-Kawase downsample feeds the next level. Summing the pyramid in
+        // the composite gives glow a tight core AND a wide physical halo.
         this.matBright.uniforms.tDiffuse.value = this.rtPaint!.texture;
-        pass(this.matBright, this.rtBloomA!);
-        const bx = 1 / this.rtBloomA!.width, by = 1 / this.rtBloomA!.height;
-        for (let i = 0; i < 2; i++) {
-            this.matBlur.uniforms.tDiffuse.value = this.rtBloomA!.texture;
-            this.matBlur.uniforms.uDir.value.set(bx, 0);
-            pass(this.matBlur, this.rtBloomB!);
-            this.matBlur.uniforms.tDiffuse.value = this.rtBloomB!.texture;
-            this.matBlur.uniforms.uDir.value.set(0, by);
-            pass(this.matBlur, this.rtBloomA!);
+        pass(this.matBright, this.rtB[0]!);
+        for (let i = 0; i < 4; i++) {
+            const bw = this.rtB[i]!.width, bh = this.rtB[i]!.height;
+            this.matBlur.uniforms.tDiffuse.value = this.rtB[i]!.texture;
+            this.matBlur.uniforms.uDir.value.set(1 / bw, 0);
+            pass(this.matBlur, this.rtBt[i]!);
+            this.matBlur.uniforms.tDiffuse.value = this.rtBt[i]!.texture;
+            this.matBlur.uniforms.uDir.value.set(0, 1 / bh);
+            pass(this.matBlur, this.rtB[i]!);
+            if (i < 3) {
+                this.matDown.uniforms.tDiffuse.value = this.rtB[i]!.texture;
+                this.matDown.uniforms.texelSize.value.set(1 / bw, 1 / bh);
+                pass(this.matDown, this.rtB[i + 1]!);
+            }
         }
 
         // 5. COMPOSITE
         this.matComp.uniforms.tPaint.value = this.rtPaint!.texture;
-        this.matComp.uniforms.tBloom.value = this.rtBloomA!.texture;
+        for (let i = 0; i < 4; i++) this.matComp.uniforms[`tB${i + 1}`].value = this.rtB[i]!.texture;
         this.matComp.uniforms.uBloom.value = fx.bloom ?? 0.65;
         pass(this.matComp, this.rtFinal!);
 
@@ -358,8 +407,8 @@ export class PainterlyBaker {
     }
 
     dispose() {
-        for (const rt of [this.rtScene, this.rtGrade, this.rtPaint, this.rtBloomA, this.rtBloomB, this.rtFinal]) rt?.dispose();
-        for (const m of [this.matGrade, this.matPaint, this.matBright, this.matBlur, this.matComp]) m.dispose();
+        for (const rt of [this.rtScene, this.rtGrade, this.rtPaint, ...this.rtB, ...this.rtBt, this.rtFinal]) rt?.dispose();
+        for (const m of [this.matGrade, this.matPaint, this.matBright, this.matBlur, this.matDown, this.matComp]) m.dispose();
         this.quad.geometry.dispose();
     }
 }

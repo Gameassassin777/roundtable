@@ -610,6 +610,11 @@ export function resolveScene(tags: SceneTags | undefined | null): ScenePalette {
             base = { ...base,
                      ambient: mix(base.ambient, em, 0.35),
                      fog: mix(base.fog, em, 0.18),
+                     // The floor too: a glowing room bounces its hue onto the
+                     // ground (the memory-library fix — the chord reached the
+                     // air but never the carpet, so a violet hall kept a
+                     // green-grey floor).
+                     ground: mix(base.ground, em, 0.28),
                      hemiSky: mix(base.hemiSky, em, 0.30) };
         }
     }

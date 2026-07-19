@@ -35,40 +35,65 @@ import { PainterlyBaker, createBackdrop } from '$lib/engine/painterly';
     const baker = new PainterlyBaker();
     let backdrop: THREE.Mesh | null = null;
     let rebakeT: ReturnType<typeof setTimeout> | null = null;
+    let baking = false;      // a bake is in flight — coalesce, don't stack
+    let bakeWanted = false;
 
     const isLive = (ud: any) => ud.isFogBank || ud.isGroundMist || ud.isMote || ud.isPrecip || ud.isFlock || ud.isButterflies || ud.isLeaves;
 
     function bakeBackdrop() {
         if (!renderer || !scene || !camera || !backdrop) return;
-        const { w, h } = viewport();
-        if (w <= 0 || h <= 0) return;
-        // The bake is once per scene — it can afford dpr 2 (the live renderer
-        // stays at 1.5). The baker's own pixel cap steps down from there.
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        if (baking) { bakeWanted = true; return; }   // coalesce overlapping requests
+        baking = true;
+        void (async () => {
+            try {
+                const { w, h } = viewport();
+                if (w <= 0 || h <= 0) return;
+                // The bake is once per scene — it can afford dpr 2 (the live renderer
+                // stays at 1.5). The baker's own pixel cap steps down from there.
+                const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
-        // Show the static world, hide the live layer + backdrop for the bake.
-        for (const c of scene.children) {
-            const ud = c.userData;
-            if (ud.isBackdrop) { c.visible = false; continue; }
-            if (ud.procedural) c.visible = !isLive(ud);
-        }
-        // Bake slightly wide so the Ken Burns drift never reveals an edge.
-        const fov0 = camera.fov;
-        camera.fov = fov0 * 1.06;
-        camera.updateProjectionMatrix();
-        const tex = baker.bake(renderer, scene, camera, Math.round(w * dpr), Math.round(h * dpr),
-            pal ? { saturation: pal.gradeSat, contrast: pal.gradeCon, lift: pal.gradeLift, bloom: pal.bloom } : undefined);
-        camera.fov = fov0;
-        camera.updateProjectionMatrix();
+                // Show the static world, hide the live layer + backdrop for the bake.
+                for (const c of scene.children) {
+                    const ud = c.userData;
+                    if (ud.isBackdrop) { c.visible = false; continue; }
+                    if (ud.procedural) c.visible = !isLive(ud);
+                }
+                // Compile OFF the critical path: the pinned light rig means
+                // this pays once per app lifetime, and the async form keeps
+                // the page responsive even through that first compile.
+                await renderer.compileAsync(scene, camera);
+                // Bake slightly wide so the Ken Burns drift never reveals an edge.
+                const fov0 = camera.fov;
+                camera.fov = fov0 * 1.06;
+                camera.updateProjectionMatrix();
+                // The bake needs fresh shadow maps; afterwards they're frozen
+                // (below) because the live layer is unlit and can't receive them.
+                renderer.shadowMap.autoUpdate = true;
+                renderer.shadowMap.needsUpdate = true;
+                const tex = baker.bake(renderer, scene, camera, Math.round(w * dpr), Math.round(h * dpr),
+                    pal ? { saturation: pal.gradeSat, contrast: pal.gradeCon, lift: pal.gradeLift, bloom: pal.bloom } : undefined);
+                camera.fov = fov0;
+                camera.updateProjectionMatrix();
 
-        // Swap: static world OFF, painting + live layer ON.
-        for (const c of scene.children) {
-            const ud = c.userData;
-            if (ud.isBackdrop) { c.visible = true; continue; }
-            if (ud.procedural) c.visible = isLive(ud);
-        }
-        (backdrop.material as THREE.ShaderMaterial).uniforms.tPaint.value = tex;
-        backdrop.visible = true;
+                // Swap: static world OFF, painting + live layer ON.
+                for (const c of scene.children) {
+                    const ud = c.userData;
+                    if (ud.isBackdrop) { c.visible = true; continue; }
+                    if (ud.procedural) c.visible = isLive(ud);
+                }
+                (backdrop.material as THREE.ShaderMaterial).uniforms.tPaint.value = tex;
+                backdrop.visible = true;
+                // FREEZE shadow rendering. The live layer is sprites and
+                // unlit cards — nothing left can receive a shadow — so every
+                // per-frame 2048² key-light shadow pass is pure waste (and in
+                // software GL it was an 18-second first frame).
+                renderer.shadowMap.autoUpdate = false;
+                (window as any).__bakeCount = ((window as any).__bakeCount || 0) + 1;
+            } finally {
+                baking = false;
+                if (bakeWanted) { bakeWanted = false; scheduleBake(); }
+            }
+        })();
     }
 
     /** Debounced — resize storms and scene changes both land here. */
@@ -161,14 +186,14 @@ import { PainterlyBaker, createBackdrop } from '$lib/engine/painterly';
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
             renderer.toneMappingExposure = 1.0;
             renderer.shadowMap.enabled = true;
-            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.shadowMap.type = THREE.PCFShadowMap;   // PCFSoft is deprecated in r185
 
             key = new THREE.DirectionalLight(0xffffff, 1.5);
             key.position.set(6, 14, 7);
             key.castShadow = true;
             // Tight frustum around the visible clearing — a loose one wastes the
             // whole shadow map on empty terrain and gives soft mush.
-            key.shadow.mapSize.set(1024, 1024);
+            key.shadow.mapSize.set(2048, 2048);
             key.shadow.camera.near = 0.5;
             key.shadow.camera.far = 120;
             key.shadow.camera.left = -46; key.shadow.camera.right = 46;
