@@ -505,17 +505,18 @@ function buildSkyHem(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, t
  * supply the drift.
  */
 function buildCumulus(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, avoidAz: number | null = null) {
-    // Blinx clouds are near-WHITE bodies with soft self-shade — never grey
-    // blobs (the first pass read as floating rocks). Bright tint, an emissive
-    // lift so they stay luminous in dim scenes, kept small, high and far so
-    // they read as a cloud LAYER, not as debris. Puffs steer clear of the sky
-    // giant's azimuth: a hard alpha-tested card clipping a wedge through the
-    // moon was its own "weird polygon" complaint.
-    const tint = mix(pal.cloudColor, 0xffffff, 0.5);
+    // Cumulus grammar, learned from the lumpy-blob failures: a cloud is a
+    // STRUCTURE — a flat condensation base, a cauliflower crown, a brilliant
+    // lit top and a sky-shaded underbelly. The value ladder is baked per
+    // vertex because these hang beyond the fog kill and must carry their OWN
+    // light. Smooth geometry, never alpha-holed quads (the leaf-texture
+    // lumps) and never featureless grey blobs either.
+    const shade = mix(mix(pal.cloudColor, pal.sky, 0.50), 0x000000, 0.30);
+    const light = mix(pal.cloudColor, 0xffffff, 0.72);
     const mat = new THREE.MeshStandardMaterial({
-        color: tint, map: leafTexture(), alphaTest: 0.5,
-        side: THREE.DoubleSide, roughness: 1.0, fog: false,
-        emissive: mix(pal.cloudColor, 0xffffff, 0.6), emissiveIntensity: 0.30
+        vertexColors: true, roughness: 1.0, fog: false,
+        // A whisper of emissive so night clouds stay luminous, not soot.
+        emissive: mix(pal.cloudColor, 0xffffff, 0.55), emissiveIntensity: 0.22
     });
     for (let i = 0; i < 11; i++) {
         const low = i % 2 === 0;
@@ -526,13 +527,42 @@ function buildCumulus(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, 
         }
         const r = 68 + rnd() * 48;
         const y = low ? 15 + rnd() * 7 : 26 + rnd() * 12;
-        const g = fluffCluster(9, 2.0 + rnd() * 1.2, new THREE.Vector3(0, 0, 0), 0.40, rnd);
+        const g = makeCloudGeo(rnd);
+        bakeGradient(g, shade, light, rnd);
         const puff = new THREE.Mesh(g, mat);
         puff.position.set(Math.cos(a) * r, y, Math.sin(a) * r);
-        puff.scale.set(1.7 + rnd() * 1.2, 1, 1.1 + rnd() * 0.8);
+        puff.scale.set(2.1 + rnd() * 1.4, 1.15 + rnd() * 0.5, 1.3 + rnd() * 0.9);
         puff.rotation.y = rnd() * Math.PI;
         scene.add(mark(puff));
     }
+}
+
+/** The cumulus body: a flat-bottomed base row of wide lobes, a rounder
+ *  cauliflower crown stacked behind and above, then the waterline clamp —
+ *  everything below the condensation level becomes one flat base. */
+function makeCloudGeo(rnd: () => number): THREE.BufferGeometry {
+    const lobes: THREE.BufferGeometry[] = [];
+    const nB = 2 + Math.floor(rnd() * 2);
+    for (let i = 0; i < nB; i++) {
+        const r = 1.6 + rnd() * 1.0;
+        const s = new THREE.IcosahedronGeometry(r, 1);
+        s.scale(1.15 + rnd() * 0.3, 0.55 + rnd() * 0.15, 0.9 + rnd() * 0.2);
+        s.translate((i - (nB - 1) / 2) * (1.9 + rnd() * 0.6), 0, (rnd() - 0.5) * 0.8);
+        lobes.push(s);
+    }
+    const nT = 1 + Math.floor(rnd() * 2);
+    for (let i = 0; i < nT; i++) {
+        const r = 1.0 + rnd() * 0.7;
+        const s = new THREE.IcosahedronGeometry(r, 1);
+        s.scale(1, 0.85 + rnd() * 0.25, 1);
+        s.translate((rnd() - 0.5) * 1.6, 1.1 + rnd() * 0.9 + r * 0.3, (rnd() - 0.5) * 0.6 - 0.2);
+        lobes.push(s);
+    }
+    const g = mergeGeometries(lobes)!;
+    const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) if (pos.getY(i) < -0.5) pos.setY(i, -0.5 - rnd() * 0.06);
+    g.computeVertexNormals();
+    return g;
 }
 
 // ---------- crystals: trait prop for glowing/crystalline scenes ----------
@@ -1265,7 +1295,9 @@ function breadcrumbTrail(scene: THREE.Scene, pal: ScenePalette, rnd: () => numbe
     });
     const tex = softSprite();
     for (let i = 0; i < 7; i++) {
-        const z = -4.5 - i * 6.2 - rnd() * 2;
+        // Chain starts at the near field's edge: the first crumb's pool must
+        // land INSIDE the bottom third, or dark scenes own the foreground.
+        const z = -3.0 - i * 6.4 - rnd() * 2;
         const x = wander(z) + (rnd() < 0.5 ? -1 : 1) * (1.7 + rnd() * 0.9);
         const orb = new THREE.Mesh(new THREE.SphereGeometry(0.10, 8, 8), orbMat);
         orb.position.set(x, 0.5 + rnd() * 0.3, z);
@@ -1490,6 +1522,27 @@ function makeCrownGeo(rnd: () => number): THREE.BufferGeometry {
     return fluffCluster(11, 1.5, new THREE.Vector3(0, 0, 0), 0.8, rnd);
 }
 
+/** Bush with STRUCTURE: a wide low skirt hugging the ground, then 2-3
+ *  distinct lobes with sky gaps between them, one smaller top tuft. A single
+ *  random fluff ball reads as a blob; a bush is a silhouette of PARTS. */
+function makeBushGeo(rnd: () => number): THREE.BufferGeometry {
+    const parts: THREE.BufferGeometry[] = [];
+    // The skirt: flat, wide, ground-hugging — the anti-float base.
+    parts.push(fluffCluster(5, 1.15, new THREE.Vector3(0, 0.30, 0), 0.42, rnd));
+    // The lobes: separated centres so gaps of air read between them.
+    const nLobe = 2 + Math.floor(rnd() * 2);
+    const startA = rnd() * Math.PI * 2;
+    for (let i = 0; i < nLobe; i++) {
+        const a = startA + (i / nLobe) * Math.PI * 2 + (rnd() - 0.5) * 0.5;
+        const rr = 0.42 + rnd() * 0.25;
+        parts.push(fluffCluster(4, 0.58 + rnd() * 0.18,
+            new THREE.Vector3(Math.cos(a) * rr, 0.72 + rnd() * 0.25, Math.sin(a) * rr), 0.78, rnd));
+    }
+    // The crown tuft: smaller, off-centre — bushes lean, they don't sphere.
+    parts.push(fluffCluster(3, 0.46, new THREE.Vector3((rnd() - 0.5) * 0.5, 1.15 + rnd() * 0.2, (rnd() - 0.5) * 0.5), 0.85, rnd));
+    return mergeGeometries(parts)!;
+}
+
 /** Conifer: three stacked shrinking fluff tiers -- a soft fir, no cone edges. */
 function makeConiferGeo(rnd: () => number): THREE.BufferGeometry {
     const tiers: THREE.BufferGeometry[] = [];
@@ -1514,11 +1567,49 @@ function makeTrunkGeo(h: number, r: number, rnd: () => number): THREE.BufferGeom
     return g;
 }
 
-/** Rock: heavily jittered icosahedron, flattened, sits IN the ground. */
-function makeRockGeo(rnd: () => number): THREE.BufferGeometry {
-    const g = new THREE.IcosahedronGeometry(1, 2);
-    jitterGeometry(g, 0.13, rnd);
-    g.scale(1 + rnd() * 0.5, 0.62, 1 + rnd() * 0.5);
+/**
+ * Rock in three FAMILIES, each with a silhouette you can name:
+ *  - boulder: bold-faceted lump (subdiv 1, strong jitter), squat, flat base.
+ *  - outcrop: 2-3 stacked slabs rotated off each other — strata, not a ball.
+ *  - shard:   one tall angular blade, leaning — the punctuation mark.
+ * Every family gets a flat resting plane clamped in: a rock SITS on the
+ * ground, it never balances on a point. The old subdiv-2 ball at jitter 0.13
+ * is why every rock read as a blob.
+ */
+function makeRockGeo(rnd: () => number, family?: 'boulder' | 'outcrop' | 'shard'): THREE.BufferGeometry {
+    const fam = family ?? (['boulder', 'outcrop', 'shard'] as const)[Math.floor(rnd() * 3)];
+    let g: THREE.BufferGeometry;
+    if (fam === 'outcrop') {
+        const slabs: THREE.BufferGeometry[] = [];
+        const n = 2 + Math.floor(rnd() * 2);
+        let y = 0;
+        for (let i = 0; i < n; i++) {
+            const w = 1.9 - i * (0.25 + rnd() * 0.2);
+            const h = 0.34 + rnd() * 0.22;
+            const s = new THREE.BoxGeometry(w, h, w * (0.7 + rnd() * 0.3), 2, 1, 2);
+            jitterGeometry(s, 0.07, rnd);
+            s.rotateY((rnd() - 0.5) * 0.5);
+            s.translate((rnd() - 0.5) * 0.24, y + h / 2, (rnd() - 0.5) * 0.24);
+            y += h * (0.72 + rnd() * 0.22);
+            slabs.push(s);
+        }
+        g = mergeGeometries(slabs)!;
+        g.scale(1, 0.9 + rnd() * 0.35, 1);
+        return g;
+    }
+    g = new THREE.IcosahedronGeometry(1, 1);
+    jitterGeometry(g, 0.34, rnd);
+    if (fam === 'shard') {
+        g.scale(0.55 + rnd() * 0.2, 1.5 + rnd() * 0.8, 0.55 + rnd() * 0.2);
+        g.rotateZ((rnd() - 0.5) * 0.35);
+    } else {
+        g.scale(1 + rnd() * 0.4, 0.62 + rnd() * 0.16, 1 + rnd() * 0.4);
+    }
+    // Flat resting plane: the bottom of the rock is a sawn-off contact, and
+    // the scatter sinks that plane a few cm INTO the dirt.
+    const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) if (pos.getY(i) < -0.26) pos.setY(i, -0.26);
+    g.computeVertexNormals();
     return g;
 }
 
@@ -2028,7 +2119,7 @@ function composeMasses(
     const rockFam = fam === 'hoodoos' || fam === 'plates';
     if (!traits.barren && !rockFam && dens > 0.2 && vis.order !== 'artificial') {
         const growth = clusterSpots(Math.round(40 + dens * 90), 3, 34, rnd);
-        const bushGeo = fluffCluster(7, 0.8, new THREE.Vector3(0, 0.7, 0), 1.0, rnd);
+        const bushGeo = makeBushGeo(rnd);   // skirt + lobes + tuft: a silhouette of parts, not a ball
         const bushes = scatterAt(bushGeo, leafMatFor(pal.foliage), growth, (m, p) => {
             m.position.set(p.x, 0, p.z); m.scale.setScalar(p.s * 0.9); m.rotation.y = p.r;
         });
@@ -2070,7 +2161,7 @@ function buildFraming(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, 
     if (!traits.barren) {
         // Lush places frame with the bush beside you: soft, dark within the
         // palette, organic silhouette — never a black crystal shard.
-        const bushGeo = fluffCluster(9, 1.1, new THREE.Vector3(0, 0.7, 0), 0.75, rnd);
+        const bushGeo = makeBushGeo(rnd);
         const bushes = scatterAt(bushGeo, leafMatFor(mix(pal.foliage, 0x000000, 0.45)), framers, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.scale.set(p.s * 1.3, p.s, p.s * 1.3);
@@ -2221,9 +2312,9 @@ function buildNearField(scene: THREE.Scene, pal: ScenePalette, rnd: () => number
     const ok = (x: number, z: number) => !roadMask || roadMask(x, z) < 0.3;
     // Pebbles must sit IN the ground, not pop off it: their sun-facing facets
     // catch light the flat ground plane refuses, so they take a darker albedo.
-    const pebbleMat = new THREE.MeshStandardMaterial({ color: mix(mix(pal.structure, pal.ground, 0.55), 0x000000, 0.35), roughness: 0.95, flatShading: true });
+    const pebbleMat = new THREE.MeshStandardMaterial({ color: mix(mix(pal.structure, pal.ground, 0.55), 0x000000, 0.22), roughness: 0.95, flatShading: true });
     scene.add(scatterAt(new THREE.DodecahedronGeometry(0.16, 0), pebbleMat,
-        spots(26, 2, 9, rnd).filter(p => ok(p.x, p.z)), (m, p) => {
+        spots(36, 2, 11, rnd).filter(p => ok(p.x, p.z)), (m, p) => {
             m.position.set(p.x, 0.04, p.z);
             m.scale.setScalar(0.4 + p.j * 0.8);
             m.rotation.set(p.r, p.j * Math.PI, p.r * 0.7);
@@ -2238,7 +2329,7 @@ function buildNearField(scene: THREE.Scene, pal: ScenePalette, rnd: () => number
             [fluffCluster(3, 0.36, new THREE.Vector3(0, 0.16, 0), 0.5, rnd), leafMatFor(mix(pal.foliage, pal.key, 0.20))],      // the spiky trio
             [fluffCluster(7, 0.22, new THREE.Vector3(0, 0.12, 0), 0.9, rnd), leafMatFor(mix(pal.foliage, 0x000000, 0.22))]      // the low dark mat
         ];
-        const at = spots(34, 2, 9, rnd).filter(p => ok(p.x, p.z));
+        const at = spots(48, 2, 10, rnd).filter(p => ok(p.x, p.z));
         kits.forEach(([geo, mat], k) => {
             const sub = at.filter((_, i) => i % 3 === k);
             if (!sub.length) return;
@@ -2254,6 +2345,39 @@ function buildNearField(scene: THREE.Scene, pal: ScenePalette, rnd: () => number
             im.customDepthMaterial = leafDepth();
             scene.add(im);
         });
+
+        // The stage wings: big, dark-in-palette growth at the two bottom
+        // corners of the frame, near enough to bake soft. Blinx never leaves
+        // the viewer's own patch of stage bare — the foreground frame is what
+        // makes the middle read as a PLACE you stand in, not a diorama you
+        // hover over. Kept out of the centre so the walking line stays clear.
+        const wingGeo = fluffCluster(6, 0.9, new THREE.Vector3(0, 0.75, 0), 1.05, rnd);
+        const wingMat = leafMatFor(mix(mix(pal.foliage, pal.fog, 0.22), 0x000000, 0.24));
+        const wings: Spot[] = [];
+        for (let i = 0; i < 4; i++) {
+            const side = i % 2 === 0 ? -1 : 1;
+            wings.push({
+                x: side * (3.4 + rnd() * 3.2), z: 4.0 + rnd() * 2.2, s: 1,
+                r: rnd() * Math.PI, j: rnd()
+            });
+        }
+        const wm = scatterAt(wingGeo, wingMat, wings, (m, p) => {
+            m.position.set(p.x, 0, p.z);
+            m.scale.set(p.s * (2.2 + p.j * 1.6), p.s * (1.9 + p.j * 1.3), p.s * (1.6 + p.j));
+            m.rotation.set(0, p.r, (p.j - 0.5) * 0.22);
+        });
+        wm.customDepthMaterial = leafDepth();
+        scene.add(wm);
+    } else {
+        // Barren wings: one near boulder at a frame corner — same job, rock's
+        // own silhouette (boulder family: squat, flat-based, bold facets).
+        const wingRock = bakeFacetValues(makeRockGeo(rnd, 'boulder'), pal, { rnd });
+        const at: Spot[] = [{ x: (rnd() < 0.5 ? -1 : 1) * (3.6 + rnd() * 1.8), z: 4.4 + rnd() * 1.6, s: 1, r: rnd() * Math.PI, j: rnd() }];
+        scene.add(scatterAt(wingRock, paintMat(), at, (m, p) => {
+            m.position.set(p.x, -0.06, p.z);
+            m.scale.setScalar(2.0 + p.j * 1.2);
+            m.rotation.y = p.r;
+        }));
     }
 }
 
@@ -2666,6 +2790,53 @@ function planter(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => n
         m.scale.setScalar(p.s);
     }));
     contactBlobs(scene, at, pal, () => 1.0, 0.28);
+}
+
+/** RECIPE wildflowerDrift: flowers that belong to NO container — loose drifts
+ *  of stems and cups straight out of the ground, the way wild places actually
+ *  grow. The planter-box-in-a-wild-forest was the "same slop everywhere" tell:
+ *  tended boxes are for tended streets. Shares the planter's colorway ladder
+ *  so a world's gardens and its wilds are clearly the same flora. */
+function wildflowerDrift(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => number) {
+    const ways: [number, number, number][] = [
+        [mix(0xff5a1e, pal.key, 0.25), 0xffd94a, 0xff7a2a],
+        [mix(pal.key, 0xffffff, 0.30), mix(pal.emissiveOn ? pal.emissive : 0xffc36a, 0xffffff, 0.25), mix(pal.key, 0xffffff, 0.15)],
+        [mix(0xff4a7a, pal.key, 0.30), 0xfff0f4, 0xff4a7a],
+        [mix(pal.foliage, 0xffffff, 0.55), mix(pal.key, 0xffffff, 0.35), mix(pal.foliage, 0xffffff, 0.4)]
+    ];
+    const way = ways[Math.floor(rnd() * ways.length)];
+    const stemGeo = vcolor(new THREE.CylinderGeometry(0.013, 0.019, 0.36, 5).translate(0, 0.18, 0), mix(pal.foliage, 0x000000, 0.32));
+    const cupGeo = mergeGeometries([
+        vcolor(new THREE.ConeGeometry(0.07, 0.14, 6).translate(0, 0.40, 0), way[0]),
+        vcolor(new THREE.SphereGeometry(0.042, 6, 5).translate(0, 0.47, 0), way[1])
+    ])!;
+    const stemMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
+    const cupMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, emissive: way[2], emissiveIntensity: EMIT.accent });
+    const stems: Spot[] = [];
+    for (const p of at) {
+        // One drift = a loose ellipse of 9-15 stems, denser toward the middle,
+        // a few strays outside the line — drifts wander, they don't grid.
+        const nF = 9 + Math.floor(p.j * 7);
+        const k = 0.85 + p.j * 0.45;
+        for (let i = 0; i < nF; i++) {
+            const a = rnd() * Math.PI * 2;
+            const rr = (i < nF * 0.7 ? rnd() * 0.75 : 0.8 + rnd() * 0.5) * k;
+            stems.push({
+                x: p.x + Math.cos(a) * rr * 1.25, z: p.z + Math.sin(a) * rr * 0.8,
+                s: 0.7 + rnd() * 0.6, r: rnd() * Math.PI, j: rnd()
+            });
+        }
+    }
+    scene.add(scatterAt(stemGeo, stemMat, stems, (m, p) => {
+        m.position.set(p.x, 0, p.z);
+        m.rotation.set((p.j - 0.5) * 0.6, p.r, (p.j - 0.5) * 0.7);
+        m.scale.setScalar(p.s);
+    }));
+    scene.add(scatterAt(cupGeo, cupMat, stems, (m, p) => {
+        m.position.set(p.x + (p.j - 0.5) * 0.12, 0, p.z + (p.j - 0.5) * 0.14);
+        m.rotation.set((p.j - 0.5) * 0.6, p.r, (p.j - 0.5) * 0.7);
+        m.scale.setScalar(p.s);
+    }));
 }
 
 /** A wall that carries a cluster of window cards. */
@@ -3231,11 +3402,14 @@ function buildHabitation(
     if (visual?.silhouette === 'none') return;
     const wander = (t: number) => noise2D(t * 0.035, 7.3) * 3.2;   // the path's own curve
 
-    // --- streetLamps at path corners, in the gaps between the breadcrumb
-    //     pools; alternate verges so the light chain zigs down the walk line.
-    if (roadMask) {
+    // --- streetLamps at path corners, SEEDED: most streets are lit, some
+    //     aren't — a lamp in every single frame was the reuse complaint.
+    //     The count varies too, so the rhythm changes street to street.
+    const lampChance = biome === 'urban' ? 0.75 : biome === 'crossroads' ? 0.5 : 0.3;
+    if (roadMask && rnd() < lampChance) {
         const groups: Spot[][] = [[], [], []];
-        for (let i = 0; i < 6; i++) {
+        const nLamps = 3 + Math.floor(rnd() * 4);
+        for (let i = 0; i < nLamps; i++) {
             const z = -7.5 - i * 6.2 - rnd() * 1.5;
             const side = i % 2 === 0 ? -1 : 1;
             groups[i % 3].push({
@@ -3265,15 +3439,25 @@ function buildHabitation(
                 hs > 0 ? -Math.PI / 2 + (rnd() - 0.5) * 0.3 : Math.PI / 2 + (rnd() - 0.5) * 0.3,
                 pal, rnd, Math.floor(rnd() * 3));
         }
-        // Planters flanking the walking line; benches at pool edges; sign
-        // cards near the shopfronts.
-        const pl: Spot[] = [];
-        for (let i = 0; i < 4; i++) {
-            const pz = -6.5 - i * 4.6 - rnd();
-            const side = i % 2 === 0 ? 1 : -1;
-            pl.push({ x: wander(pz) + side * (2.7 + rnd() * 0.5), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
+        // Planters flanking the walking line — SOME streets. Others grow
+        // wild, or stay stone. Benches at pool edges; signs near shopfronts.
+        const gardenKind = rnd();
+        if (gardenKind < 0.6) {
+            const pl: Spot[] = [];
+            for (let i = 0; i < 4; i++) {
+                const pz = -6.5 - i * 4.6 - rnd();
+                const side = i % 2 === 0 ? 1 : -1;
+                pl.push({ x: wander(pz) + side * (2.7 + rnd() * 0.5), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
+            }
+            planter(scene, pl, pal, rnd, Math.floor(rnd() * 3));
+        } else if (gardenKind < 0.8) {
+            const pl: Spot[] = [];
+            for (let i = 0; i < 3; i++) {
+                const pz = -7 - i * 6.2 - rnd();
+                pl.push({ x: wander(pz) + (rnd() < 0.5 ? -1 : 1) * (3.1 + rnd() * 1.2), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
+            }
+            wildflowerDrift(scene, pl, pal, rnd);
         }
-        planter(scene, pl, pal, rnd, Math.floor(rnd() * 3));
         bench(scene, [-10.5, -23].map(bz => ({
             x: wander(bz) + (rnd() < 0.5 ? -1 : 1) * 3.1, z: bz, s: 1, r: rnd() * Math.PI * 2, j: rnd()
         })), pal, rnd, Math.floor(rnd() * 3));
@@ -3294,24 +3478,42 @@ function buildHabitation(
         if (rnd() < 0.6) {
             archHouse(scene, wander(-19) + 5.4, -19, -Math.PI / 2 + (rnd() - 0.5) * 0.3, pal, rnd, Math.floor(rnd() * 2));
         }
-        planter(scene, [
+        const gardenSpots: Spot[] = [
             { x: wander(-10) - 4.2, z: -10, s: 1, r: rnd() * Math.PI, j: rnd() },
             { x: wander(-13.5) - 4.0, z: -13.5, s: 1, r: rnd() * Math.PI, j: rnd() },
             { x: wander(-8) + 3.2, z: -8, s: 1, r: rnd() * Math.PI, j: rnd() }
-        ], pal, rnd, 0);
+        ];
+        const gardenKind = rnd();
+        if (gardenKind < 0.45) planter(scene, gardenSpots, pal, rnd, 0);
+        else if (gardenKind < 0.85) wildflowerDrift(scene, gardenSpots, pal, rnd);
+        // else: this crossing grows nothing — emptiness is variety too.
         bench(scene, [{ x: wander(-16) + 2.9, z: -16, s: 1, r: -0.4 + rnd() * 0.8, j: rnd() }], pal, rnd, Math.floor(rnd() * 3));
     }
 
     if (biome === 'forest') {
-        // Tended things at the path edge — a garden implies a gardener.
+        // Wild places grow WILD flowers — a tended box in the deep woods was
+        // the monotony tell. Drifts usually, a forgotten pot rarely, and some
+        // forests get no garden at all. Lamps and benches are occasional.
         const pl: Spot[] = [];
         for (let i = 0; i < 3; i++) {
             const pz = -7 - i * 5.2 - rnd();
             pl.push({ x: wander(pz) + (i % 2 === 0 ? 1 : -1) * (2.7 + rnd() * 0.6), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
         }
-        planter(scene, pl, pal, rnd, 1 + Math.floor(rnd() * 2));   // pots and beds, not civic stone
-        streetLamp(scene, [{ x: wander(-14) - 2.8, z: -14, s: 1, r: 0.15 + rnd() * 0.2, j: rnd() }], pal, rnd, 0);
-        bench(scene, [{ x: wander(-9) + 3.0, z: -9, s: 1, r: rnd() * Math.PI, j: rnd() }], pal, rnd, 1);
+        const gKind = rnd();
+        if (gKind < 0.5) wildflowerDrift(scene, pl, pal, rnd);
+        else if (gKind < 0.75) planter(scene, pl, pal, rnd, 1);   // pots only, never civic stone
+        if (rnd() < 0.45) streetLamp(scene, [{ x: wander(-14) - 2.8, z: -14, s: 1, r: 0.15 + rnd() * 0.2, j: rnd() }], pal, rnd, 0);
+        if (rnd() < 0.7) bench(scene, [{ x: wander(-9) + 3.0, z: -9, s: 1, r: rnd() * Math.PI, j: rnd() }], pal, rnd, 1);
+    }
+
+    if (biome === 'plains' && rnd() < 0.75) {
+        // Open grassland: drifts of wildflowers wandering off the walking line.
+        const pl: Spot[] = [];
+        for (let i = 0; i < 4; i++) {
+            const pz = -6 - i * 5.5 - rnd() * 2;
+            pl.push({ x: wander(pz) + (rnd() < 0.5 ? -1 : 1) * (2.5 + rnd() * 2.5), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
+        }
+        wildflowerDrift(scene, pl, pal, rnd);
     }
 
     if (biome === 'ruin') {
@@ -4079,41 +4281,67 @@ function buildOverhead(scene: THREE.Scene, pal: ScenePalette, rnd: () => number,
     if (traits.enclosed || traits.space || traits.submerged) return;
 
     if (biome === 'urban' || biome === 'crossroads') {
-        // Lantern strings: catenary wires with warm bulbs, crossing the view.
-        const wireMat = new THREE.MeshBasicMaterial({ color: mix(pal.structure, 0x000000, 0.55), fog: false });
-        const bulbCol = pal.emissiveOn ? pal.emissive : 0xffc36a;
-        const bulbMat = new THREE.MeshStandardMaterial({
-            color: 0xffe9c0, emissive: bulbCol,
-            emissiveIntensity: EMIT.ember, roughness: 0.4, fog: false
-        });
-        const bulbSpots: Spot[] = [];
-        for (let s = 0; s < 3; s++) {
-            const z = -5 - s * 5.5 - rnd() * 2;
-            const y0 = 6.2 + rnd() * 1.6, sag = 1.0 + rnd() * 0.6;
-            const span = 26 + rnd() * 10;
-            const pts: THREE.Vector3[] = [];
-            for (let i = 0; i <= 16; i++) {
-                const u = i / 16;
-                pts.push(new THREE.Vector3((u - 0.5) * span, y0 - Math.sin(u * Math.PI) * sag, z));
-            }
-            const wire = new THREE.Mesh(
-                new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.016, 4),
-                wireMat
-            );
-            scene.add(mark(wire));
-            // Bulbs hang slightly BELOW the wire, every other span point.
-            bulbSpots.length = 0;
-            for (let i = 1; i < 16; i += 2) {
-                bulbSpots.push({ x: pts[i].x, z, s: 1, r: 0, j: rnd() });
-                // Every 4th bulb is a real light — the string washes the
-                // street below instead of just sparkling overhead.
-                if (i % 4 === 1) registerLight(pts[i].x, pts[i].y - 0.14, z, bulbCol, 3, 7, 1);
-            }
-            const bulbs = scatterAt(new THREE.SphereGeometry(0.085, 6, 5), bulbMat, bulbSpots, (m, p, i2) => {
-                m.position.set(p.x, pts[1 + i2 * 2].y - 0.14, p.z);
+        // Lantern strings: SEEDED — some streets go dark overhead. And every
+        // wire is short enough that BOTH of its anchor poles stand in or near
+        // the frame: a wire crossing empty sky attached to nothing was the
+        // "random lines" tell. Wires must go FROM somewhere TO somewhere.
+        if (rnd() < 0.55) {
+            const wireCol = mix(pal.structure, 0x000000, 0.55);
+            const wireMat = new THREE.MeshBasicMaterial({ color: wireCol, fog: false });
+            const bulbCol = pal.emissiveOn ? pal.emissive : 0xffc36a;
+            const bulbMat = new THREE.MeshStandardMaterial({
+                color: 0xffe9c0, emissive: bulbCol,
+                emissiveIntensity: EMIT.ember, roughness: 0.4, fog: false
             });
-            bulbs.castShadow = false;
-            scene.add(bulbs);
+            // One shared anchor-pole look: dark, slightly tapered, a cross-arm
+            // at the top so the wire visibly has something to hang from.
+            const poleGeo = new THREE.CylinderGeometry(0.045, 0.07, 1, 6);
+            poleGeo.translate(0, 0.5, 0);
+            const armGeo = new THREE.BoxGeometry(0.5, 0.05, 0.05);
+            const poleMat = new THREE.MeshStandardMaterial({ color: mix(wireCol, 0x000000, 0.25), roughness: 0.9, fog: false });
+            const bulbSpots: Spot[] = [];
+            const nStr = 2 + Math.floor(rnd() * 2);
+            for (let s = 0; s < nStr; s++) {
+                const z = -5 - s * 5.5 - rnd() * 2;
+                const y0 = 5.4 + rnd() * 1.3, sag = 0.9 + rnd() * 0.5;
+                const span = 14 + rnd() * 5;
+                const pts: THREE.Vector3[] = [];
+                for (let i = 0; i <= 16; i++) {
+                    const u = i / 16;
+                    pts.push(new THREE.Vector3((u - 0.5) * span, y0 - Math.sin(u * Math.PI) * sag, z));
+                }
+                const wire = new THREE.Mesh(
+                    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.016, 4),
+                    wireMat
+                );
+                scene.add(mark(wire));
+                // The anchors: a pole under each wire end, cross-arm meeting
+                // the wire — infrastructure the eye can audit.
+                for (const ex of [-1, 1]) {
+                    const px = ex * span / 2;
+                    const pole = new THREE.Mesh(poleGeo, poleMat);
+                    pole.scale.y = y0;
+                    pole.position.set(px, 0, z);
+                    scene.add(mark(pole));
+                    const arm = new THREE.Mesh(armGeo, poleMat);
+                    arm.position.set(px, y0 - 0.03, z);
+                    arm.rotation.y = (rnd() - 0.5) * 0.2;
+                    scene.add(mark(arm));
+                }
+                // Bulbs hang slightly BELOW the wire, every other span point.
+                bulbSpots.length = 0;
+                for (let i = 1; i < 16; i += 2) {
+                    bulbSpots.push({ x: pts[i].x, z, s: 1, r: 0, j: rnd() });
+                    // Every 4th bulb is a real light — the string washes the
+                    // street below instead of just sparkling overhead.
+                    if (i % 4 === 1) registerLight(pts[i].x, pts[i].y - 0.14, z, bulbCol, 3, 7, 1);
+                }
+                const bulbs = scatterAt(new THREE.SphereGeometry(0.085, 6, 5), bulbMat, bulbSpots, (m, p, i2) => {
+                    m.position.set(p.x, pts[1 + i2 * 2].y - 0.14, p.z);
+                });
+                bulbs.castShadow = false;
+                scene.add(bulbs);
+            }
         }
         return;
     }
