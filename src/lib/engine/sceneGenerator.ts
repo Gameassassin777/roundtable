@@ -178,6 +178,38 @@ function scatterAt(
     return mark(inst) as THREE.InstancedMesh;
 }
 
+// ---------- the placement field (one scene, one ground plan) ----------
+// Props used to be placed by independent spot lists, so a crate could spawn
+// inside the fountain and a barrel inside a bush — the "debris pile" tell.
+// One shared claim list per scene: every chunky prop claims its footprint
+// first, and a colliding claim is refused. Relationships stay the builders'
+// business; overlap becomes impossible.
+type Claim = { x: number; z: number; r: number };
+let _claims: Claim[] = [];
+
+/** Real overhead anchors (street-lamp heads), registered as props are placed.
+ *  buildOverhead strings wires ONLY between these — a wire from nowhere to
+ *  nowhere was the "senseless string lights" complaint. */
+let _anchors: { x: number; y: number; z: number }[] = [];
+
+/** Start a fresh ground plan (called once per generated scene). */
+function fieldReset() { _claims = []; _anchors = []; }
+
+/** Claim a footprint. True if free (and recorded); false if already taken. */
+function claim(x: number, z: number, r: number): boolean {
+    for (const c of _claims) {
+        const dx = c.x - x, dz = c.z - z, rr = c.r + r;
+        if (dx * dx + dz * dz < rr * rr) return false;
+    }
+    _claims.push({ x, z, r });
+    return true;
+}
+
+/** Claim every spot in a list, dropping the ones that collide. */
+function claimAll(at: Spot[], r: number): Spot[] {
+    return at.filter(p => claim(p.x, p.z, r));
+}
+
 // ---------- sky ----------
 
 /**
@@ -936,7 +968,7 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
     groundTex.needsUpdate = true;
 
     const LUSH = biome === 'forest' || biome === 'swamp' || biome === 'plains' || biome === 'crossroads';
-    const mat = new THREE.MeshStandardMaterial({
+    const mat = triPatch(new THREE.MeshStandardMaterial({
         // The canvas owns the paint; the material just carries it.
         color: 0xffffff,
         map: groundTex,
@@ -945,7 +977,9 @@ function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: n
         flatShading: biome === 'mountain' || biome === 'fire' || visual?.terrain === 'jagged',
         bumpMap: groundBump(LUSH ? 'litter' : 'dirt'),
         bumpScale: 0.015
-    });
+        // Octave 2: a 4x-frequency world-space grain over the painted canvas —
+        // the bottom third of the frame gets tooth under the viewer's nose.
+    }), biome === 'arctic' ? 'snow' : 'dirt', 1.3);
     const floor = new THREE.Mesh(geo, mat);
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;      // shadows are what actually GROUND objects
@@ -1040,6 +1074,223 @@ function mottleTexture(): THREE.CanvasTexture {
     _mottleTex.wrapS = _mottleTex.wrapT = THREE.RepeatWrapping;
     _mottleTex.needsUpdate = true;
     return _mottleTex;
+}
+
+// ---------- the surface library: procedural grain for every material ----------
+// Canvas-drawn, deterministic, WHITE-dominant: the palette tint keeps the
+// hue, the texture owns only VALUE. Pattern kinds for known surfaces (brick
+// courses, wood planks, shingle scallops) plus 'grain' — neutral tooth for
+// anything that would otherwise render as poured vinyl.
+type SurfaceKind = 'grain' | 'stone' | 'brick' | 'wood' | 'shingles' | 'fabric' | 'metal' | 'dirt' | 'snow';
+const _surfTex: Partial<Record<SurfaceKind, THREE.CanvasTexture>> = {};
+function surfaceTexture(kind: SurfaceKind): THREE.CanvasTexture {
+    const cached = _surfTex[kind];
+    if (cached) return cached;
+    const S = 256;
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const ctx = cv.getContext('2d')!;
+    const drnd = mulberry32(hashStr('surf|' + kind));
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, S, S);
+    const dark = (a: number) => `rgba(70,70,70,${a})`;
+    const lite = (a: number) => `rgba(255,255,255,${a})`;
+    const dab = (x: number, y: number, r: number, d: boolean, a: number) => {
+        const g = ctx.createRadialGradient(x, y, r * 0.1, x, y, r);
+        g.addColorStop(0, d ? dark(a) : lite(a));
+        g.addColorStop(1, d ? dark(0) : lite(0));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    };
+    const speckle = (n: number, rMin: number, rMax: number, aMin: number, aMax: number) => {
+        for (let i = 0; i < n; i++) {
+            ctx.fillStyle = drnd() < 0.6 ? dark(aMin + drnd() * (aMax - aMin)) : lite(aMin + drnd() * (aMax - aMin));
+            ctx.beginPath();
+            ctx.arc(drnd() * S, drnd() * S, rMin + drnd() * (rMax - rMin), 0, Math.PI * 2);
+            ctx.fill();
+        }
+    };
+    switch (kind) {
+        case 'grain': {
+            speckle(2400, 0.5, 1.6, 0.03, 0.10);
+            for (let i = 0; i < 36; i++) dab(drnd() * S, drnd() * S, 6 + drnd() * 20, drnd() < 0.5, 0.04 + drnd() * 0.05);
+            break;
+        }
+        case 'stone': {
+            // Irregular ashlar courses: offset joints, per-block value shift.
+            const rowH = 44;
+            for (let row = 0; row * rowH < S + rowH; row++) {
+                const y = row * rowH;
+                let x = row % 2 ? -(18 + drnd() * 24) : 0;
+                while (x < S) {
+                    const w = 44 + drnd() * 42;
+                    const v = 228 + Math.floor(drnd() * 26);
+                    ctx.fillStyle = `rgb(${v},${v},${v})`;
+                    ctx.fillRect(x, y, w, rowH);
+                    ctx.strokeStyle = dark(0.30); ctx.lineWidth = 3;
+                    ctx.strokeRect(x + 1, y + 1, w - 2, rowH - 2);
+                    x += w;
+                }
+            }
+            speckle(700, 0.5, 1.5, 0.04, 0.10);
+            break;
+        }
+        case 'brick': {
+            const bh = 26, bw = 62;
+            for (let row = 0; row * bh < S + bh; row++) {
+                const y = row * bh;
+                for (let x = row % 2 ? -bw / 2 : 0; x < S; x += bw) {
+                    const v = 224 + Math.floor(drnd() * 30);
+                    ctx.fillStyle = `rgb(${v},${v},${v})`;
+                    ctx.fillRect(x, y, bw, bh);
+                    ctx.strokeStyle = dark(0.26); ctx.lineWidth = 2.5;
+                    ctx.strokeRect(x + 1, y + 1, bw - 2, bh - 2);
+                }
+            }
+            speckle(500, 0.5, 1.3, 0.03, 0.08);
+            break;
+        }
+        case 'wood': {
+            const pw = 42;
+            for (let p = 0; p * pw < S; p++) {
+                const x = p * pw;
+                const v = 226 + Math.floor(drnd() * 26);
+                ctx.fillStyle = `rgb(${v},${v},${v})`;
+                ctx.fillRect(x, 0, pw, S);
+                ctx.strokeStyle = dark(0.30); ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.moveTo(x + 1, 0); ctx.lineTo(x + 1, S); ctx.stroke();
+                // Long wavy grain streaks — the plank's own handwriting.
+                for (let g2 = 0; g2 < 9; g2++) {
+                    let gx = x + 4 + drnd() * (pw - 8);
+                    ctx.strokeStyle = dark(0.05 + drnd() * 0.07);
+                    ctx.lineWidth = 1 + drnd() * 1.4;
+                    ctx.beginPath(); ctx.moveTo(gx, -8);
+                    for (let y = 0; y <= S; y += 32) { gx += (drnd() - 0.5) * 5; ctx.lineTo(gx, y); }
+                    ctx.stroke();
+                }
+                if (drnd() < 0.4) {
+                    const kx = x + pw * (0.3 + drnd() * 0.4), ky = drnd() * S;
+                    for (let rr = 7; rr > 1; rr -= 2) {
+                        ctx.strokeStyle = dark(0.10 + drnd() * 0.06); ctx.lineWidth = 1.4;
+                        ctx.beginPath(); ctx.arc(kx, ky, rr, 0, Math.PI * 2); ctx.stroke();
+                    }
+                }
+            }
+            break;
+        }
+        case 'shingles': {
+            // Overlapping scalloped courses, shadowed lower hems.
+            const sw = 34, sh = 26;
+            for (let row = 0; row * sh < S + sh; row++) {
+                const y = row * sh;
+                for (let x = row % 2 ? -sw / 2 : 0; x < S + sw; x += sw) {
+                    const v = 226 + Math.floor(drnd() * 26);
+                    ctx.fillStyle = `rgb(${v},${v},${v})`;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x + sw, y);
+                    ctx.lineTo(x + sw, y + sh - 6);
+                    ctx.quadraticCurveTo(x + sw / 2, y + sh + 7, x, y + sh - 6);
+                    ctx.closePath(); ctx.fill();
+                    ctx.strokeStyle = dark(0.22); ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y + sh - 6);
+                    ctx.quadraticCurveTo(x + sw / 2, y + sh + 7, x + sw, y + sh - 6);
+                    ctx.stroke();
+                }
+            }
+            speckle(400, 0.5, 1.2, 0.03, 0.07);
+            break;
+        }
+        case 'fabric': {
+            for (let y = 0; y < S; y += 3) { ctx.fillStyle = dark(0.045); ctx.fillRect(0, y, S, 1); }
+            for (let x = 0; x < S; x += 3) { ctx.fillStyle = dark(0.04); ctx.fillRect(x, 0, 1, S); }
+            for (let i = 0; i < 26; i++) {
+                ctx.fillStyle = dark(0.05 + drnd() * 0.05);
+                ctx.fillRect(drnd() * S, drnd() * S, 2 + drnd() * 22, 2);
+            }
+            speckle(300, 0.5, 1.0, 0.02, 0.05);
+            break;
+        }
+        case 'metal': {
+            for (let i = 0; i < 240; i++) {
+                ctx.fillStyle = drnd() < 0.5 ? dark(0.03 + drnd() * 0.05) : lite(0.03 + drnd() * 0.05);
+                ctx.fillRect(drnd() * S, 0, 1 + drnd() * 1.5, S);
+            }
+            for (let rx = 32; rx < S; rx += 64) for (let ry = 32; ry < S; ry += 64) {
+                ctx.fillStyle = dark(0.30); ctx.beginPath(); ctx.arc(rx + 1.5, ry + 1.5, 4, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = lite(0.55); ctx.beginPath(); ctx.arc(rx - 1, ry - 1, 3, 0, Math.PI * 2); ctx.fill();
+            }
+            for (let i = 0; i < 16; i++) dab(drnd() * S, drnd() * S, 20 + drnd() * 40, drnd() < 0.5, 0.04 + drnd() * 0.04);
+            break;
+        }
+        case 'dirt': {
+            speckle(1100, 0.5, 2.2, 0.05, 0.13);
+            for (let i = 0; i < 70; i++) {
+                ctx.fillStyle = lite(0.10 + drnd() * 0.10);
+                ctx.save(); ctx.translate(drnd() * S, drnd() * S); ctx.rotate(drnd() * Math.PI);
+                ctx.fillRect(-2 - drnd() * 2, -0.8, 4 + drnd() * 4, 1.6); ctx.restore();
+            }
+            for (let i = 0; i < 14; i++) dab(drnd() * S, drnd() * S, 8 + drnd() * 22, true, 0.05 + drnd() * 0.05);
+            break;
+        }
+        case 'snow': {
+            for (let i = 0; i < 18; i++) dab(drnd() * S, drnd() * S, 30 + drnd() * 55, drnd() < 0.4, 0.05 + drnd() * 0.05);
+            for (let i = 0; i < 420; i++) {
+                ctx.fillStyle = lite(0.35 + drnd() * 0.4);
+                ctx.fillRect(drnd() * S, drnd() * S, 1, 1);
+            }
+            for (let i = 0; i < 12; i++) dab(drnd() * S, drnd() * S, 12 + drnd() * 30, true, 0.04 + drnd() * 0.03);
+            break;
+        }
+    }
+    const t = new THREE.CanvasTexture(cv);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.needsUpdate = true;
+    _surfTex[kind] = t;
+    return t;
+}
+
+/**
+ * World-space triplanar grain: sample the surface library by POSITION, not
+ * UV. Merged recipe geometry and stretched towers have mixed or no UVs, so
+ * UV-mapped textures smear across them — this is THE tower/rock fix. Weighted
+ * by the world normal's dominant axis, instancing-aware, albedo only.
+ */
+function triPatch<T extends THREE.Material>(mat: T, kind: SurfaceKind, scale: number): T {
+    mat.onBeforeCompile = (sh) => {
+        sh.uniforms.triMap = { value: surfaceTexture(kind) };
+        sh.uniforms.triScale = { value: scale };
+        sh.vertexShader = sh.vertexShader
+            .replace('#include <common>', '#include <common>\nvarying vec3 vTriPos;\nvarying vec3 vTriNrm;')
+            .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+                vec3 triN = objectNormal;
+                #ifdef USE_INSTANCING
+                    triN = mat3( instanceMatrix ) * triN;
+                #endif
+                vTriNrm = normalize( mat3( modelMatrix ) * triN );`)
+            .replace('#include <begin_vertex>', `#include <begin_vertex>
+                vec4 triWP = vec4( transformed, 1.0 );
+                #ifdef USE_INSTANCING
+                    triWP = instanceMatrix * triWP;
+                #endif
+                vTriPos = ( modelMatrix * triWP ).xyz;`);
+        sh.fragmentShader = sh.fragmentShader
+            .replace('#include <common>', '#include <common>\nuniform sampler2D triMap;\nuniform float triScale;\nvarying vec3 vTriPos;\nvarying vec3 vTriNrm;')
+            .replace('#include <color_fragment>', `#include <color_fragment>
+                {
+                    vec3 triW = abs( vTriNrm );
+                    triW = triW * triW;
+                    triW /= ( triW.x + triW.y + triW.z );
+                    vec3 triTex =
+                        texture2D( triMap, vTriPos.zy * triScale ).rgb * triW.x +
+                        texture2D( triMap, vTriPos.xz * triScale ).rgb * triW.y +
+                        texture2D( triMap, vTriPos.xy * triScale ).rgb * triW.z;
+                    diffuseColor.rgb *= triTex;
+                }`);
+    };
+    // Same-source closures would collide in the program cache — key by the
+    // captured values so each (kind, scale) pair compiles once, separately.
+    mat.customProgramCacheKey = () => 'tri|' + kind + '|' + scale;
+    return mat;
 }
 
 /**
@@ -1408,10 +1659,10 @@ function toonRamp(): THREE.DataTexture {
 }
 
 /** Toon material for gradient-baked solid geometry (smooth, banded light). */
-function paintMat() {
-    return new THREE.MeshToonMaterial({
+function paintMat(kind: SurfaceKind = 'grain'): THREE.Material {
+    return triPatch(new THREE.MeshToonMaterial({
         color: 0xffffff, vertexColors: true, gradientMap: toonRamp()
-    });
+    }), kind, kind === 'grain' ? 0.9 : 0.4);
 }
 
 /** Painted leaf-cluster texture (cached): soft overlapping blobs on a canvas.
@@ -2402,11 +2653,11 @@ function vcolor(geo: THREE.BufferGeometry, hex: number): THREE.BufferGeometry {
 }
 
 /** Solid recipe material: baked vertex values x the hand mottle (the crafted-illustration read). */
-function craftMat(): THREE.Material {
-    return new THREE.MeshStandardMaterial({
+function craftMat(kind: SurfaceKind = 'grain'): THREE.Material {
+    return triPatch(new THREE.MeshStandardMaterial({
         color: 0xffffff, vertexColors: true, roughness: 0.9,
         map: mottleTexture(), bumpMap: mottleTexture(), bumpScale: 0.015
-    });
+    }), kind, kind === 'grain' ? 0.9 : 0.4);
 }
 
 /** Grime wash: darken the baked vertex colours toward the shadow hue near the base. */
@@ -2565,7 +2816,20 @@ function streetLamp(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () =
         const c = Math.cos(p.r), s = Math.sin(p.r);
         return { x: p.x + tx * c, y: ty, z: p.z - tx * s };
     };
-    const cageGeo = vcolor(new THREE.BoxGeometry(0.16, 0.20, 0.16), mix(verdi, 0x000000, 0.55));
+    // The lantern head: four corner posts, a tray, a pyramid roof, a finial —
+    // OPEN panes, so the ember inside is the brightest thing in the head
+    // instead of being occluded by its own crate (the black-box bug). One
+    // merged, vertex-coloured geometry, instanced across every head.
+    const frameParts: THREE.BufferGeometry[] = [];
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        frameParts.push(new THREE.BoxGeometry(0.024, 0.21, 0.024).translate(sx * 0.078, 0, sz * 0.078));
+    }
+    frameParts.push(new THREE.BoxGeometry(0.19, 0.028, 0.19).translate(0, -0.117, 0));   // tray
+    const roof = new THREE.ConeGeometry(0.17, 0.12, 4);
+    roof.rotateY(Math.PI / 4);
+    frameParts.push(roof.translate(0, 0.165, 0));                                        // roof
+    frameParts.push(new THREE.SphereGeometry(0.026, 6, 5).translate(0, 0.25, 0));        // finial
+    const cageGeo = vcolor(mergeGeometries(frameParts)!, mix(verdi, 0x000000, 0.45));
     scene.add(scatterAt(cageGeo, craftMat(), heads, (m, p, i) => {
         const t = armOf(p, variant === 2 && i % 2 === 1);
         m.position.set(t.x, t.y, t.z);
@@ -2579,6 +2843,19 @@ function streetLamp(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () =
     });
     embers.castShadow = false;
     scene.add(embers);
+    // The lit glass: a translucent ADDITIVE volume around the ember, so the
+    // head reads as a glowing pane of lantern glass, not a floating bead.
+    const paneMat = new THREE.MeshBasicMaterial({
+        color: warm, transparent: true, opacity: 0.30,
+        blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+    });
+    const panes = scatterAt(new THREE.BoxGeometry(0.135, 0.17, 0.135), paneMat, heads, (m, p, i) => {
+        const t = armOf(p, variant === 2 && i % 2 === 1);
+        m.position.set(t.x, t.y, t.z);
+        m.scale.setScalar(0.9 + p.j * 0.35);
+    });
+    panes.castShadow = false;
+    scene.add(panes);
     // The halo: 4-5x the fixture, feathering to zero, eating the stem top.
     const hpos = new Float32Array(heads.length * 3);
     heads.forEach((p, i) => {
@@ -2587,6 +2864,10 @@ function streetLamp(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () =
         // Every head is a real shadowed lamp — streetlight that actually
         // carves the pavement into lit islands and dark between.
         registerLight(t.x, t.y, t.z, warm, 6, 9, 2, true);
+        // ...and a real ANCHOR: overhead wires may only exist between things
+        // that were actually built. The pole claims its footprint too.
+        _anchors.push({ x: t.x, y: t.y, z: t.z });
+        claim(p.x, p.z, 0.6);
     });
     const hgeo = new THREE.BufferGeometry();
     hgeo.setAttribute('position', new THREE.BufferAttribute(hpos, 3));
@@ -2621,7 +2902,7 @@ function fountain(scene: THREE.Scene, x: number, z: number, pal: ScenePalette, r
         put(new THREE.CylinderGeometry(1.05, 0.85, 0.30, 8), pale, 2.85);
         put(new THREE.CylinderGeometry(1.12, 1.12, 0.10, 8), pale, 3.02);
     }
-    const stone = new THREE.Mesh(mergeGeometries(parts)!, craftMat());
+    const stone = new THREE.Mesh(mergeGeometries(parts)!, craftMat('stone'));
     stone.position.set(x, 0, z);
     stone.rotation.y = rnd() * Math.PI;
     stone.castShadow = true;
@@ -2681,7 +2962,7 @@ function statue(scene: THREE.Scene, x: number, z: number, ry: number, pal: Scene
     for (let i = 0; i < nSlab; i++) {
         const slab = bakeFacetValues(new THREE.BoxGeometry(1.35 - i * 0.2, 0.26, 1.05 - i * 0.15), pal, { base: mix(warmGrey, 0x000000, 0.12), rnd });
         jitterGeometry(slab, 0.05, rnd);
-        const m = new THREE.Mesh(slab, craftMat());
+        const m = new THREE.Mesh(slab, craftMat('stone'));
         m.position.set((i - (nSlab - 1) / 2) * 0.85 + (rnd() - 0.5) * 0.2, 0.13 - i * 0.015, (rnd() - 0.5) * 0.4);
         m.rotation.y = (rnd() - 0.5) * 0.5;
         group.add(m);
@@ -2705,7 +2986,7 @@ function statue(scene: THREE.Scene, x: number, z: number, ry: number, pal: Scene
     const fig = mergeGeometries(figs)!;
     jitterGeometry(fig, 0.05, rnd);   // erosion: the soft lumpy outline
     bakeFacetValues(fig, pal, { base: warmGrey, cap: mix(moss, warmGrey, 0.25), dark: recess, jitter: 0.06, rnd });
-    const fm = new THREE.Mesh(fig, craftMat());
+    const fm = new THREE.Mesh(fig, craftMat('stone'));
     fm.castShadow = true;
     group.add(fm);
     group.position.set(x, 0, z);
@@ -2737,7 +3018,7 @@ function planter(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => n
         parts.push(vcolor(new THREE.BoxGeometry(1.56, 0.09, 0.48).translate(0, 0.62, 0), soil));
     }
     const geo = mergeGeometries(parts)!;
-    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+    scene.add(scatterAt(geo, craftMat('stone'), at, (m, p) => {
         m.position.set(p.x, 0, p.z);
         m.rotation.y = p.r;
         m.scale.setScalar(0.9 + p.j * 0.3);
@@ -2895,7 +3176,7 @@ function archHouse(scene: THREE.Scene, x: number, z: number, ry: number, pal: Sc
     const bodyGeo = seussify(new THREE.BoxGeometry(W, H, D, 2, 4, 2), 0.14, 0.10, 0.07, rnd);
     bakeFacetValues(bodyGeo, pal, { base: olive, cap: mix(olive, pal.key, 0.22), jitter: 0.13, rnd });
     grimeBake(bodyGeo, 0.65, pal);
-    const body = new THREE.Mesh(bodyGeo, craftMat());
+    const body = new THREE.Mesh(bodyGeo, craftMat('brick'));
     body.position.y = H / 2 - 0.12;   // pressed INTO the dirt over centuries
     body.castShadow = true;
     g.add(body);
@@ -2911,7 +3192,7 @@ function archHouse(scene: THREE.Scene, x: number, z: number, ry: number, pal: Sc
         roofGeo.computeVertexNormals();
     }
     bakeFacetValues(roofGeo, pal, { base: mix(olive, 0x000000, 0.30), jitter: 0.10, rnd });
-    const roof = new THREE.Mesh(roofGeo, craftMat());
+    const roof = new THREE.Mesh(roofGeo, craftMat('shingles'));
     roof.position.y = H + 0.08;
     roof.rotation.z = (rnd() - 0.5) * 0.06;
     g.add(roof);
@@ -2970,7 +3251,7 @@ function gateArch(scene: THREE.Scene, x: number, z: number, ry: number, pal: Sce
             beamGeo.computeVertexNormals();
         }
         bakeFacetValues(beamGeo, pal, { base: mix(pal.structure, 0x000000, 0.22), rnd });
-        const beam = new THREE.Mesh(beamGeo, craftMat());
+        const beam = new THREE.Mesh(beamGeo, craftMat('wood'));
         beam.position.y = 4.3;
         g.add(beam);
         // Dressing: a small banner under the beam.
@@ -2990,7 +3271,7 @@ function gateArch(scene: THREE.Scene, x: number, z: number, ry: number, pal: Sce
         const pierGeo = seussify(new THREE.BoxGeometry(1.15, 4.6, 1.15, 1, 4, 1), 0.16, 0.08, 0.06, rnd);
         bakeFacetValues(pierGeo, pal, { base: dark, cap: mix(dark, pal.key, 0.25), jitter: 0.10, rnd });
         for (const s of [-1, 1]) {
-            const pier = new THREE.Mesh(pierGeo, craftMat());
+            const pier = new THREE.Mesh(pierGeo, craftMat('stone'));
             pier.position.set(s * 2.35, 2.0, 0);
             pier.rotation.y = rnd();
             g.add(pier);
@@ -2998,13 +3279,13 @@ function gateArch(scene: THREE.Scene, x: number, z: number, ry: number, pal: Sce
         if (variant === 'stone') {
             const archGeo = new THREE.TorusGeometry(2.35, 0.48, 6, 12, Math.PI);
             bakeFacetValues(archGeo, pal, { base: dark, cap: mix(dark, pal.key, 0.28), jitter: 0.09, rnd });
-            const arch = new THREE.Mesh(archGeo, craftMat());
+            const arch = new THREE.Mesh(archGeo, craftMat('stone'));
             arch.position.y = 4.1;
             g.add(arch);
         } else {
             const lintelGeo = new THREE.BoxGeometry(5.9, 0.7, 1.3, 4, 1, 1);
             bakeFacetValues(lintelGeo, pal, { base: dark, cap: mix(dark, pal.key, 0.25), jitter: 0.09, rnd });
-            const lintel = new THREE.Mesh(lintelGeo, craftMat());
+            const lintel = new THREE.Mesh(lintelGeo, craftMat('stone'));
             lintel.position.y = 4.5;
             g.add(lintel);
             // The glyph door: glowing marks painted across the lintel.
@@ -3055,13 +3336,13 @@ function bridge(scene: THREE.Scene, x: number, z: number, ry: number, pal: Scene
         deckGeo.computeVertexNormals();
     }
     bakeFacetValues(deckGeo, pal, { base: mix(pal.structure, 0x000000, 0.18), cap: mix(pal.structure, 0xffffff, 0.3), jitter: 0.09, rnd });
-    const deck = new THREE.Mesh(deckGeo, craftMat());
+    const deck = new THREE.Mesh(deckGeo, craftMat('stone'));
     deck.position.y = 0.72;
     deck.castShadow = true;
     g.add(deck);
     const pierGeo = bakeFacetValues(new THREE.BoxGeometry(1.1, 1.7, 2.3), pal, { base: mix(pal.structure, 0x000000, 0.25), rnd });
     for (const s of [-1, 1]) {
-        const pier = new THREE.Mesh(pierGeo, craftMat());
+        const pier = new THREE.Mesh(pierGeo, craftMat('stone'));
         pier.position.set(s * (span / 2 - 0.3), 0.15, 0);
         g.add(pier);
     }
@@ -3114,7 +3395,7 @@ function stairRun(scene: THREE.Scene, x: number, z: number, ry: number, pal: Sce
         base: mix(pal.structure, 0x000000, 0.10), cap: mix(pal.structure, 0xffffff, 0.38),
         dark: mix(pal.fog, 0x000000, 0.6), jitter: 0.08, rnd
     });
-    const m = new THREE.Mesh(geo, craftMat());
+    const m = new THREE.Mesh(geo, craftMat('stone'));
     m.position.set(x, 0, z);
     m.rotation.y = ry;
     m.castShadow = true;
@@ -3136,7 +3417,7 @@ function canalCoping(scene: THREE.Scene, edge: { x: number; z: number; ry: numbe
             vcolor(new THREE.BoxGeometry(0.92, 0.12, 0.52).translate(0, -0.03, 0), seam)
         ])!;
         jitterGeometry(g, 0.03, rnd);
-        const im = scatterAt(g, craftMat(), sub.map(e => ({ x: e.x, z: e.z, s: 0.95 + rnd() * 0.2, r: e.ry, j: rnd() })), (m, p, i) => {
+        const im = scatterAt(g, craftMat('stone'), sub.map(e => ({ x: e.x, z: e.z, s: 0.95 + rnd() * 0.2, r: e.ry, j: rnd() })), (m, p, i) => {
             m.position.set(p.x, variant === 2 ? 0.22 - i * 0.07 : 0.22, p.z);
             m.rotation.y = p.r;
             m.scale.setScalar(p.s);
@@ -3157,7 +3438,7 @@ function bench(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => num
         vcolor(new THREE.BoxGeometry(1.65, 0.13, 0.58).translate(0, 0.50, 0), seatCol)
     ])!;
     jitterGeometry(geo, 0.02, rnd);
-    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+    scene.add(scatterAt(geo, craftMat(stone ? 'stone' : 'wood'), at, (m, p) => {
         m.position.set(p.x, 0, p.z);
         m.rotation.y = p.r;
         if (variant === 2) m.rotation.z = 0.07 + p.j * 0.06;   // settled crooked
@@ -3196,7 +3477,7 @@ function signCard(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => 
             postParts.push(vcolor(new THREE.CylinderGeometry(0.03, 0.03, 0.8, 5).rotateZ(Math.PI / 2).translate(0, 2.02, 0), 0x2a2018));
         }
         const postGeo = mergeGeometries(postParts)!;
-        scene.add(scatterAt(postGeo, craftMat(), at, (m, p) => {
+        scene.add(scatterAt(postGeo, craftMat('wood'), at, (m, p) => {
             m.position.set(p.x, 0, p.z);
             m.rotation.y = p.r;
             m.scale.setScalar(0.9 + p.j * 0.2);
@@ -3259,7 +3540,7 @@ function crate(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => num
     else if (variant === 2) { put(0.72, 0, 0); put(0.44, 0.55, 0.30); }
     else put(0.62, 0, 0);
     const geo = mergeGeometries(parts)!;
-    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+    scene.add(scatterAt(geo, craftMat('wood'), at, (m, p) => {
         m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.85 + p.j * 0.4);
     }));
     contactBlobs(scene, at, pal, () => 0.72, 0.3);
@@ -3285,7 +3566,7 @@ function barrel(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => nu
     else if (variant === 2) { mk(false, 0, 0); mk(true, 0.55, 0.32); }
     else mk(false, 0, 0);
     const geo = mergeGeometries(parts)!;
-    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+    scene.add(scatterAt(geo, craftMat('wood'), at, (m, p) => {
         m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.85 + p.j * 0.35);
     }));
     contactBlobs(scene, at, pal, () => 0.6, 0.3);
@@ -3317,7 +3598,7 @@ function cart(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => numb
         sack2.scale(1, 0.7, 1); sack2.translate(0.32, 0.78, -0.15); parts.push(sack2);
     }
     const geo = mergeGeometries(parts)!;
-    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+    scene.add(scatterAt(geo, craftMat('wood'), at, (m, p) => {
         m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.9 + p.j * 0.3);
     }));
     contactBlobs(scene, at, pal, () => 1.1, 0.3);
@@ -3352,7 +3633,7 @@ function well(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => numb
     const bucket = stylize(new THREE.CylinderGeometry(0.14, 0.11, 0.20, 8), pal, { base: wood, erode: 0.02, rnd });
     bucket.translate(0.55, 0.92, 0.3); parts.push(bucket);
     const geo = mergeGeometries(parts)!;
-    scene.add(scatterAt(geo, craftMat(), at, (m, p) => {
+    scene.add(scatterAt(geo, craftMat('stone'), at, (m, p) => {
         m.position.set(p.x, 0, p.z); m.rotation.y = p.r; m.scale.setScalar(0.9 + p.j * 0.3);
     }));
     contactBlobs(scene, at, pal, () => 1.2, 0.32);
@@ -3382,7 +3663,7 @@ function fenceRun(scene: THREE.Scene, at: Spot[], pal: ScenePalette, rnd: () => 
         }
     }
     const geo = mergeGeometries(parts)!;
-    scene.add(mark(new THREE.Mesh(geo, craftMat())));
+    scene.add(mark(new THREE.Mesh(geo, craftMat('wood'))));
     contactBlobs(scene, at, pal, () => 1.0, 0.26);
 }
 
@@ -3422,20 +3703,27 @@ function buildHabitation(
 
     if (biome === 'urban') {
         // The plaza: a fountain on an open spot off the roadbed, answered
-        // across the road by the statue hero (one-offs, D4/B5).
+        // across the road by the statue hero (one-offs, D4/B5). Each claims
+        // its footprint first — the ground plan says what may NOT approach.
         const fs = rnd() < 0.5 ? -1 : 1;
         const fz = -12.5 - rnd() * 3;
-        fountain(scene, wander(fz) + fs * (6.5 + rnd() * 2), fz, pal, rnd, Math.floor(rnd() * 3));
+        const fx = wander(fz) + fs * (6.5 + rnd() * 2);
+        claim(fx, fz, 3.0);
+        fountain(scene, fx, fz, pal, rnd, Math.floor(rnd() * 3));
         if (rnd() < 0.75) {
             const sz = fz - 6 - rnd() * 3;
-            statue(scene, wander(sz) - fs * (7 + rnd() * 2), sz, rnd() * Math.PI * 2, pal, rnd, Math.floor(rnd() * 3));
+            const sx = wander(sz) - fs * (7 + rnd() * 2);
+            claim(sx, sz, 1.7);
+            statue(scene, sx, sz, rnd() * Math.PI * 2, pal, rnd, Math.floor(rnd() * 3));
         }
         // Arch-houses leaning over the street, each with its ONE lean.
         const nH = 2 + Math.floor(rnd() * 2);
         for (let i = 0; i < nH; i++) {
             const hz = -9 - i * 7.5 - rnd() * 2;
             const hs = i % 2 === 0 ? -1 : 1;
-            archHouse(scene, wander(hz) + hs * (5.4 + rnd() * 1.2), hz,
+            const hx = wander(hz) + hs * (5.4 + rnd() * 1.2);
+            claim(hx, hz, 3.2);
+            archHouse(scene, hx, hz,
                 hs > 0 ? -Math.PI / 2 + (rnd() - 0.5) * 0.3 : Math.PI / 2 + (rnd() - 0.5) * 0.3,
                 pal, rnd, Math.floor(rnd() * 3));
         }
@@ -3449,18 +3737,21 @@ function buildHabitation(
                 const side = i % 2 === 0 ? 1 : -1;
                 pl.push({ x: wander(pz) + side * (2.7 + rnd() * 0.5), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
             }
-            planter(scene, pl, pal, rnd, Math.floor(rnd() * 3));
+            const kept = claimAll(pl, 1.3);
+            if (kept.length) planter(scene, kept, pal, rnd, Math.floor(rnd() * 3));
         } else if (gardenKind < 0.8) {
             const pl: Spot[] = [];
             for (let i = 0; i < 3; i++) {
                 const pz = -7 - i * 6.2 - rnd();
                 pl.push({ x: wander(pz) + (rnd() < 0.5 ? -1 : 1) * (3.1 + rnd() * 1.2), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
             }
-            wildflowerDrift(scene, pl, pal, rnd);
+            const kept = claimAll(pl, 1.6);
+            if (kept.length) wildflowerDrift(scene, kept, pal, rnd);
         }
-        bench(scene, [-10.5, -23].map(bz => ({
+        const benches = [-10.5, -23].map(bz => ({
             x: wander(bz) + (rnd() < 0.5 ? -1 : 1) * 3.1, z: bz, s: 1, r: rnd() * Math.PI * 2, j: rnd()
-        })), pal, rnd, Math.floor(rnd() * 3));
+        })).filter(p => claim(p.x, p.z, 1.4));
+        if (benches.length) bench(scene, benches, pal, rnd, Math.floor(rnd() * 3));
         const signs: Spot[] = [];
         for (let i = 0; i < 3; i++) {
             const sz = -8 - i * 9 - rnd() * 2;
@@ -3470,13 +3761,18 @@ function buildHabitation(
                 r: (side > 0 ? -1 : 1) * Math.PI / 2 + (rnd() - 0.5) * 0.4, j: rnd()
             });
         }
-        signCard(scene, signs, pal, rnd, Math.floor(rnd() * 2));
+        const keptSigns = claimAll(signs, 1.1);
+        if (keptSigns.length) signCard(scene, keptSigns, pal, rnd, Math.floor(rnd() * 2));
     }
 
     if (biome === 'crossroads') {
-        archHouse(scene, wander(-11) - 5.6, -11, Math.PI / 2 + (rnd() - 0.5) * 0.3, pal, rnd, 1 + Math.floor(rnd() * 2));
+        const ax = wander(-11) - 5.6;
+        claim(ax, -11, 3.2);
+        archHouse(scene, ax, -11, Math.PI / 2 + (rnd() - 0.5) * 0.3, pal, rnd, 1 + Math.floor(rnd() * 2));
         if (rnd() < 0.6) {
-            archHouse(scene, wander(-19) + 5.4, -19, -Math.PI / 2 + (rnd() - 0.5) * 0.3, pal, rnd, Math.floor(rnd() * 2));
+            const bx = wander(-19) + 5.4;
+            claim(bx, -19, 3.2);
+            archHouse(scene, bx, -19, -Math.PI / 2 + (rnd() - 0.5) * 0.3, pal, rnd, Math.floor(rnd() * 2));
         }
         const gardenSpots: Spot[] = [
             { x: wander(-10) - 4.2, z: -10, s: 1, r: rnd() * Math.PI, j: rnd() },
@@ -3484,10 +3780,16 @@ function buildHabitation(
             { x: wander(-8) + 3.2, z: -8, s: 1, r: rnd() * Math.PI, j: rnd() }
         ];
         const gardenKind = rnd();
-        if (gardenKind < 0.45) planter(scene, gardenSpots, pal, rnd, 0);
-        else if (gardenKind < 0.85) wildflowerDrift(scene, gardenSpots, pal, rnd);
+        if (gardenKind < 0.45) {
+            const kept = claimAll(gardenSpots, 1.3);
+            if (kept.length) planter(scene, kept, pal, rnd, 0);
+        } else if (gardenKind < 0.85) {
+            const kept = claimAll(gardenSpots, 1.6);
+            if (kept.length) wildflowerDrift(scene, kept, pal, rnd);
+        }
         // else: this crossing grows nothing — emptiness is variety too.
-        bench(scene, [{ x: wander(-16) + 2.9, z: -16, s: 1, r: -0.4 + rnd() * 0.8, j: rnd() }], pal, rnd, Math.floor(rnd() * 3));
+        const cb = { x: wander(-16) + 2.9, z: -16, s: 1, r: -0.4 + rnd() * 0.8, j: rnd() };
+        if (claim(cb.x, cb.z, 1.4)) bench(scene, [cb], pal, rnd, Math.floor(rnd() * 3));
     }
 
     if (biome === 'forest') {
@@ -3500,10 +3802,18 @@ function buildHabitation(
             pl.push({ x: wander(pz) + (i % 2 === 0 ? 1 : -1) * (2.7 + rnd() * 0.6), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
         }
         const gKind = rnd();
-        if (gKind < 0.5) wildflowerDrift(scene, pl, pal, rnd);
-        else if (gKind < 0.75) planter(scene, pl, pal, rnd, 1);   // pots only, never civic stone
+        if (gKind < 0.5) {
+            const kept = claimAll(pl, 1.6);
+            if (kept.length) wildflowerDrift(scene, kept, pal, rnd);
+        } else if (gKind < 0.75) {
+            const kept = claimAll(pl, 1.3);
+            if (kept.length) planter(scene, kept, pal, rnd, 1);   // pots only, never civic stone
+        }
         if (rnd() < 0.45) streetLamp(scene, [{ x: wander(-14) - 2.8, z: -14, s: 1, r: 0.15 + rnd() * 0.2, j: rnd() }], pal, rnd, 0);
-        if (rnd() < 0.7) bench(scene, [{ x: wander(-9) + 3.0, z: -9, s: 1, r: rnd() * Math.PI, j: rnd() }], pal, rnd, 1);
+        if (rnd() < 0.7) {
+            const fb = { x: wander(-9) + 3.0, z: -9, s: 1, r: rnd() * Math.PI, j: rnd() };
+            if (claim(fb.x, fb.z, 1.4)) bench(scene, [fb], pal, rnd, 1);
+        }
     }
 
     if (biome === 'plains' && rnd() < 0.75) {
@@ -3513,18 +3823,28 @@ function buildHabitation(
             const pz = -6 - i * 5.5 - rnd() * 2;
             pl.push({ x: wander(pz) + (rnd() < 0.5 ? -1 : 1) * (2.5 + rnd() * 2.5), z: pz, s: 1, r: rnd() * Math.PI, j: rnd() });
         }
-        wildflowerDrift(scene, pl, pal, rnd);
+        const kept = claimAll(pl, 1.6);
+        if (kept.length) wildflowerDrift(scene, kept, pal, rnd);
     }
 
     if (biome === 'ruin') {
-        statue(scene, (rnd() - 0.5) * 10, -12 - rnd() * 6, rnd() * Math.PI * 2, pal, rnd, Math.floor(rnd() * 3));
-        stairRun(scene, -3 + rnd() * 6, -9 - rnd() * 4, rnd() * Math.PI, pal, rnd, Math.floor(rnd() * 3));
-        if (rnd() < 0.6) stairRun(scene, -5 + rnd() * 10, -16 - rnd() * 6, rnd() * Math.PI, pal, rnd, 2);
+        const rx = (rnd() - 0.5) * 10, rz = -12 - rnd() * 6;
+        claim(rx, rz, 1.7);
+        statue(scene, rx, rz, rnd() * Math.PI * 2, pal, rnd, Math.floor(rnd() * 3));
+        const s1x = -3 + rnd() * 6, s1z = -9 - rnd() * 4;
+        claim(s1x, s1z, 2.2);
+        stairRun(scene, s1x, s1z, rnd() * Math.PI, pal, rnd, Math.floor(rnd() * 3));
+        if (rnd() < 0.6) {
+            const s2x = -5 + rnd() * 10, s2z = -16 - rnd() * 6;
+            if (claim(s2x, s2z, 2.2)) stairRun(scene, s2x, s2z, rnd() * Math.PI, pal, rnd, 2);
+        }
     }
 
     if (biome === 'swamp') {
         // The pond: flat opaque water with a coped rim and a span over it.
+        // Its whole footprint is claimed — nothing may spawn in the water.
         const px = -6.5, pz = -13;
+        claim(px, pz, 6.0);
         waterDisc(scene, px, pz, 0.06, 5.2, pal);
         const edge: { x: number; z: number; ry: number }[] = [];
         for (let a = -0.4; a < Math.PI * 1.55; a += 0.30) {
@@ -3540,12 +3860,15 @@ function buildHabitation(
     //     per scene while the laws stay fixed.
     if (roadMask) {
         const ok = (x: number, z: number) => roadMask(x, z) < 0.35;
-        const place = (fn: (at: Spot[]) => void, n: number, off: number) => {
+        // Every kit claims its footprint against the shared ground plan: no
+        // cart inside the fountain, no barrel inside a crate — the debris
+        // piles were independent lists landing on the same turf.
+        const place = (fn: (at: Spot[]) => void, n: number, off: number, foot: number) => {
             const at: Spot[] = [];
-            for (let i = 0; i < n * 4 && at.length < n; i++) {
+            for (let i = 0; i < n * 6 && at.length < n; i++) {
                 const z = -7 - rnd() * 22;
                 const x = wander(z) + (rnd() < 0.5 ? -1 : 1) * (off + rnd() * 1.6);
-                if (ok(x, z)) at.push({ x, z, s: 1, r: rnd() * Math.PI * 2, j: rnd() });
+                if (ok(x, z) && claim(x, z, foot)) at.push({ x, z, s: 1, r: rnd() * Math.PI * 2, j: rnd() });
             }
             if (at.length) fn(at);
         };
@@ -3554,11 +3877,11 @@ function buildHabitation(
         const nPick = 2 + Math.floor(rnd() * 2);
         for (let i = 0; i < nPick; i++) {
             const k = kits[(start + i * 2) % kits.length];
-            if (k === 'crate') place(at => crate(scene, at, pal, rnd, Math.floor(rnd() * 3)), 3, 3.4);
-            else if (k === 'barrel') place(at => barrel(scene, at, pal, rnd, Math.floor(rnd() * 3)), 3, 3.2);
-            else if (k === 'cart') place(at => cart(scene, at, pal, rnd, Math.floor(rnd() * 3)), 1, 3.8);
-            else if (k === 'well') place(at => well(scene, at, pal, rnd, Math.floor(rnd() * 3)), 1, 5.0);
-            else place(at => fenceRun(scene, at, pal, rnd, Math.floor(rnd() * 3)), 2, 3.0);
+            if (k === 'crate') place(at => crate(scene, at, pal, rnd, Math.floor(rnd() * 3)), 3, 3.4, 1.0);
+            else if (k === 'barrel') place(at => barrel(scene, at, pal, rnd, Math.floor(rnd() * 3)), 3, 3.2, 0.85);
+            else if (k === 'cart') place(at => cart(scene, at, pal, rnd, Math.floor(rnd() * 3)), 1, 3.8, 1.8);
+            else if (k === 'well') place(at => well(scene, at, pal, rnd, Math.floor(rnd() * 3)), 1, 5.0, 2.0);
+            else place(at => fenceRun(scene, at, pal, rnd, Math.floor(rnd() * 3)), 2, 3.0, 2.4);
         }
     }
 }
@@ -3573,11 +3896,11 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
     // Blinx lesson: hand-dabbed value noise is what separates "crafted
     // illustration" from "material ball". White texture, so the palette
     // colour still owns the hue.
-    const structMat = () => new THREE.MeshStandardMaterial({
+    const structMat = () => triPatch(new THREE.MeshStandardMaterial({
         color: pal.structure, roughness: 0.9, flatShading: true,
         map: mottleTexture(), bumpMap: mottleTexture(), bumpScale: 0.02,
         emissive: pal.emissive, emissiveIntensity: pal.emissiveOn ? 0.22 : 0
-    });
+    }), 'stone', 0.30);
     const foliMat = () => new THREE.MeshStandardMaterial({
         color: pal.foliage, roughness: 0.85, flatShading: true,
         map: mottleTexture(), bumpMap: mottleTexture(), bumpScale: 0.015
@@ -3587,11 +3910,13 @@ function buildProps(scene: THREE.Scene, biome: string, pal: ScenePalette, rnd: (
         emissiveIntensity: pal.emissiveOn ? 1.4 : 0, roughness: 0.6
     });
     // A city keeps its windows no matter what silhouette the Director gives
-    // it — "neon spires" are spires WITH lit panes, not bare slabs.
-    const cityStruct = () => new THREE.MeshStandardMaterial({
+    // it — "neon spires" are spires WITH lit panes, not bare slabs. The
+    // albedo gets triplanar BRICK courses (world-space: no smearing across
+    // stretched towers); the windows keep their UV emissive map.
+    const cityStruct = () => triPatch(new THREE.MeshStandardMaterial({
         color: pal.structure, roughness: 0.85, flatShading: true,
         emissive: 0xffffff, emissiveMap: windowTexture(), emissiveIntensity: EMIT.window
-    });
+    }), 'brick', 0.22);
 
     // A Director-given silhouette REPLACES the biome's mass layer: "a forest
     // of giant mushrooms" keeps the forest palette and ground but grows
@@ -4239,18 +4564,35 @@ function addBraziers(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, t
         || (biome === 'synthetic' && visual?.silhouette === 'columns');
     if (!temple) return;
     const flameCol = pal.emissiveOn ? pal.emissive : 0xff8a2a;
-    const bowlMat = new THREE.MeshStandardMaterial({ color: mix(pal.structure, 0x000000, 0.45), roughness: 0.9 });
+    // Bowls, posts and feet: vertex-baked INSIDE the palette chord (the Temple
+    // lesson — dark, but the palette's dark). The old material was 45% black
+    // and rendered as voids with fire floating over them.
     const flameMat = new THREE.MeshStandardMaterial({
         color: mix(flameCol, 0xffffff, 0.45), emissive: flameCol, emissiveIntensity: EMIT.flame, roughness: 0.5
     });
     const at = spots(5 + Math.floor(rnd() * 3), 4, 24, rnd);
-    // Bowl + post, one list so parts stay married.
-    scene.add(scatterAt(new THREE.CylinderGeometry(0.30, 0.16, 0.22, 8), bowlMat, at, (m, p) => {
+    const bowlGeo = bakeFacetValues(new THREE.CylinderGeometry(0.30, 0.16, 0.22, 8), pal, { base: mix(pal.structure, 0x000000, 0.16), rnd });
+    const postGeo = bakeFacetValues(new THREE.CylinderGeometry(0.05, 0.08, 1.0, 6), pal, { base: mix(pal.structure, 0x000000, 0.24), rnd });
+    const footGeo = bakeFacetValues(new THREE.CylinderGeometry(0.13, 0.18, 0.16, 6), pal, { base: mix(pal.structure, 0x000000, 0.20), rnd });
+    // Bowl + post + foot, one list so parts stay married.
+    scene.add(scatterAt(bowlGeo, paintMat(), at, (m, p) => {
         m.position.set(p.x, 1.02, p.z);
         m.scale.setScalar(0.8 + p.j * 0.6);
     }));
-    scene.add(scatterAt(new THREE.CylinderGeometry(0.05, 0.08, 1.0, 6), bowlMat, at, (m, p) => {
+    scene.add(scatterAt(postGeo, paintMat(), at, (m, p) => {
         m.position.set(p.x, 0.5, p.z);
+        m.scale.setScalar(0.8 + p.j * 0.6);
+    }));
+    scene.add(scatterAt(footGeo, paintMat(), at, (m, p) => {
+        m.position.set(p.x, 0.08, p.z);
+        m.scale.setScalar(0.8 + p.j * 0.6);
+    }));
+    // The coal bed: a flat ember disc in the bowl mouth — the flame now sits
+    // IN something, and the bowl's inside carries light instead of shadow.
+    const coalGeo = new THREE.CircleGeometry(0.20, 8).rotateX(-Math.PI / 2);
+    scene.add(scatterAt(coalGeo, flameMat, at, (m, p) => {
+        m.position.set(p.x, 1.115, p.z);
+        m.scale.setScalar(0.8 + p.j * 0.6);
     }));
     // The flame: a teardrop, slightly alive in shape — and its light pool.
     const flameGeo = new THREE.SphereGeometry(0.16, 8, 8);
@@ -4262,6 +4604,7 @@ function addBraziers(scene: THREE.Scene, pal: ScenePalette, rnd: () => number, t
     for (const p of at) {
         // Shadowed fire: braziers are the Temple's suns — they carve the floor.
         registerLight(p.x, 1.7, p.z, flameCol, 9, 12, 3, true);
+        claim(p.x, p.z, 0.9);
         // The painted pool: Blinx's fourth layer of every light — and the one
         // that still reads after the paint bake averages the bloom away.
         lightPool(scene, p.x, p.z, 2.3, flameCol, 0.5);
@@ -4281,11 +4624,13 @@ function buildOverhead(scene: THREE.Scene, pal: ScenePalette, rnd: () => number,
     if (traits.enclosed || traits.space || traits.submerged) return;
 
     if (biome === 'urban' || biome === 'crossroads') {
-        // Lantern strings: SEEDED — some streets go dark overhead. And every
-        // wire is short enough that BOTH of its anchor poles stand in or near
-        // the frame: a wire crossing empty sky attached to nothing was the
-        // "random lines" tell. Wires must go FROM somewhere TO somewhere.
-        if (rnd() < 0.55) {
+        // Lantern strings between REAL anchors — the street's own lamp heads,
+        // registered as the lamps were placed. A wire exists only where two
+        // anchors stand 4.5..13 units apart at similar heights: a wire from
+        // nowhere to nowhere was the "senseless string lights" tell. No
+        // anchors, no wires (a street that went dark is variety too). Seeded:
+        // 55% of streets string anything, and 25% of those fly pennants.
+        if (rnd() < 0.55 && _anchors.length >= 2) {
             const wireCol = mix(pal.structure, 0x000000, 0.55);
             const wireMat = new THREE.MeshBasicMaterial({ color: wireCol, fog: false });
             const bulbCol = pal.emissiveOn ? pal.emissive : 0xffc36a;
@@ -4293,54 +4638,75 @@ function buildOverhead(scene: THREE.Scene, pal: ScenePalette, rnd: () => number,
                 color: 0xffe9c0, emissive: bulbCol,
                 emissiveIntensity: EMIT.ember, roughness: 0.4, fog: false
             });
-            // One shared anchor-pole look: dark, slightly tapered, a cross-arm
-            // at the top so the wire visibly has something to hang from.
-            const poleGeo = new THREE.CylinderGeometry(0.045, 0.07, 1, 6);
-            poleGeo.translate(0, 0.5, 0);
-            const armGeo = new THREE.BoxGeometry(0.5, 0.05, 0.05);
-            const poleMat = new THREE.MeshStandardMaterial({ color: mix(wireCol, 0x000000, 0.25), roughness: 0.9, fog: false });
-            const bulbSpots: Spot[] = [];
-            const nStr = 2 + Math.floor(rnd() * 2);
-            for (let s = 0; s < nStr; s++) {
-                const z = -5 - s * 5.5 - rnd() * 2;
-                const y0 = 5.4 + rnd() * 1.3, sag = 0.9 + rnd() * 0.5;
-                const span = 14 + rnd() * 5;
+            // Pair anchors greedily, nearest-first, each used once: the wire
+            // crosses the street from lamp to lamp, the way real streets are
+            // actually strung.
+            const pairs: [{ x: number; y: number; z: number }, { x: number; y: number; z: number }][] = [];
+            const used = new Set<number>();
+            for (let i = 0; i < _anchors.length && pairs.length < 3; i++) {
+                if (used.has(i)) continue;
+                let best = -1, bestD = Infinity;
+                for (let j = i + 1; j < _anchors.length; j++) {
+                    if (used.has(j)) continue;
+                    const d = Math.hypot(_anchors[i].x - _anchors[j].x, _anchors[i].z - _anchors[j].z);
+                    if (d > 4.5 && d < 13 && Math.abs(_anchors[i].y - _anchors[j].y) < 1.8 && d < bestD) { best = j; bestD = d; }
+                }
+                if (best >= 0) { used.add(i); used.add(best); pairs.push([_anchors[i], _anchors[best]]); }
+            }
+            // Festival cloth: two alternating dyes pulled from the palette's
+            // own light and growth colours, double-sided pennant triangles.
+            const pennants = rnd() < 0.25;
+            const clothA = new THREE.MeshStandardMaterial({ color: mix(pal.key, 0xffffff, 0.12), roughness: 0.9, side: THREE.DoubleSide, fog: false });
+            const clothB = new THREE.MeshStandardMaterial({ color: mix(pal.foliage, pal.key, 0.35), roughness: 0.9, side: THREE.DoubleSide, fog: false });
+            const flagShape = new THREE.Shape();
+            flagShape.moveTo(-0.24, 0); flagShape.lineTo(0.24, 0); flagShape.lineTo(0, -0.62); flagShape.closePath();
+            const flagGeo = new THREE.ShapeGeometry(flagShape);
+            for (const [a, b] of pairs) {
+                const span = Math.hypot(a.x - b.x, a.z - b.z);
+                const sag = 0.35 + span * 0.05;
                 const pts: THREE.Vector3[] = [];
                 for (let i = 0; i <= 16; i++) {
                     const u = i / 16;
-                    pts.push(new THREE.Vector3((u - 0.5) * span, y0 - Math.sin(u * Math.PI) * sag, z));
+                    pts.push(new THREE.Vector3(
+                        a.x + (b.x - a.x) * u,
+                        (a.y - 0.06) + (b.y - a.y) * u - Math.sin(u * Math.PI) * sag,
+                        a.z + (b.z - a.z) * u
+                    ));
                 }
                 const wire = new THREE.Mesh(
                     new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.016, 4),
                     wireMat
                 );
                 scene.add(mark(wire));
-                // The anchors: a pole under each wire end, cross-arm meeting
-                // the wire — infrastructure the eye can audit.
-                for (const ex of [-1, 1]) {
-                    const px = ex * span / 2;
-                    const pole = new THREE.Mesh(poleGeo, poleMat);
-                    pole.scale.y = y0;
-                    pole.position.set(px, 0, z);
-                    scene.add(mark(pole));
-                    const arm = new THREE.Mesh(armGeo, poleMat);
-                    arm.position.set(px, y0 - 0.03, z);
-                    arm.rotation.y = (rnd() - 0.5) * 0.2;
-                    scene.add(mark(arm));
+                // What's strung hangs slightly BELOW the wire, FROM it.
+                const hang: Spot[] = [];
+                for (let i = 1; i < 16; i += 2) hang.push({ x: pts[i].x, z: pts[i].z, s: 1, r: 0, j: rnd() });
+                if (pennants) {
+                    const fly = (sub: Spot[], mat: THREE.Material, off: number) => {
+                        if (!sub.length) return;
+                        const flags = scatterAt(flagGeo, mat, sub, (m, p, k) => {
+                            const pt = pts[1 + (k * 2 + off) * 2];
+                            m.position.set(p.x, pt.y - 0.02, p.z);
+                            m.rotation.set(0, (p.j - 0.5) * 0.5, (p.j - 0.5) * 0.16);
+                            m.scale.setScalar(0.85 + p.j * 0.5);
+                        });
+                        flags.castShadow = false;
+                        scene.add(flags);
+                    };
+                    fly(hang.filter((_, k) => k % 2 === 0), clothA, 0);
+                    fly(hang.filter((_, k) => k % 2 === 1), clothB, 1);
+                } else {
+                    hang.forEach((p, k) => {
+                        // Every other bulb is a real light — the string washes
+                        // the street below instead of just sparkling overhead.
+                        if (k % 2 === 0) registerLight(p.x, pts[1 + k * 2].y - 0.14, p.z, bulbCol, 3, 7, 1);
+                    });
+                    const bulbs = scatterAt(new THREE.SphereGeometry(0.085, 6, 5), bulbMat, hang, (m, p, k) => {
+                        m.position.set(p.x, pts[1 + k * 2].y - 0.14, p.z);
+                    });
+                    bulbs.castShadow = false;
+                    scene.add(bulbs);
                 }
-                // Bulbs hang slightly BELOW the wire, every other span point.
-                bulbSpots.length = 0;
-                for (let i = 1; i < 16; i += 2) {
-                    bulbSpots.push({ x: pts[i].x, z, s: 1, r: 0, j: rnd() });
-                    // Every 4th bulb is a real light — the string washes the
-                    // street below instead of just sparkling overhead.
-                    if (i % 4 === 1) registerLight(pts[i].x, pts[i].y - 0.14, z, bulbCol, 3, 7, 1);
-                }
-                const bulbs = scatterAt(new THREE.SphereGeometry(0.085, 6, 5), bulbMat, bulbSpots, (m, p, i2) => {
-                    m.position.set(p.x, pts[1 + i2 * 2].y - 0.14, p.z);
-                });
-                bulbs.castShadow = false;
-                scene.add(bulbs);
             }
         }
         return;
@@ -4371,6 +4737,7 @@ function buildOverhead(scene: THREE.Scene, pal: ScenePalette, rnd: () => number,
  */
 export function generateScene(scene: THREE.Scene, tags: SceneTags | any, pal: ScenePalette) {
     disposeProcedural(scene);
+    fieldReset();   // one ground plan per scene: claims + wire anchors
     scene.userData.crystalsAdded = false;   // guards the double-add (16-glow-cavern)
 
     const t = tags ?? {};
