@@ -174,6 +174,29 @@
     // the manual touchstart/touchmove math misses: multi-touch, scroll
     // conflicts, momentum, velocity-based dismissal)
     let dragOffset = $state(0);
+
+    // Keep the sheet flush on top of the iOS soft keyboard and stop the story
+    // from being shoved off-screen. When the keyboard opens the visual viewport
+    // shrinks to the space above it; we lift the sheet by exactly that overlap
+    // (so its bottom edge meets the keyboard — no gap, no black bar) and pin the
+    // document scroll to 0 so the narration behind the sheet stays where it is
+    // instead of iOS scrolling the whole page up to chase the input.
+    let kbLift = $state(0);
+    function syncKeyboard() {
+        const vv = window.visualViewport;
+        if (!vv) return;
+        kbLift = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        if (window.scrollY !== 0 || window.pageYOffset !== 0) window.scrollTo(0, 0);
+    }
+    onMount(() => {
+        window.visualViewport?.addEventListener('resize', syncKeyboard);
+        window.visualViewport?.addEventListener('scroll', syncKeyboard);
+    });
+    onDestroy(() => {
+        window.visualViewport?.removeEventListener('resize', syncKeyboard);
+        window.visualViewport?.removeEventListener('scroll', syncKeyboard);
+    });
+
     function draggable(node: HTMLElement) {
         const gesture = new DragGesture(node, (state: any) => {
             const down = state.down;
@@ -229,7 +252,7 @@
         class="action-sheet film-surface"
         data-action-sheet
         data-whisper={whisper}
-        style="transform: translateY({dragOffset}px)"
+        style="bottom: {kbLift}px; transform: translateY({dragOffset}px)"
         onsubmit={(e) => { e.preventDefault(); submit(); }}
         use:draggable
         role="dialog"
@@ -378,24 +401,24 @@
         left: 0; right: 0; bottom: 0;
         max-width: 720px;
         margin: 0 auto;
-        padding: 0.55rem 0.9rem;
-        padding-bottom: max(0.55rem, var(--safe-bottom));
-        padding-left: max(0.9rem, var(--safe-left));
-        padding-right: max(0.9rem, var(--safe-right));
+        padding: 0.35rem 0.8rem;
+        padding-bottom: max(0.35rem, var(--safe-bottom));
+        padding-left: max(0.8rem, var(--safe-left));
+        padding-right: max(0.8rem, var(--safe-right));
         background: var(--card);
-        border-top: 3px double var(--gold);
-        box-shadow: inset 0 0 0 1px var(--gold-soft), var(--shadow-sheet);
+        border-top: 1px solid var(--gold-soft);
+        box-shadow: var(--shadow-sheet);
         border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
         z-index: 31;
         display: flex;
         flex-direction: column;
-        gap: 0.5rem;
+        gap: 0.35rem;
         animation: sheet-in 0.36s cubic-bezier(0.2, 0.8, 0.2, 1);
         transition: transform 0.18s ease-out;
     }
     .action-sheet[data-whisper='true'] {
         background: linear-gradient(180deg, rgba(110, 79, 168, 0.07), var(--card) 60%);
-        border-top: 3px double var(--corruption);
+        border-top: 1px solid var(--corruption);
     }
     @keyframes sheet-in {
         from { transform: translateY(100%); opacity: 0.4; }
@@ -403,11 +426,11 @@
     }
 
     .handle {
-        width: 36px; height: 4px;
+        width: 30px; height: 3px;
         background: var(--line-strong);
         border-radius: 999px;
-        margin: 0 auto 0.15rem;
-        opacity: 0.6;
+        margin: 0 auto 0.05rem;
+        opacity: 0.5;
         flex-shrink: 0;
     }
 
@@ -421,24 +444,24 @@
     .input-mirror {
         grid-area: 1 / 1;
         font-family: var(--font-prose);
-        font-size: 1.06rem;
-        line-height: 1.5;
-        padding: 0.55rem 0.15rem 0.65rem;
+        font-size: 1rem;
+        line-height: 1.45;
+        padding: 0.35rem 0.1rem 0.4rem;
         margin: 0;
         white-space: pre-wrap;
         word-wrap: break-word;
         overflow: hidden;
         visibility: hidden;
-        min-height: 56px;
-        max-height: 180px;
+        min-height: 40px;
+        max-height: 132px;
     }
     textarea {
         grid-area: 1 / 1;
         width: 100%;
         font-family: var(--font-prose);
-        font-size: 1.06rem;
-        line-height: 1.5;
-        padding: 0.55rem 0.15rem 0.65rem;
+        font-size: 1rem;
+        line-height: 1.45;
+        padding: 0.35rem 0.1rem 0.4rem;
         background: transparent;
         border: none;
         border-bottom: 1px solid var(--line-soft);
@@ -466,8 +489,8 @@
     .spacer { flex: 1; }
 
     .text-btn {
-        min-height: 44px;
-        padding: 0 0.85rem;
+        min-height: 38px;
+        padding: 0 0.7rem;
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -501,8 +524,8 @@
     }
 
     .send-btn {
-        width: 44px; height: 44px;
-        min-height: 44px;
+        width: 40px; height: 40px;
+        min-height: 40px;
         padding: 0;
         display: inline-flex;
         align-items: center;
