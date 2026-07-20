@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { onMount } from 'svelte';
     import { playHover, playClick } from '$lib/audio/ambient';
 
     type Props = {
@@ -10,8 +11,29 @@
 
     let { title, onClose, children, width = '640px' }: Props = $props();
 
+    let panelEl: HTMLElement;
+    onMount(() => {
+        // Move focus inside so Tab starts here instead of the obscured page.
+        panelEl?.focus();
+    });
+
     function onKeydown(e: KeyboardEvent) {
         if (e.key === 'Escape') onClose();
+        if (e.key === 'Tab' && panelEl) {
+            // Minimal focus trap: wrap at both ends of the panel's focusables.
+            const items = panelEl.querySelectorAll<HTMLElement>(
+                'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+            );
+            if (!items.length) return;
+            const first = items[0];
+            const last = items[items.length - 1];
+            const active = document.activeElement;
+            if (e.shiftKey && (active === first || !panelEl.contains(active))) {
+                last.focus(); e.preventDefault();
+            } else if (!e.shiftKey && (active === last || !panelEl.contains(active))) {
+                first.focus(); e.preventDefault();
+            }
+        }
     }
 </script>
 
@@ -26,7 +48,7 @@
 >
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div class="modal panel diegetic-frame film-surface" style="width: min({width}, 94vw)" role="document" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+    <div class="modal panel diegetic-frame film-surface" style="width: min({width}, 94vw)" role="document" tabindex="-1" bind:this={panelEl} onclick={(e) => e.stopPropagation()}>
         <header class="modal-head">
             <span class="head-eyebrow">Chapter</span>
             <h3 class="display">{title}</h3>

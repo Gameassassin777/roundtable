@@ -7,6 +7,21 @@ import { buildCriticPrompt, buildCriticRequestBody } from './lib/critic.js';
 import { buildSceneSyncPrompt, buildSceneSyncRequestBody, sanitizeSyncChange } from './lib/sceneSync.js';
 import { buildWorldEnginePrompt, buildWorldEngineRequestBody, tickWorldClock } from './lib/worldEngine.js';
 
+// Base64 helpers — module scope so the Durable Object's doc-update relay
+// (constructor) can reach them too.
+const uint8ToB64 = (uint8) => {
+  let binary = '';
+  const len = uint8.byteLength;
+  for (let i = 0; i < len; i++) binary += String.fromCharCode(uint8[i]);
+  return btoa(binary);
+};
+const b64ToUint8 = (b64) => {
+  const s = atob(b64);
+  const bytes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+  return bytes;
+};
+
 // ---------------------------------------------------------------------------
 // Worker entrypoint: route WebSocket upgrades to the per-world Durable Object.
 // World ID = ?room=<id> query param. Each world = one DO instance, persisted.
@@ -69,12 +84,23 @@ export class SignalingRoom {
         const seeded = Y.encodeStateAsUpdate(this.yDoc);
         await this.state.storage.put("yDocState", seeded);
       }
-      // Persist doc on every remote update (debounced via update handler)
-      this.yDoc.on('update', async (update, origin) => {
-        // Only persist updates that came from clients (not local echoes)
+      // Persist doc on every update, and RELAY it to every connected session.
+      // This relay is the world's voice: server-side writes (genesis, DM turn
+      // beats, world beats, codex changes) must REACH players, not just
+      // storage. Previously only client-originated updates were relayed (in
+      // the message handler), so nothing the server wrote ever appeared in a
+      // player's chronicle — the game could never speak. Echoing a client's
+      // own update back to it is a harmless no-op (Yjs updates are
+      // idempotent, and clients apply with origin 'server' so they never
+      // re-send — no loop).
+      this.yDoc.on('update', (update, origin) => {
         if (origin !== 'local') {
           const bytes = Y.encodeStateAsUpdate(this.yDoc);
-          await this.state.storage.put("yDocState", bytes);
+          this.state.storage.put("yDocState", bytes);
+          const msg = JSON.stringify({ type: "update", update: uint8ToB64(update) });
+          for (const s of this.sessions) {
+            try { s.ws.send(msg); } catch { /* dropped socket */ }
+          }
         }
       });
     });
@@ -310,19 +336,6 @@ export class SignalingRoom {
       try { ws.send(JSON.stringify({ type: 'ping' })); } catch { /* dead socket */ }
     }, 25000);
 
-    const uint8ToB64 = (uint8) => {
-      let binary = '';
-      const len = uint8.byteLength;
-      for (let i = 0; i < len; i++) binary += String.fromCharCode(uint8[i]);
-      return btoa(binary);
-    };
-    const b64ToUint8 = (b64) => {
-      const s = atob(b64);
-      const bytes = new Uint8Array(s.length);
-      for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
-      return bytes;
-    };
-
     const broadcast = (msg) => {
       const s = JSON.stringify(msg);
       for (const sess of this.sessions) {
@@ -348,7 +361,7 @@ export class SignalingRoom {
       try {
         const data = JSON.parse(event.data);
 
-        // ----- Yjs sync (unchanged from prior server) ---------------------
+        // ----- Yjs sync (relayed centrally by the yDoc 'update' handler) ----
         if (data.type === "sync-client") {
           const updateBytes = b64ToUint8(data.update);
           Y.applyUpdate(this.yDoc, updateBytes);
@@ -358,11 +371,6 @@ export class SignalingRoom {
             type: "sync-init",
             update: uint8ToB64(merged)
           }));
-          for (const s of this.sessions) {
-            if (s.ws !== ws) {
-              try { s.ws.send(JSON.stringify({ type: "update", update: data.update })); } catch {}
-            }
-          }
           return;
         }
 
@@ -371,11 +379,6 @@ export class SignalingRoom {
           Y.applyUpdate(this.yDoc, updateBytes);
           const merged = Y.encodeStateAsUpdate(this.yDoc);
           await this.state.storage.put("yDocState", merged);
-          for (const s of this.sessions) {
-            if (s.ws !== ws) {
-              try { s.ws.send(event.data); } catch {}
-            }
-          }
           return;
         }
 

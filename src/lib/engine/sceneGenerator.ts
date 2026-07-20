@@ -775,21 +775,10 @@ function makeRoadMask(noise2D: (x: number, y: number) => number): RoadMask {
 // ---------- ground ----------
 
 /**
- * Ground micro-detail: CC0 photo textures (ambientCG Ground054/048, downscaled
- * to 512) used as BUMP only — never albedo. The palette owns the hue; the
- * texture just breaks the vinyl-flat light response that made every floor a
- * carpet. Lush places get leaf litter, everything else gets packed dirt.
+ * Ground depth now comes from normalFromHeight() on the painted canvas itself
+ * (see buildGround) — the external bump jpgs are retired: they 404'd in
+ * production under the /roundtable base path and the paint owns its depth now.
  */
-let _groundTex: Record<string, THREE.Texture> = {};
-function groundBump(kind: 'litter' | 'dirt'): THREE.Texture {
-    if (!_groundTex[kind]) {
-        const t = new THREE.TextureLoader().load(`/textures/ground-${kind}.jpg`);
-        t.wrapS = t.wrapT = THREE.RepeatWrapping;
-        t.repeat.set(18, 18);
-        _groundTex[kind] = t;
-    }
-    return _groundTex[kind];
-}
 
 function buildGround(pal: ScenePalette, biome: string, noise2D: (x: number, y: number) => number, roadMask?: RoadMask, traits?: SceneTraits, visual?: SceneVisual | null, rnd: () => number = mulberry32(hashStr('ground|' + biome))) {
     if (biome === 'void') return null;              // the void has no floor — that's the point

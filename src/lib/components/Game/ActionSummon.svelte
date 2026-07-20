@@ -13,6 +13,7 @@
     import { playHover, playClick } from '$lib/audio/ambient';
     import { onMount, onDestroy } from 'svelte';
     import { DragGesture } from '@use-gesture/vanilla';
+    import { ui } from '$lib/stores/uiStore.svelte';
 
     type Props = {
         onsubmit: (text: string, whisper: boolean) => void;
@@ -51,15 +52,16 @@
         }
         lastLoading = isLoading;
     });
-    let breathing = $derived(Date.now() < breatheUntil);
-
-    // Tick to update breathing flag when timer expires
+    // Tick to update breathing flag when timer expires. `now` must be the
+    // derived dependency — Date.now() alone is not reactive, so the class
+    // never cleared on its own.
     let now = $state(Date.now());
-    let interval: ReturnType<typeof setInterval>;
+    let breathing = $derived(now < breatheUntil);
+    let breathInterval: ReturnType<typeof setInterval>;
     onMount(() => {
-        interval = setInterval(() => { now = Date.now(); }, 500);
+        breathInterval = setInterval(() => { now = Date.now(); }, 500);
     });
-    onDestroy(() => clearInterval(interval));
+    onDestroy(() => clearInterval(breathInterval));
 
     function expand() {
         if (disabled) return;
@@ -75,10 +77,10 @@
     }
     function toggle() { open ? collapse() : expand(); }
 
-    function submit() {
+    function submit(asWhisper?: boolean) {
         const trimmed = value.trim();
         if (!trimmed || disabled) return;
-        onsubmit(trimmed, whisper);
+        onsubmit(trimmed, asWhisper ?? whisper);
         if (trimmed) {
             history.push(trimmed);
             cursor = history.length;
@@ -89,9 +91,11 @@
     }
 
     function handleKeydown(e: KeyboardEvent) {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter') {
             e.preventDefault();
-            submit();
+            // Shift+Enter sends as a whisper regardless of the toggle
+            // (documented in Shortcuts); plain Enter respects the toggle.
+            submit(e.shiftKey ? true : undefined);
             return;
         }
         if (e.key === 'Escape') { collapse(); return; }
@@ -125,11 +129,18 @@
         });
     }
 
-    // Global keyboard: "/" opens sheet, Esc closes (handled above)
+    // Global keyboard: "/" opens the sheet, "?" opens Shortcuts. Both are
+    // inert while typing, while the sheet is open, or while a modal owns the
+    // screen (an expanded sheet behind a modal is invisible — and confusing).
     function handleGlobalKey(e: KeyboardEvent) {
-        if (e.key === '/' && !open && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+        if (open || ui.openModal) return;
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+        if (e.key === '/') {
             e.preventDefault();
             expand();
+        } else if (e.key === '?') {
+            e.preventDefault();
+            ui.showModal('shortcuts');
         }
     }
     onMount(() => window.addEventListener('keydown', handleGlobalKey));
@@ -144,12 +155,13 @@
         `Your move.`,
     ];
     let promptIndex = $state(0);
+    let promptInterval: ReturnType<typeof setInterval>;
     onMount(() => {
-        interval = setInterval(() => {
+        promptInterval = setInterval(() => {
             if (!value) promptIndex = (promptIndex + 1) % PROMPTS.length;
         }, 3800);
     });
-    onDestroy(() => clearInterval(interval));
+    onDestroy(() => clearInterval(promptInterval));
     let placeholder = $derived(whisper ? `Whisper privately as ${authorName}…` : PROMPTS[promptIndex]);
 
     // Swipe-down to dismiss (via @use-gesture/vanilla — handles edge cases
@@ -174,24 +186,6 @@
         });
         return { destroy() { gesture.destroy(); } };
     }
-
-    // Keyboard-safe viewport height (iOS Safari visualViewport API).
-    // When the keyboard opens, visualViewport.height shrinks — we pin it
-    // to --vh so the sheet doesn't get covered.
-    onMount(() => {
-        if (!window.visualViewport) return;
-        const onResize = () => {
-            const vh = window.visualViewport!.height;
-            document.documentElement.style.setProperty('--vh', `${vh}px`);
-        };
-        window.visualViewport.addEventListener('resize', onResize);
-        window.visualViewport.addEventListener('scroll', onResize);
-        onResize();
-        return () => {
-            window.visualViewport?.removeEventListener('resize', onResize);
-            window.visualViewport?.removeEventListener('scroll', onResize);
-        };
-    });
 </script>
 
 <svelte:window onclick={(e) => {
@@ -346,11 +340,6 @@
         100% { box-shadow: 0 0 0 0 rgba(169, 126, 60, 0); }
     }
 
-    .pill-glyph {
-        color: var(--gold);
-        font-size: 0.85rem;
-        line-height: 1;
-    }
     .pill-text {
         letter-spacing: 0.01em;
     }

@@ -29,6 +29,16 @@
     type WizardStep = 'title' | 'attune' | 'forge';
     let wizardStep = $state<WizardStep>('title');
 
+    // Modal chapter titles — the header shows these, never the raw modal id.
+    const MODAL_TITLES: Record<string, string> = {
+        settings: 'Settings',
+        northstar: 'North Star',
+        weave: 'Weave Reader',
+        audit: 'Audit Log',
+        shortcuts: 'Shortcuts',
+        map: 'World Map'
+    };
+
     // Threshold transition state. 'crossing' while genesis runs, 'arrived' once
     // the genesis beat lands in the chat log, 'failed' on genesis error.
     type ThresholdStage = 'crossing' | 'arrived' | 'failed';
@@ -37,6 +47,9 @@
 
     const initialRoomId = localStorage.getItem('rt_world') || 'crossroads-1';
     let roomId = $state(initialRoomId);
+    // The room the live connection is actually joined to — the Attune screen's
+    // table-code field edits `roomId`, so attune() compares and re-joins.
+    let connectedRoomId = $state(initialRoomId);
     let gameState = createGameState(initialRoomId);
     let chatStore = $state(gameState.chatStore);
     let addChatEntry = $state(gameState.addChatEntry);
@@ -201,6 +214,9 @@
             lastTurnError = 'Not connected to the world server.';
             return;
         }
+        // A new turn supersedes the last failure — the subtitle surface shows
+        // `error` ahead of narration, so a stale error would brick it forever.
+        lastTurnError = null;
         turnStageLabel = whisper ? 'Whispering to the DM…' : 'The world responds…';
         clearTurnWatchdog();
         turnWatchdog = setTimeout(() => {
@@ -243,23 +259,16 @@
     }
 
     function continueExisting() {
-        // Use whatever room is already loaded. If character is already
-        // selected and we have a key, skip straight to forge or game.
-        if (characterSelected && isReady) {
-            wizardStep = 'forge';
-        } else {
-            wizardStep = 'attune';
-        }
+        // The wizard only renders when NOT (characterSelected && isReady), so
+        // the old skip-to-forge branch here could never fire — attune is
+        // always the next step; it flips the gate itself when both are set.
+        wizardStep = 'attune';
     }
 
     function joinWorldFromTitle(code: string) {
         roomId = code;
         switchRoom();
-        if (characterSelected && isReady) {
-            wizardStep = 'forge';
-        } else {
-            wizardStep = 'attune';
-        }
+        wizardStep = 'attune';
     }
 
     function attune() {
@@ -267,6 +276,9 @@
         sfx.resume();   // unlock Web Audio on first user gesture in the flow
         localStorage.setItem('rt_api_key', apiKey);
         localStorage.setItem('rt_share_policy', keySharePolicy);
+        // The table-code field is a real choice: if it no longer matches the
+        // room we're connected to, join the typed one before the forge.
+        if (roomId.trim() && roomId.trim() !== connectedRoomId) switchRoom();
         isReady = true;
         registerKey(apiKey, characterName || 'Wanderer', keySharePolicy);
         wizardStep = 'forge';
@@ -418,6 +430,7 @@
             isLoading = false;
             whisperInFlight = false;
             turnStageLabel = '';
+            lastTurnError = null;
             if (evt.ui_update?.qte) broadcastQTE(evt.ui_update.qte);
             // Level-up detection: server's pipeline summary includes xp_awards
             // (turn.pipeline.xp_awards if present). Toast + sfx.
@@ -465,6 +478,7 @@
         } else if (evt.type === 'whisper-result') {
             clearTurnWatchdog();
             whisperInFlight = false;   // NOT isLoading — see handleSubmit
+            lastTurnError = null;
             if (evt.ui_update?.qte) broadcastQTE(evt.ui_update.qte);
             addLocalWhisper({
                 author: 'DM (whisper)',
@@ -559,6 +573,13 @@
             set_at: Date.now(),
             set_by: characterName || 'Host'
         });
+        // Seed-applied starting place lands with the premise that brought it.
+        if (nsSeedLocation) yMap.set('location', nsSeedLocation);
+        if (nsSeedTags) {
+            const cur = (yMap.get('scene_tags') as any) || {};
+            yMap.set('scene_tags', { ...cur, ...nsSeedTags });
+        }
+        nsSeedLocation = ''; nsSeedTags = null;
         ui.closeModal();
     }
     function clearNorthStar() {
@@ -571,7 +592,13 @@
         nsPremise = seed.premise;
         nsTone = seed.tone;
         nsHook = seed.opening_hook;
+        // A seed is a WORLD, not just a premise — carry its starting place and
+        // scene tags so Save actually starts the adventure it describes.
+        nsSeedLocation = seed.starting_location || '';
+        nsSeedTags = seed.starting_scene_tags || null;
     }
+    let nsSeedLocation = $state('');
+    let nsSeedTags = $state<{ biome: string; weather: string; mood: string } | null>(null);
 
     // ---------- Weave reader ----------
     let readerData = $state<any>(null);
@@ -750,7 +777,11 @@
         if (apiKey) registerKey(apiKey, characterName || 'Wanderer', keySharePolicy);
         awareness.setLocalStateField('user', { name: characterName || 'Wanderer' });
         rememberWorld(roomId.trim());
-        addChatEntry({ author: 'System', text: `Entered world: ${roomId}`, type: 'dm' });
+        connectedRoomId = roomId.trim();
+        // No "Entered world" System line: ANY entry in the shared log defeats
+        // the genesis gate — client-side (chatLog.length === 0) and server-side
+        // (yChat.length > 0 aborts) — so a fresh world must stay silent until
+        // the world speaks first. The "Joined <realm>" toast covers the feedback.
     }
 
     function newWorld() {
@@ -864,7 +895,7 @@
 {/if}
 
 {#if ui.openModal}
-    <Modal title={ui.openModal} onClose={() => ui.closeModal()}>
+    <Modal title={MODAL_TITLES[ui.openModal] ?? ui.openModal} onClose={() => ui.closeModal()}>
         {#if ui.openModal === 'settings'}
             <SettingsBody
                 {roomId}

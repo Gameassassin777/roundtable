@@ -247,12 +247,6 @@
         padding: 0.3rem 0 0.3rem 0.65rem;
         border-left: 1px solid #e0b263;
     }
-    .ambient-mark {
-        font-size: 0.85rem;
-        color: #e0b263;
-        line-height: 1.6;
-        flex-shrink: 0;
-    }
 
     /* ---------- whisper — dashed purple ---------- */
     .subtitle[data-beat='whisper'] {
@@ -315,14 +309,6 @@
         padding: 1.2rem 0;
         opacity: 0.82;
     }
-    .idle-mark {
-        color: #e0b263;
-        font-size: 0.9rem;
-        text-shadow:
-            0 1px 3px rgba(0, 0, 0, 0.9),
-            0 0 14px rgba(0, 0, 0, 0.5);
-        animation: idle-twinkle 3s ease-in-out infinite;
-    }
     .idle-hint {
         font-family: var(--font-prose);
         font-style: italic;
@@ -333,11 +319,6 @@
             0 0 14px rgba(252, 248, 237, 0.92),
             0 0 28px rgba(252, 248, 237, 0.7);
     }
-    @keyframes idle-twinkle {
-        0%, 100% { opacity: 0.5; }
-        50%      { opacity: 1; }
-    }
-
     /* ---------- error ---------- */
     .subtitle.error {
         text-align: center;
@@ -349,7 +330,7 @@
 
     /* ---------- reduced motion ---------- */
     @media (prefers-reduced-motion: reduce) {
-        .subtitle, .subtitle.outgoing, .breath, .idle-mark {
+        .subtitle, .subtitle.outgoing, .breath {
             animation: none !important;
         }
         .subtitle { opacity: 1; transform: none; filter: none; }

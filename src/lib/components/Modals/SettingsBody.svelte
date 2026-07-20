@@ -62,8 +62,12 @@
     function changeVolume(e: Event) {
         const v = parseFloat((e.currentTarget as HTMLInputElement).value);
         onAudioChange(audioMuted, v);
-        sfx.play('turn-result');
+        // The slider fires `input` continuously while dragging — chime at most
+        // a few times a second, not sixty.
+        const t = Date.now();
+        if (t - lastVolChime > 350) { lastVolChime = t; sfx.play('turn-result'); }
     }
+    let lastVolChime = 0;
 
     let forceRefreshing = $state(false);
     async function forceRefresh() {
@@ -250,9 +254,6 @@
     <!-- TROUBLESHOOTING & FOOTER -->
     <fieldset class="setting-section troubleshoot">
         <legend class="section-legend eyebrow">Maintenance</legend>
-        <div class="field">
-            <span class="field-help">Relive the visual walkthrough explaining interface controls.</span>
-        </div>
         <div class="field">
             <button class="btn-ghost wide text-center warning-btn" onclick={forceRefresh} disabled={forceRefreshing} onmouseenter={() => playHover()}>
                 {forceRefreshing ? 'Clearing Cache…' : 'Force Refresh (Clear Cache)'}

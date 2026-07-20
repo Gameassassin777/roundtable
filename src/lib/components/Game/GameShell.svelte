@@ -20,6 +20,7 @@
     import { version } from '$app/environment';
     import type { CodexSlice } from '$lib/stores/gameStore';
     import { playHover, playClick } from '$lib/audio/ambient';
+    import { ui } from '$lib/stores/uiStore.svelte';
 
     type ChatEntry = {
         author: string;
@@ -237,6 +238,7 @@
     }
     function handleKeydown(e: KeyboardEvent) {
         if (e.key === 'Escape') {
+            if (ui.openModal) return;   // the modal owns Escape while it's open
             if (moreMenuOpen) closeMoreMenu();
             if (chronicleOpen) chronicleOpen = false;
         }
@@ -415,7 +417,6 @@
         background: var(--resolve); color: var(--resolve);
         animation: corner-pulse 1.6s ease-in-out infinite;
     }
-    .corner-status[data-status='disconnected'] { background: var(--hp); color: var(--hp); opacity: 0.6; }
     @keyframes corner-pulse {
         0%, 100% { opacity: 0.35; }
         50%      { opacity: 0.85; }
@@ -455,13 +456,8 @@
     .corner-glyph:hover, .corner-glyph:focus-visible {
         background: rgba(8, 10, 12, 0.55);
         color: #f4efe3;
-        outline: none;
-    }
-    .corner-glyph:hover, .corner-glyph:focus-visible {
-        color: var(--ink);
-        border-color: var(--ink-soft);
         transform: rotate(45deg) scale(1.05);
-        box-shadow: inset 0 0 0 1px var(--gold), 0 4px 12px rgba(60, 40, 20, 0.16);
+        box-shadow: inset 0 0 0 1px var(--gold), 0 4px 12px rgba(0, 0, 0, 0.4);
         outline: none;
     }
 

@@ -12,6 +12,7 @@
 
     --line:        #d8cbac;   /* single hairline border */
     --line-soft:   #e3d8be;
+    --line-strong: #c4b28a;   /* visible affordances: drag handles, dashed frames */
 
     --accent:      #8c2f2f;   /* burgundy — chrome + primary CTAs only */
     --accent-deep: #6f2020;
@@ -294,6 +295,7 @@ a:hover { text-decoration: underline; }
     --muted:     #8c7e6a;
     --line:      rgba(150, 116, 60, 0.30);
     --line-soft: rgba(150, 116, 60, 0.16);
+    --line-strong: rgba(150, 116, 60, 0.5);
     --gold:      #9c6f24;
     --gold-soft: rgba(169, 126, 60, 0.20);
     /* Burgundy is legible on light, so the accent returns to it — the brass was

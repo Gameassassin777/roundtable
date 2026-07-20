@@ -26,6 +26,7 @@
     let dragOffset = $state(0);
     function draggable(node: HTMLElement) {
         const gesture = new DragGesture(node, (state: any) => {
+            if (!sheetOpen) return;   // desktop rail: never swipe-close (breaks text-select drags)
             const down = state.down;
             const my = state.movement[1];
             const vy = state.velocity[1];
@@ -205,7 +206,7 @@
                         </div>
                         <div class="stat-block">
                             <Bar label="HP" value={myChar.hp} max={myChar.max_hp || myChar.hp} kind="hp" />
-                            <Bar label="Resolve" value={myChar.resolve} max={myChar.resolve} kind="resolve" />
+                            <Bar label="Resolve" value={myChar.resolve} max={myChar.max_resolve || 10} kind="resolve" />
                             <Bar label="Corruption" value={myChar.corruption} max={10} kind="corruption" />
                         </div>
                         {#if myChar.level || myChar.xp !== undefined}
@@ -745,13 +746,6 @@
         padding: 4rem 1rem;
         text-align: center;
     }
-    .empty-mark {
-        font-family: var(--font-display);
-        color: var(--gold);
-        font-size: 1.4rem;
-        opacity: 0.5;
-        margin-bottom: 0.6rem;
-    }
     .empty-eyebrow {
         font-family: var(--font-display);
         font-size: var(--t-xs);
@@ -797,7 +791,6 @@
             from { transform: translateY(100%); opacity: 0.4; }
             to   { transform: translateY(0); opacity: 1; }
         }
-        .close-btn { display: inline-flex; }
     }
 
     @media (prefers-reduced-motion: reduce) {

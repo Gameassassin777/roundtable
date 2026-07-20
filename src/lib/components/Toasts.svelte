@@ -10,7 +10,7 @@
 {#if visible.length > 0}
     <div class="toast-stack" role="region" aria-live="polite" aria-label="Notifications">
         {#each visible as t (t.id)}
-            <div class="toast" data-kind={t.kind} role="status">
+            <div class="toast" data-kind={t.kind}>
                 <span class="toast-marker" aria-hidden="true"></span>
                 <div class="toast-body">
                     <div class="toast-msg">{t.message}</div>

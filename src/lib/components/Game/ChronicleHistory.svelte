@@ -365,12 +365,6 @@
         transform: translateY(1px);
         box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 4px 12px rgba(169, 126, 60, 0.16);
     }
-    .handle-mark {
-        font-family: var(--font-prose);
-        color: var(--gold);
-        font-size: 0.95rem;
-        line-height: 1;
-    }
     .handle-count {
         font-family: var(--font-prose);
         font-style: italic;

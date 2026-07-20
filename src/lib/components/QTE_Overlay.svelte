@@ -7,12 +7,16 @@
     export let onresult: (success: boolean) => void;
     
     let circle: SVGCircleElement;
+    let overlayEl: HTMLDivElement;
     let active = false;
-    let tl: gsap.core.Timeline;
+    let tl: gsap.core.Timeline | undefined;
+    let mountTimer: ReturnType<typeof setTimeout>;
 
     onMount(() => {
+        // Take focus so Enter/Space work without a manual tab mid-QTE.
+        overlayEl?.focus();
         const delay = startTime - Date.now();
-        setTimeout(() => {
+        mountTimer = setTimeout(() => {
             active = true;
             if (navigator.vibrate) navigator.vibrate(100);
             tl = gsap.timeline({ onComplete: () => failQTE() });
@@ -20,11 +24,11 @@
         }, Math.max(0, delay));
     });
 
-    onDestroy(() => { tl?.kill(); });
+    onDestroy(() => { clearTimeout(mountTimer); tl?.kill(); });
 
     function successQTE() {
         if (!active) return;
-        active = false; tl.kill();
+        active = false; tl?.kill();
         gsap.to('.qte-overlay', { duration: 0.3, opacity: 0, scale: 1.5, onComplete: () => onresult(true) });
     }
     function failQTE() { if (active) { active = false; onresult(false); } }
@@ -34,6 +38,7 @@
     class="qte-overlay"
     role="button"
     tabindex="0"
+    bind:this={overlayEl}
     onclick={successQTE}
     ontouchstart={successQTE}
     onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && successQTE()}
