@@ -7,11 +7,12 @@ interface DMResponse {
     new_codex?: any;
 }
 
-// Model fallback chain. gemini-2.0-flash is effectively quota-dead on the free tier
-// now (instant 429), and gemini-3-flash-preview is frequently 503. 2.5-flash is the
-// reliable free default; we fall through the list on 429/503 so a single model being
-// rate-limited or overloaded never kills a turn.
-export const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash'];
+// Model fallback chain. Free-tier quota is per-model per-day (20 req), so one long
+// session can cap every primary at once — we walk the list on 429/503 until a model
+// answers. gemini-2.0-flash is effectively quota-dead (instant 429) and
+// gemini-3-flash-preview is frequently 503; 2.5-flash is the preferred default and
+// 2.5-flash-lite is the last-resort floor that keeps the story moving.
+export const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'];
 
 const SYSTEM_PROMPT = `You are the Dungeon Master for a fantasy adventure. Output ONLY valid JSON. No markdown.`;
 

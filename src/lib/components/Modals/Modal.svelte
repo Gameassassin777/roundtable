@@ -1,15 +1,17 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { playHover, playClick } from '$lib/audio/ambient';
+    import Icon from '$lib/components/Icon.svelte';
 
     type Props = {
         title: string;
+        eyebrow?: string;
         onClose: () => void;
         children: import('svelte').Snippet;
         width?: string;
     };
 
-    let { title, onClose, children, width = '640px' }: Props = $props();
+    let { title, eyebrow = 'Chapter', onClose, children, width = '640px' }: Props = $props();
 
     let panelEl: HTMLElement;
     onMount(() => {
@@ -50,9 +52,9 @@
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="modal panel diegetic-frame film-surface" style="width: min({width}, 94vw)" role="document" tabindex="-1" bind:this={panelEl} onclick={(e) => e.stopPropagation()}>
         <header class="modal-head">
-            <span class="head-eyebrow">Chapter</span>
+            <span class="head-eyebrow">{eyebrow}</span>
             <h3 class="display">{title}</h3>
-            <button class="close-btn" onclick={() => { playClick(); onClose(); }} onmouseenter={() => playHover()} aria-label="Close">×</button>
+            <button class="close-btn" onclick={() => { playClick(); onClose(); }} onmouseenter={() => playHover()} aria-label="Close"><Icon name="close" size={17} /></button>
         </header>
         <div class="modal-body">
             {@render children()}
@@ -87,7 +89,8 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        animation: modal-in 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
+        border-radius: var(--radius-modal);
+        animation: modal-in 0.32s var(--ease-out-soft);
     }
     @keyframes modal-in {
         from { transform: translateY(12px) scale(0.98); opacity: 0; }
@@ -131,15 +134,15 @@
         height: 44px;
         min-height: 44px;
         padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         background: transparent;
         border: none;
         color: var(--muted);
-        font-family: var(--font-display);
-        font-size: 1.5rem;
-        line-height: 1;
         cursor: pointer;
         align-self: center;
-        transition: color 0.22s ease, transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+        transition: color 0.22s ease, transform 0.25s var(--ease-out-soft);
     }
     .close-btn:hover, .close-btn:focus-visible {
         color: var(--accent);

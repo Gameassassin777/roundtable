@@ -14,6 +14,7 @@
     import { onMount, onDestroy } from 'svelte';
     import { DragGesture } from '@use-gesture/vanilla';
     import { ui } from '$lib/stores/uiStore.svelte';
+    import Icon from '$lib/components/Icon.svelte';
 
     type Props = {
         onsubmit: (text: string, whisper: boolean) => void;
@@ -285,7 +286,7 @@
             </button>
             <div class="spacer"></div>
             <button type="submit" class="btn-primary send-btn" onclick={() => playClick()} onmouseenter={() => !disabled && value.trim() && playHover()} disabled={disabled || !value.trim()} aria-label="Submit action">
-                <span class="send-glyph">{whisperInFlight ? '…' : '↵'}</span>
+                <span class="send-glyph">{#if whisperInFlight}…{:else}<Icon name="send" size={16} />{/if}</span>
             </button>
         </div>
     </form>
@@ -304,7 +305,7 @@
         background: rgba(10, 12, 14, 0.55);
         backdrop-filter: blur(8px);
         -webkit-backdrop-filter: blur(8px);
-        border: 1px solid rgba(224, 178, 99, 0.28);
+        border: 1px solid color-mix(in srgb, var(--gold-screen) 28%, transparent);
         border-radius: 999px;
         font-family: var(--font-prose);
         font-style: italic;
@@ -320,14 +321,14 @@
         opacity: 1;
         transform: translateY(-2px);
         box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55);
-        border-color: rgba(224, 178, 99, 0.7);
+        border-color: color-mix(in srgb, var(--gold-screen) 70%, transparent);
         color: #f4efe3;
         outline: none;
     }
     .action-pill.breathing {
         animation: pill-breathe 1.2s ease-out;
         opacity: 1;
-        border-color: rgba(224, 178, 99, 0.7);
+        border-color: color-mix(in srgb, var(--gold-screen) 70%, transparent);
     }
     .action-pill.busy {
         cursor: default;
@@ -378,8 +379,8 @@
         padding-right: max(0.9rem, var(--safe-right));
         background: var(--card);
         border-top: 3px double var(--gold);
-        box-shadow: inset 0 0 0 1px var(--gold-soft), 0 -8px 32px rgba(60, 40, 20, 0.16);
-        border-radius: 8px 8px 0 0;
+        box-shadow: inset 0 0 0 1px var(--gold-soft), var(--shadow-sheet);
+        border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
         z-index: 31;
         display: flex;
         flex-direction: column;
@@ -504,6 +505,9 @@
         border-radius: var(--radius-pill);
     }
     .send-glyph {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         font-family: var(--font-ui);
         font-size: 1.1rem;
         font-weight: 600;

@@ -25,7 +25,7 @@
     ];
 </script>
 
-<div class="wizard-card panel diegetic-frame">
+<div class="wizard-card panel film-surface">
     <header class="wizard-head">
         <span class="eyebrow">Step 1 of 2</span>
         <h2 class="display">Attune the Aether</h2>
@@ -98,7 +98,9 @@
     .wizard-card {
         width: min(540px, 92vw);
         padding: 1.9rem 1.8rem 1.7rem;
-        animation: card-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
+        border-radius: var(--radius-modal);
+        box-shadow: var(--shadow-overlay);
+        animation: card-in 0.5s var(--ease-out-soft);
     }
     @keyframes card-in {
         from { transform: translateY(8px); opacity: 0; }

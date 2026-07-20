@@ -61,7 +61,18 @@ import { PainterlyBaker, createBackdrop } from '$lib/engine/painterly';
                 // Compile OFF the critical path: the pinned light rig means
                 // this pays once per app lifetime, and the async form keeps
                 // the page responsive even through that first compile.
-                await renderer.compileAsync(scene, camera);
+                //
+                // RACE GUARD: three's compileAsync polls program.isReady() in
+                // a setTimeout loop; if a scene rebuild disposes a material
+                // mid-poll, the loop throws (uncatchable pageerror: "reading
+                // 'isReady'") and the promise PENDS FOREVER — which would
+                // wedge `baking` and freeze every future bake. Cap the wait:
+                // programs finish compiling on the first real render anyway,
+                // so compileAsync is an optimization, not a hard dependency.
+                await Promise.race([
+                    renderer.compileAsync(scene, camera),
+                    new Promise((res) => setTimeout(res, 15000))
+                ]);
                 // Bake slightly wide so the Ken Burns drift never reveals an edge.
                 const fov0 = camera.fov;
                 camera.fov = fov0 * 1.06;

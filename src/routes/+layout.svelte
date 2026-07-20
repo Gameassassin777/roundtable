@@ -3,6 +3,7 @@
     import { onMount } from 'svelte';
     import { dev, version } from '$app/environment';
     import { updated } from '$app/stores';
+    import { base } from '$app/paths';
 
     let { children } = $props();
 
@@ -12,7 +13,7 @@
     onMount(() => {
         // Register service worker in production only to avoid HMR caching issues
         if ('serviceWorker' in navigator && !dev) {
-            navigator.serviceWorker.register('/service-worker.js').then((reg) => {
+            navigator.serviceWorker.register(`${base}/service-worker.js`).then((reg) => {
                 if (reg.waiting) {
                     swState = 'update-ready';
                 }

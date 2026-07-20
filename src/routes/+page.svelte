@@ -30,13 +30,13 @@
     let wizardStep = $state<WizardStep>('title');
 
     // Modal chapter titles — the header shows these, never the raw modal id.
-    const MODAL_TITLES: Record<string, string> = {
-        settings: 'Settings',
-        northstar: 'North Star',
-        weave: 'Weave Reader',
-        audit: 'Audit Log',
-        shortcuts: 'Shortcuts',
-        map: 'World Map'
+    const MODAL_META: Record<string, { title: string; eyebrow: string }> = {
+        settings: { title: 'Settings', eyebrow: 'The Table' },
+        northstar: { title: 'North Star', eyebrow: 'The Promise' },
+        weave: { title: 'Weave Reader', eyebrow: 'The Threads' },
+        audit: { title: 'Audit Log', eyebrow: 'The Record' },
+        shortcuts: { title: 'Shortcuts', eyebrow: 'The Keys' },
+        map: { title: 'World Map', eyebrow: 'The Lands' }
     };
 
     // Threshold transition state. 'crossing' while genesis runs, 'arrived' once
@@ -118,6 +118,7 @@
     let connectionStatus = $state('Connecting');
     let wsDisconnected = $state(false);
     let peers = $state(0);
+    let peerNames = $state<string[]>([]);
 
     // ---------- QTE ----------
     let showQTE = $state(false);
@@ -525,6 +526,9 @@
         const update = () => {
             const states = aw.getStates();
             peers = Math.max(0, states.size - 1);
+            peerNames = [...states.values()]
+                .map((s: any) => s?.user?.name)
+                .filter((n: any): n is string => !!n);
             connectionStatus = peers > 0 ? 'Live' : 'Solo';
         };
         aw.on('change', update);
@@ -827,6 +831,7 @@
         codex={codexData}
         characterName={characterName || 'Wanderer'}
         peers={peers}
+        peerNames={peerNames}
         connectionStatus={connectionStatus}
         worldClock={worldClock}
         worldSeed={roomId}
@@ -895,7 +900,7 @@
 {/if}
 
 {#if ui.openModal}
-    <Modal title={MODAL_TITLES[ui.openModal] ?? ui.openModal} onClose={() => ui.closeModal()}>
+    <Modal title={MODAL_META[ui.openModal]?.title ?? ui.openModal} eyebrow={MODAL_META[ui.openModal]?.eyebrow ?? 'Chapter'} onClose={() => ui.closeModal()}>
         {#if ui.openModal === 'settings'}
             <SettingsBody
                 {roomId}

@@ -112,7 +112,12 @@
         padding: 0 1rem;
     }
     .passage .eyebrow { color: var(--gold); }
-    .passage .eyebrow.arrived { color: var(--accent); }
+    /* Arrived = the world opens: screen gold with a soft bloom. It was
+       --accent (burgundy) — dark red on the 0.92-dark veil, near-invisible. */
+    .passage .eyebrow.arrived {
+        color: var(--gold-screen);
+        text-shadow: 0 0 18px rgba(224, 178, 99, 0.5), 0 1px 3px rgba(0, 0, 0, 0.7);
+    }
     .passage-line {
         font-size: var(--t-prose);
         color: #fdf6ec;

@@ -17,7 +17,7 @@
     import ActionSummon from './ActionSummon.svelte';
     import ChronicleHistory from './ChronicleHistory.svelte';
     import Codex from './Codex.svelte';
-    import { version } from '$app/environment';
+    import Icon from '$lib/components/Icon.svelte';
     import type { CodexSlice } from '$lib/stores/gameStore';
     import { playHover, playClick } from '$lib/audio/ambient';
     import { ui } from '$lib/stores/uiStore.svelte';
@@ -53,6 +53,7 @@
         codex: CodexSlice;
         characterName: string;
         peers: number;
+        peerNames: string[];
         connectionStatus: string;
         worldClock: { turn: number; day: number; time_of_day: string };
         worldSeed: string;
@@ -69,7 +70,7 @@
 
     let {
         chatLog, localWhispers, isLoading, turnStageLabel, lastTurnError,
-        whisperInFlight, codex, characterName, peers, connectionStatus,
+        whisperInFlight, codex, characterName, peers, peerNames, connectionStatus,
         worldClock, worldSeed, engineSecondsLeft, enginePaused,
         onsubmit, onCodexToggle, onOpenModal, onEngineControl,
         codexSheetOpen, showLevelUp, levelUpName
@@ -269,7 +270,6 @@
         title={`${connectionStatus}${peers > 0 ? ` · ${peers} peer${peers === 1 ? '' : 's'}` : ''}`}
         aria-hidden="true"
     ></span>
-    <span class="version-label">v{version}</span>
 
     <!-- ====== Minimal corner chrome — menu glyph (top-right) ====== -->
     <div class="corner-anchor floating-chrome">
@@ -279,23 +279,39 @@
             onclick={() => { playClick(); toggleMoreMenu(); }}
             aria-label="Menu"
             aria-expanded={moreMenuOpen}
-        >◈</button>
+        ><Icon name="menu" size={19} /></button>
 
         {#if moreMenuOpen}
-            <div class="more-menu" data-more-menu role="menu">
+            <div class="more-menu film-surface" data-more-menu role="menu">
+                <div class="more-section table-presence">
+                    <div class="more-label eyebrow">At the table</div>
+                    {#if peerNames.length > 0}
+                        {#each peerNames as n}
+                            <span class="presence-row">
+                                <span class="presence-dot" aria-hidden="true"></span>
+                                {n}{#if n === characterName} <span class="muted">· you</span>{/if}
+                            </span>
+                        {/each}
+                    {:else}
+                        <span class="presence-row muted">Just you — share the table code to play together</span>
+                    {/if}
+                </div>
+
                 <div class="more-section">
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); onCodexToggle(); closeMoreMenu(); }} onmouseenter={() => playHover()}>Codex</button>
+                    <button class="btn-ghost wide menu-row" role="menuitem" onclick={() => { playClick(); onCodexToggle(); closeMoreMenu(); }} onmouseenter={() => playHover()}>
+                        <Icon name="codex" size={15} /><span>Codex</span>
+                    </button>
                 </div>
 
                 <div class="more-section">
                     <div class="more-label eyebrow">Engine</div>
                     <div class="more-row">
                         {#if enginePaused}
-                            <span class="chip paused">Paused</span>
-                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => { playClick(); engineAction('resume'); }} onmouseenter={() => playHover()}>Resume</button>
+                            <span class="chip paused"><Icon name="pause" size={12} /> Paused</span>
+                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => { playClick(); engineAction('resume'); }} onmouseenter={() => playHover()}><Icon name="play" size={12} /> Resume</button>
                         {:else if engineSecondsLeft !== null}
-                            <span class="chip">◷ {engineSecondsLeft}s</span>
-                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => { playClick(); engineAction('pause'); }} onmouseenter={() => playHover()}>Pause</button>
+                            <span class="chip"><Icon name="clock" size={12} /> {engineSecondsLeft}s</span>
+                            <button class="btn-tiny btn-ghost" role="menuitem" onclick={() => { playClick(); engineAction('pause'); }} onmouseenter={() => playHover()}><Icon name="pause" size={12} /> Pause</button>
                         {:else}
                             <span class="chip muted">Idle</span>
                         {/if}
@@ -308,15 +324,27 @@
 
                 <div class="more-section">
                     <div class="more-label eyebrow">World</div>
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('map'); }} onmouseenter={() => playHover()}>Map</button>
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('audit'); }} onmouseenter={() => playHover()}>Audit Log</button>
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('northstar'); }} onmouseenter={() => playHover()}>North Star</button>
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('weave'); }} onmouseenter={() => playHover()}>Weave</button>
-                    <button class="btn-ghost wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('shortcuts'); }} onmouseenter={() => playHover()}>Shortcuts</button>
+                    <button class="btn-ghost wide menu-row" role="menuitem" onclick={() => { playClick(); openModalFromMenu('map'); }} onmouseenter={() => playHover()}>
+                        <Icon name="map" size={15} /><span>Map</span>
+                    </button>
+                    <button class="btn-ghost wide menu-row" role="menuitem" onclick={() => { playClick(); openModalFromMenu('audit'); }} onmouseenter={() => playHover()}>
+                        <Icon name="scroll" size={15} /><span>Audit Log</span>
+                    </button>
+                    <button class="btn-ghost wide menu-row" role="menuitem" onclick={() => { playClick(); openModalFromMenu('northstar'); }} onmouseenter={() => playHover()}>
+                        <Icon name="star" size={15} /><span>North Star</span>
+                    </button>
+                    <button class="btn-ghost wide menu-row" role="menuitem" onclick={() => { playClick(); openModalFromMenu('weave'); }} onmouseenter={() => playHover()}>
+                        <Icon name="weave" size={15} /><span>Weave</span>
+                    </button>
+                    <button class="btn-ghost wide menu-row" role="menuitem" onclick={() => { playClick(); openModalFromMenu('shortcuts'); }} onmouseenter={() => playHover()}>
+                        <Icon name="keyboard" size={15} /><span>Shortcuts</span>
+                    </button>
                 </div>
 
                 <div class="more-section">
-                    <button class="btn-primary wide" role="menuitem" onclick={() => { playClick(); openModalFromMenu('settings'); }} onmouseenter={() => playHover()}>Settings</button>
+                    <button class="btn-primary wide menu-row" role="menuitem" onclick={() => { playClick(); openModalFromMenu('settings'); }} onmouseenter={() => playHover()}>
+                        <Icon name="gear" size={15} /><span>Settings</span>
+                    </button>
                 </div>
             </div>
         {/if}
@@ -465,43 +493,74 @@
         position: absolute;
         top: calc(100% + 8px);
         right: 0;
-        min-width: 220px;
-        padding: 0.6rem 0.5rem;
+        min-width: 228px;
+        padding: 0.55rem 0.5rem;
+        /* Light glass (via .film-surface on the element) — the same material
+           as the summoned sheets. The old 3px-double-gold parchment frame was
+           the last cream card in the idle chrome. */
         background: var(--card);
-        border: 3px double var(--gold);
-        box-shadow: inset 0 0 0 1px var(--gold-soft), 0 8px 32px rgba(60, 40, 20, 0.18);
-        border-radius: var(--radius);
+        border: 1px solid var(--line-strong);
+        box-shadow: var(--shadow-overlay), inset 0 0 0 1px var(--gold-soft);
+        border-radius: var(--radius-modal);
         z-index: 40;
         display: flex;
         flex-direction: column;
-        gap: 0.4rem;
-        animation: menu-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+        gap: 0.35rem;
+        animation: menu-in 0.22s var(--ease-out-soft);
         opacity: 1;
     }
-    .more-menu button.wide:not(.btn-primary) {
+    .more-menu .menu-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
         text-align: left;
-        padding-left: 1.8rem !important;
+        padding-left: 0.7rem !important;
         position: relative;
         background: transparent;
         border: none;
         box-shadow: none;
     }
-    .more-menu button.wide:hover::before {
-        opacity: 1;
-        transform: translateY(-50%) scale(1);
-    }
-    @keyframes menu-in {
-        from { opacity: 0; transform: translateY(-6px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
+    .more-menu .menu-row :global(.icon) { color: var(--gold); flex-shrink: 0; }
+    .more-menu .btn-primary.menu-row :global(.icon) { color: inherit; }
     .more-section {
         display: flex;
         flex-direction: column;
         gap: 0.3rem;
         padding: 0.4rem 0;
         border-bottom: 1px solid var(--gold-soft);
+        animation: menu-row-in 0.3s var(--ease-out-soft) both;
+    }
+    .more-section:nth-child(2) { animation-delay: 0.045s; }
+    .more-section:nth-child(3) { animation-delay: 0.09s; }
+    .more-section:nth-child(4) { animation-delay: 0.135s; }
+    .more-section:nth-child(5) { animation-delay: 0.18s; }
+    @keyframes menu-row-in {
+        from { opacity: 0; transform: translateY(4px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes menu-in {
+        from { opacity: 0; transform: translateY(-6px); }
+        to { opacity: 1; transform: translateY(0); }
     }
     .more-section:last-child { border-bottom: none; padding-bottom: 0; }
+    .more-section .chip { display: inline-flex; align-items: center; gap: 0.3rem; }
+    .presence-row {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.15rem 0.2rem;
+        font-size: var(--t-sm);
+        color: var(--ink-soft);
+        line-height: 1.3;
+    }
+    .presence-dot {
+        width: 6px; height: 6px;
+        border-radius: 50%;
+        background: var(--good);
+        box-shadow: 0 0 6px color-mix(in srgb, var(--good) 65%, transparent);
+        flex-shrink: 0;
+    }
+    .table-presence .presence-row.muted { font-size: var(--t-xs); }
     .more-label {
         font-size: var(--t-xs);
         padding: 0 0.2rem 0.2rem;
@@ -594,29 +653,8 @@
         }
     }
 
-    .version-label {
-        position: absolute;
-        bottom: calc(var(--safe-bottom, 0px) + 0.72rem);
-        left: calc(max(0.9rem, var(--safe-left)) + 12px);
-        font-family: var(--font-display);
-        font-size: 9px;
-        font-weight: 500;
-        letter-spacing: 0.05em;
-        color: var(--muted);
-        opacity: 0.35;
-        z-index: 4;
-        pointer-events: none;
-    }
-
-    @media (max-width: 540px) {
-        .version-label {
-            bottom: calc(var(--safe-bottom, 0px) + 0.58rem);
-            left: calc(max(0.75rem, var(--safe-left)) + 10px);
-        }
-    }
-
     @media (prefers-reduced-motion: reduce) {
         .floating-chrome { transition: none; }
-        .more-menu, .level-toast { animation: none !important; }
+        .more-menu, .more-section, .level-toast { animation: none !important; }
     }
 </style>

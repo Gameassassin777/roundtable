@@ -1,5 +1,6 @@
 <script lang="ts">
     import { forgeCharacter, forgeConverse, type ForgedCharacter, type ForgeMessage } from '$lib/ai/soulForge';
+    import Icon from '$lib/components/Icon.svelte';
 
     type Props = {
         apiKey: string;
@@ -104,7 +105,7 @@
     }
 </script>
 
-<div class="wizard-card forge panel">
+<div class="wizard-card forge panel film-surface">
     <header class="wizard-head">
         <span class="eyebrow">Step 2 of 2</span>
         <h2 class="display">The Soul Forge</h2>
@@ -232,7 +233,7 @@
                     {#if forged.portrait_url}
                         <img src={forged.portrait_url} alt={characterName || forged.name} />
                     {:else}
-                        <span class="forged-glyph">✦</span>
+                        <span class="forged-glyph"><Icon name="star" size={26} /></span>
                     {/if}
                 </div>
                 <div class="forged-id">
@@ -284,7 +285,9 @@
     .wizard-card {
         width: min(620px, 94vw);
         padding: 1.9rem 1.8rem 1.7rem;
-        animation: card-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
+        border-radius: var(--radius-modal);
+        box-shadow: var(--shadow-overlay);
+        animation: card-in 0.5s var(--ease-out-soft);
     }
     @keyframes card-in {
         from { transform: translateY(8px); opacity: 0; }

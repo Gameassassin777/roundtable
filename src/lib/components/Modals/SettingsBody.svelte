@@ -2,6 +2,7 @@
     import { version } from '$app/environment';
     import { playHover, playClick } from '$lib/audio/ambient';
     import * as sfx from '$lib/audio/sfx';
+    import Icon from '$lib/components/Icon.svelte';
 
     type SavedSlot = {
         name: string;
@@ -51,6 +52,19 @@
         ['solo', 'Solo', 'Only used for your own turns. Never pooled.'],
         ['host', 'Host', 'Pooled, but only the host contributes.']
     ];
+
+    // One-tap invite: mobile text selection in a user-select:none app is
+    // fiddly; the clipboard API is one tap. Label flips as confirmation.
+    let copied = $state(false);
+    function copyInvite() {
+        const code = roomId?.trim();
+        if (!code) return;
+        try {
+            navigator.clipboard?.writeText(code);
+        } catch { /* clipboard unavailable (insecure context) — the input still shows the code */ }
+        copied = true;
+        setTimeout(() => { copied = false; }, 1400);
+    }
 
     function toggleMute(e: Event) {
         const checked = (e.currentTarget as HTMLInputElement).checked;
@@ -123,13 +137,22 @@
         <div class="field">
             <span class="field-label">Table Realm Code</span>
             <div class="row">
-                <input 
-                    type="text" 
-                    value={roomId} 
-                    oninput={(e) => onRoomIdChange((e.currentTarget as HTMLInputElement).value)} 
-                    placeholder="realm code" 
+                <input
+                    type="text"
+                    value={roomId}
+                    oninput={(e) => onRoomIdChange((e.currentTarget as HTMLInputElement).value)}
+                    placeholder="realm code"
                     aria-label="Table code"
                 />
+                <button
+                    class="btn-ghost copy-btn"
+                    onclick={() => { playClick(); copyInvite(); }}
+                    onmouseenter={() => playHover()}
+                    aria-label="Copy invite code"
+                    title="Copy invite code"
+                >
+                    {#if copied}Copied{:else}<Icon name="copy" size={14} />{/if}
+                </button>
                 <button class="btn-ghost" onclick={() => { playClick(); onSwitchRoom(); }} onmouseenter={() => playHover()}>Join</button>
             </div>
             <span class="field-help">Share this code so friends join your world in real time.</span>
@@ -207,15 +230,15 @@
                             <span class="saved-name">{slot.name}</span>
                             <span class="saved-class muted">{slot.class_title}</span>
                         </div>
-                        <button 
-                            type="button" 
-                            class="saved-delete" 
-                            onclick={() => { playClick(); onDeleteSavedCharacter(slot.name); }} 
+                        <button
+                            type="button"
+                            class="saved-delete"
+                            onclick={() => { playClick(); onDeleteSavedCharacter(slot.name); }}
                             onmouseenter={() => playHover()}
-                            aria-label="Remove from roster" 
+                            aria-label="Remove from roster"
                             title="Remove"
                         >
-                            ✕
+                            <Icon name="close" size={12} />
                         </button>
                     </div>
                 {/each}
@@ -338,6 +361,7 @@
     }
     .row input { flex: 1; }
     .row .btn-ghost { min-height: 44px; }
+    .copy-btn { min-width: 52px; display: inline-flex; align-items: center; justify-content: center; font-size: var(--t-xs); }
 
     .btn-ghost.wide {
         min-height: 44px;

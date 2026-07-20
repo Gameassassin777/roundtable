@@ -1,7 +1,8 @@
 <script lang="ts">
     // Bottom-anchored toast stack. Renders above the action input.
-    // Auto-dismisses via toastStore's ttl; manual close via ✕.
+    // Auto-dismisses via toastStore's ttl; manual close via the dismiss mark.
     import { toasts, dismissToast } from '$lib/stores/toastStore.svelte';
+    import Icon from '$lib/components/Icon.svelte';
 
     // Cap visible toasts to last 3 to avoid stacking the screen on a flurry.
     let visible = $derived(toasts.slice(-3));
@@ -10,7 +11,7 @@
 {#if visible.length > 0}
     <div class="toast-stack" role="region" aria-live="polite" aria-label="Notifications">
         {#each visible as t (t.id)}
-            <div class="toast" data-kind={t.kind}>
+            <div class="toast film-surface" data-kind={t.kind}>
                 <span class="toast-marker" aria-hidden="true"></span>
                 <div class="toast-body">
                     <div class="toast-msg">{t.message}</div>
@@ -22,7 +23,7 @@
                     class="toast-close"
                     onclick={() => dismissToast(t.id)}
                     aria-label="Dismiss notification"
-                >×</button>
+                ><Icon name="close" size={13} /></button>
             </div>
         {/each}
     </div>

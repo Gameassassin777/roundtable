@@ -403,8 +403,8 @@
         height: 75vh;
         background: var(--card);
         border-top: 3px double var(--gold);
-        box-shadow: inset 0 0 0 1px var(--gold-soft), 0 -8px 32px rgba(60, 40, 20, 0.18);
-        border-radius: 8px 8px 0 0;
+        box-shadow: inset 0 0 0 1px var(--gold-soft), var(--shadow-sheet);
+        border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
         z-index: 33;
         display: flex;
         flex-direction: column;

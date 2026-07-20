@@ -218,7 +218,7 @@
         font-size: var(--t-xs);
         font-weight: 600;
         letter-spacing: 0.22em;
-        color: #e0b263;
+        color: var(--gold-screen);
         text-transform: uppercase;
         text-shadow:
             0 1px 3px rgba(0, 0, 0, 0.9),
@@ -228,13 +228,13 @@
         margin: 0.4rem 0 0;
         width: 56px;
         border: none;
-        border-top: 1px solid #e0b263;
+        border-top: 1px solid var(--gold-screen);
         opacity: 0.7;
     }
 
     /* ---------- social ---------- */
     .social-frame {
-        border-left: 2px solid #e0b263;
+        border-left: 2px solid var(--gold-screen);
         padding-left: 1rem;
         margin-left: 0.15rem;
     }
@@ -245,7 +245,7 @@
         align-items: flex-start;
         gap: 0.55rem;
         padding: 0.3rem 0 0.3rem 0.65rem;
-        border-left: 1px solid #e0b263;
+        border-left: 1px solid var(--gold-screen);
     }
 
     /* ---------- whisper — dashed purple ---------- */

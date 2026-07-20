@@ -778,8 +778,8 @@
             transition: transform 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
             border-left: none;
             border-top: 1px solid var(--line);
-            border-radius: 6px 6px 0 0;
-            box-shadow: 0 -8px 32px rgba(60, 40, 20, 0.18);
+            border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+            box-shadow: var(--shadow-sheet);
             padding-bottom: var(--safe-bottom);
             z-index: 33;
         }
