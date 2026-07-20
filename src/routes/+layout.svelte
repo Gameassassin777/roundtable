@@ -46,8 +46,17 @@
         // skipWaiting + clients.claim), reload immediately so the page picks up the
         // new assets. Without this, iOS PWAs can run old JS under a new SW until the
         // next navigation.
+        //
+        // BUT: controllerchange also fires on FIRST install (the SW claims the
+        // page ~10s in). The page already runs the assets it just downloaded —
+        // reloading then just wipes in-progress onboarding (the new player taps
+        // "Enter a New World" and the app restarts under them). Only reload when
+        // control changes from an OLD worker (hadController at load) or when we
+        // explicitly asked a waiting update to take over (expectSWTakeover).
         if ('serviceWorker' in navigator) {
+            const hadController = !!navigator.serviceWorker.controller;
             const onControllerChange = () => {
+                if (!hadController && !expectSWTakeover) return;   // first install
                 swState = 'activating';
                 setTimeout(() => location.reload(), 300);
             };
@@ -60,11 +69,14 @@
         return unsub;
     });
 
+    let expectSWTakeover = false;
+
     async function triggerSWUpdate() {
         if ('serviceWorker' in navigator) {
             const regs = await navigator.serviceWorker.getRegistrations();
             for (const r of regs) {
                 if (r.waiting) {
+                    expectSWTakeover = true;   // we asked the update to take over — reload when it does
                     r.waiting.postMessage({ type: 'SKIP_WAITING' });
                 } else {
                     // fallback reload if no waiting SW is registered but SvelteKit's updated store flipped
