@@ -11,7 +11,7 @@
 
     import { ACTION_TEMPLATES } from '$lib/actionTemplates';
     import { playHover, playClick } from '$lib/audio/ambient';
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount, onDestroy, flushSync } from 'svelte';
     import { DragGesture } from '@use-gesture/vanilla';
     import { ui } from '$lib/stores/uiStore.svelte';
     import Icon from '$lib/components/Icon.svelte';
@@ -68,9 +68,14 @@
         if (disabled) return;
         open = true;
         breatheUntil = 0;
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => el?.focus());
-        });
+        // iOS raises the soft keyboard ONLY when focus() runs inside the tap's
+        // synchronous call stack and the target already exists. The textarea is
+        // behind {#if open}, so the old rAF-deferred focus fired after the
+        // gesture unwound onto an element that wasn't even mounted yet — iOS
+        // silently refused the keyboard. flushSync mounts the sheet now, then we
+        // focus in the same stack. No rAF/setTimeout, or the keyboard won't open.
+        flushSync();
+        el?.focus();
     }
     function collapse() {
         open = false;
@@ -395,6 +400,20 @@
     @keyframes sheet-in {
         from { transform: translateY(100%); opacity: 0.4; }
         to   { transform: translateY(0); opacity: 1; }
+    }
+
+    /* The home-indicator safe strip lived inside the sheet's padding, so it
+       showed the light-glass card as a pale bar across the very bottom edge of
+       the phone. Paint just that strip black (matching the idle scrim), so the
+       bottom edge reads the same whether the sheet is up or not. Content sits
+       above the padding, so this never covers the buttons. */
+    .action-sheet::after {
+        content: '';
+        position: absolute;
+        left: 0; right: 0; bottom: 0;
+        height: var(--safe-bottom, 0px);
+        background: #06080a;
+        pointer-events: none;
     }
 
     .handle {
