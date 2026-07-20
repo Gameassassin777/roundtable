@@ -5,11 +5,19 @@ const CACHE = `cache-${version}`;
 const ASSETS = [...build, ...files];
 
 self.addEventListener('install', (event: any) => {
+    // NOTE: no skipWaiting() here on purpose. A new worker must WAIT rather than
+    // take over mid-session — skipWaiting + clients.claim below made every fresh
+    // deploy seize the page and auto-reload it out from under the player (it felt
+    // like the app refreshed on any click). The waiting worker now activates only
+    // when the user taps "Reload & Apply", which posts SKIP_WAITING (handled below).
     event.waitUntil(
-        caches.open(CACHE)
-            .then((cache) => cache.addAll(ASSETS))
-            .then(() => (self as any).skipWaiting())
+        caches.open(CACHE).then((cache) => cache.addAll(ASSETS))
     );
+});
+
+// Take over only when the page explicitly asks (the update bar's Reload & Apply).
+self.addEventListener('message', (event: any) => {
+    if (event.data?.type === 'SKIP_WAITING') (self as any).skipWaiting();
 });
 
 self.addEventListener('activate', (event: any) => {
