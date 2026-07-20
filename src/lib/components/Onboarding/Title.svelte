@@ -325,7 +325,7 @@
                 </button>
             {/if}
 
-            {#if recentWorlds.length > 0 && !showJoin}
+            {#if !showJoin}
                 <button class="btn-tiny btn-ghost link-btn" onclick={() => { playClick(); showJoin = true; }} onmouseenter={() => playHover()}>
                     Join a world by code
                 </button>
