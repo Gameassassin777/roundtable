@@ -80,7 +80,12 @@ html, body {
     width: 100%;
     height: 100vh;            /* legacy fallback */
     height: 100dvh;           /* dynamic viewport — iOS Safari URL bar + PWA full-screen */
-    background-color: var(--page);
+    /* Black root, not parchment. The only place html/body's own background shows
+       is the iOS system regions — status bar, home indicator, overscroll bounce.
+       Beige there read as a light bar framing the PWA. Screens paint their own
+       backgrounds on top (onboarding gradient, the game's diorama+scrim), so this
+       only recolours the safe-area gutters black. */
+    background-color: #000000;
     color: var(--ink);
     font-family: var(--font-ui);
     font-size: var(--t-base);

@@ -402,20 +402,6 @@
         to   { transform: translateY(0); opacity: 1; }
     }
 
-    /* The home-indicator safe strip lived inside the sheet's padding, so it
-       showed the light-glass card as a pale bar across the very bottom edge of
-       the phone. Paint just that strip black (matching the idle scrim), so the
-       bottom edge reads the same whether the sheet is up or not. Content sits
-       above the padding, so this never covers the buttons. */
-    .action-sheet::after {
-        content: '';
-        position: absolute;
-        left: 0; right: 0; bottom: 0;
-        height: var(--safe-bottom, 0px);
-        background: #06080a;
-        pointer-events: none;
-    }
-
     .handle {
         width: 36px; height: 4px;
         background: var(--line-strong);
