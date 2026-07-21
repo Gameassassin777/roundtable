@@ -350,10 +350,20 @@ import { PainterlyBaker, createBackdrop } from '$lib/engine/painterly';
 
     let cleanupObservers: (() => void) | null = null;
 
-    // Rebuild the stage whenever the world changes scene.
+    // Rebuild the stage only when the scene's CONTENT actually changes.
+    // sceneTags arrives as a fresh object literal on every parent recompute (the
+    // engine clock, peers, connection, chat all re-render +page constantly), so
+    // keying off the object reference regenerated the entire Three.js scene on
+    // every unrelated interaction — the "whole page glitches on any button click"
+    // bug. Compare a value signature instead; identical scene → no rebuild.
+    let lastSceneSig = '';
     $effect(() => {
         const tags = sceneTags;
-        if (renderer && scene && !failed) applyScene(tags);
+        if (!(renderer && scene && !failed)) return;
+        const sig = JSON.stringify(tags);
+        if (sig === lastSceneSig) return;
+        lastSceneSig = sig;
+        applyScene(tags);
     });
 
     onDestroy(() => {
