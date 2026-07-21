@@ -363,6 +363,7 @@
             {whisperInFlight}
             authorName={characterName}
             {isLoading}
+            contextBeat={latestBeat}
         />
     </div>
 

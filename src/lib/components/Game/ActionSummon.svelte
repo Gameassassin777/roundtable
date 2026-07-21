@@ -22,6 +22,9 @@
         whisperInFlight?: boolean;
         authorName: string;
         isLoading?: boolean;
+        // The latest world beat — shown floating above the input so you can see
+        // what you're responding to while you type.
+        contextBeat?: { narration?: string } | null;
     };
 
     let {
@@ -29,7 +32,8 @@
         disabled = false,
         whisperInFlight = false,
         authorName,
-        isLoading = false
+        isLoading = false,
+        contextBeat = null
     }: Props = $props();
 
     let open = $state(false);
@@ -246,19 +250,22 @@
 {/if}
 
 {#if open}
-    <div class="backdrop" onclick={() => { playClick(); collapse(); }}></div>
-
-    <form
-        class="action-sheet film-surface"
+    <!-- Compose overlay: the world stays in focus behind (no dim). The last beat
+         floats in a box above a small input; buttons kept minimal for immersion.
+         The whole stack rides above the keyboard via kbLift (+ resizes-content). -->
+    <div
+        class="composer"
         data-action-sheet
         data-whisper={whisper}
         style="bottom: {kbLift}px; transform: translateY({dragOffset}px)"
-        onsubmit={(e) => { e.preventDefault(); submit(); }}
-        use:draggable
         role="dialog"
-        aria-label="Action input"
+        aria-label="Compose your action"
     >
-        <div class="handle" aria-hidden="true"></div>
+        {#if contextBeat?.narration}
+            <div class="context-caption" aria-label="What just happened">
+                <p class="context-prose selectable">{contextBeat.narration}</p>
+            </div>
+        {/if}
 
         {#if showTemplates}
             <div class="template-strip">
@@ -275,49 +282,51 @@
             </div>
         {/if}
 
-        <div class="input-wrap">
-            <pre class="input-mirror" aria-hidden="true">{value + '\n'}</pre>
-            <textarea
-                bind:this={el}
-                bind:value
-                onkeydown={handleKeydown}
-                {placeholder}
-                rows="1"
-                disabled={disabled}
-                aria-label="Action input"
-            ></textarea>
-        </div>
-
-        <div class="sheet-row">
+        <form
+            class="compose-bar"
+            data-whisper={whisper}
+            onsubmit={(e) => { e.preventDefault(); submit(); }}
+            use:draggable
+        >
             <button
                 type="button"
-                class="btn-ghost text-btn"
+                class="mini-btn"
                 class:active={showTemplates}
                 onclick={() => { playClick(); showTemplates = !showTemplates; }}
                 onmouseenter={() => playHover()}
                 title="Action templates"
                 aria-label="Action templates"
-            >
-                <span class="lbl">Templates</span>
-            </button>
+            >+</button>
+
+            <div class="input-wrap">
+                <pre class="input-mirror" aria-hidden="true">{value + '\n'}</pre>
+                <textarea
+                    bind:this={el}
+                    bind:value
+                    onkeydown={handleKeydown}
+                    {placeholder}
+                    rows="1"
+                    disabled={disabled}
+                    aria-label="Action input"
+                ></textarea>
+            </div>
+
             <button
                 type="button"
-                class="btn-ghost text-btn whisper-btn"
+                class="mini-btn whisper-btn"
                 class:active={whisper}
                 onclick={() => { playClick(); whisper = !whisper; }}
                 onmouseenter={() => playHover()}
                 title="Whisper privately to the DM"
                 aria-pressed={whisper}
                 aria-label="Toggle whisper"
-            >
-                <span class="lbl">Whisper</span>
+            ><span class="wdot" aria-hidden="true"></span></button>
+
+            <button type="submit" class="send-btn" onclick={() => playClick()} onmouseenter={() => !disabled && value.trim() && playHover()} disabled={disabled || !value.trim()} aria-label="Submit action">
+                <span class="send-glyph">{#if whisperInFlight}…{:else}<Icon name="send" size={15} />{/if}</span>
             </button>
-            <div class="spacer"></div>
-            <button type="submit" class="btn-primary send-btn" onclick={() => playClick()} onmouseenter={() => !disabled && value.trim() && playHover()} disabled={disabled || !value.trim()} aria-label="Submit action">
-                <span class="send-glyph">{#if whisperInFlight}…{:else}<Icon name="send" size={16} />{/if}</span>
-            </button>
-        </div>
-    </form>
+        </form>
+    </div>
 {/if}
 
 <style>
@@ -383,162 +392,168 @@
         50%      { opacity: 1; transform: scale(1); }
     }
 
-    /* ---------- backdrop ---------- */
-    .backdrop {
+    /* ---------- compose overlay ----------
+       Bottom-anchored, transparent stack that rides above the keyboard (bottom =
+       kbLift). No backdrop — the world stays in focus behind it. The container
+       is click-through; only the caption and bar catch taps. */
+    .composer {
         position: fixed;
-        inset: 0;
-        background: rgba(42, 36, 32, 0.36);
-        backdrop-filter: blur(2px);
-        -webkit-backdrop-filter: blur(2px);
-        z-index: 30;
-        animation: backdrop-in 0.28s ease-out;
-    }
-    @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
-
-    /* ---------- sheet ---------- */
-    .action-sheet {
-        position: fixed;
-        left: 0; right: 0; bottom: 0;
+        left: 0; right: 0;
+        bottom: 0;
         max-width: 720px;
         margin: 0 auto;
-        padding: 0.35rem 0.8rem;
-        padding-bottom: max(0.35rem, var(--safe-bottom));
-        padding-left: max(0.8rem, var(--safe-left));
-        padding-right: max(0.8rem, var(--safe-right));
-        background: var(--card);
-        border-top: 1px solid var(--gold-soft);
-        box-shadow: var(--shadow-sheet);
-        border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
-        z-index: 31;
+        padding: 0 max(0.6rem, var(--safe-right)) max(0.5rem, var(--safe-bottom)) max(0.6rem, var(--safe-left));
         display: flex;
         flex-direction: column;
-        gap: 0.35rem;
-        animation: sheet-in 0.36s cubic-bezier(0.2, 0.8, 0.2, 1);
+        gap: 0.45rem;
+        z-index: 31;
+        pointer-events: none;
         transition: transform 0.18s ease-out;
+        animation: composer-in 0.28s ease-out;
     }
-    .action-sheet[data-whisper='true'] {
-        background: linear-gradient(180deg, rgba(110, 79, 168, 0.07), var(--card) 60%);
-        border-top: 1px solid var(--corruption);
+    .composer > * { pointer-events: auto; }
+    @keyframes composer-in { from { opacity: 0; } to { opacity: 1; } }
+
+    /* Last beat, floating in a dark glass box over the world. */
+    .context-caption {
+        max-height: 32vh;
+        overflow-y: auto;
+        background: rgba(8, 10, 12, 0.66);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid color-mix(in srgb, var(--gold-screen) 20%, transparent);
+        border-radius: 14px;
+        padding: 0.65rem 0.85rem;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
+        scrollbar-width: thin;
     }
-    @keyframes sheet-in {
-        from { transform: translateY(100%); opacity: 0.4; }
-        to   { transform: translateY(0); opacity: 1; }
+    .context-prose {
+        font-family: var(--font-prose);
+        font-size: 0.98rem;
+        line-height: 1.5;
+        color: #f1ece0;
+        margin: 0;
+        text-wrap: pretty;
     }
 
-    .handle {
-        width: 30px; height: 3px;
-        background: var(--line-strong);
-        border-radius: 999px;
-        margin: 0 auto 0.05rem;
-        opacity: 0.5;
-        flex-shrink: 0;
+    /* Small dark input bar — matches the pill/caption, stays filmic. */
+    .compose-bar {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.35rem;
+        background: rgba(8, 10, 12, 0.66);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid color-mix(in srgb, var(--gold-screen) 26%, transparent);
+        border-radius: 18px;
+        padding: 0.3rem 0.35rem;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
+        transition: border-color 0.2s ease;
+    }
+    .compose-bar[data-whisper='true'] {
+        border-color: color-mix(in srgb, var(--corruption) 55%, transparent);
     }
 
-    /* Auto-expanding textarea — grid+pre mirror pattern.
-       The <pre> mirrors content and forces the grid row to grow;
-       the textarea matches its height. Identical typography on both. */
+    /* Auto-expanding textarea — grid+pre mirror pattern. The <pre> mirrors the
+       content to grow the row; the textarea matches its height. */
     .input-wrap {
+        flex: 1;
+        min-width: 0;
         display: grid;
-        align-items: start;
+        align-items: end;
     }
     .input-mirror {
         grid-area: 1 / 1;
         font-family: var(--font-prose);
-        font-size: 1rem;
-        line-height: 1.45;
-        padding: 0.35rem 0.1rem 0.4rem;
+        font-size: 0.98rem;
+        line-height: 1.4;
+        padding: 0.4rem 0.35rem;
         margin: 0;
         white-space: pre-wrap;
         word-wrap: break-word;
         overflow: hidden;
         visibility: hidden;
-        min-height: 40px;
-        max-height: 132px;
+        min-height: 22px;
+        max-height: 92px;
     }
     textarea {
         grid-area: 1 / 1;
         width: 100%;
         font-family: var(--font-prose);
-        font-size: 1rem;
-        line-height: 1.45;
-        padding: 0.35rem 0.1rem 0.4rem;
+        font-size: 0.98rem;
+        line-height: 1.4;
+        padding: 0.4rem 0.35rem;
         background: transparent;
         border: none;
-        border-bottom: 1px solid var(--line-soft);
         border-radius: 0;
-        color: var(--ink);
+        color: #f1ece0;
         resize: none;
-        overflow: hidden;
+        overflow-y: auto;
         -webkit-appearance: none;
         appearance: none;
-        transition: border-color 0.2s ease;
     }
-    textarea:focus {
-        outline: none;
-        border-bottom-color: var(--gold);
-    }
-    .action-sheet[data-whisper='true'] textarea {
-        border-bottom-color: var(--corruption);
-    }
+    textarea:focus { outline: none; }
+    textarea::placeholder { color: rgba(230, 224, 210, 0.5); }
 
-    .sheet-row {
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
-    }
-    .spacer { flex: 1; }
-
-    .text-btn {
-        min-height: 38px;
-        padding: 0 0.7rem;
+    /* Minimal round controls. */
+    .mini-btn {
+        flex-shrink: 0;
+        width: 32px; height: 32px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         background: transparent;
-        border: 1px solid var(--line-soft);
-        border-radius: var(--radius-sm);
-        color: var(--ink-soft);
+        border: 1px solid color-mix(in srgb, var(--gold-screen) 22%, transparent);
+        border-radius: 50%;
+        color: #d8d0be;
+        font-size: 1.1rem;
+        line-height: 1;
         cursor: pointer;
         transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
     }
-    .text-btn:hover {
-        color: var(--ink);
-        border-color: var(--gold-soft);
+    .mini-btn:hover {
+        color: #f4efe3;
+        border-color: color-mix(in srgb, var(--gold-screen) 55%, transparent);
     }
-    .text-btn .lbl {
-        font-family: var(--font-ui);
-        font-size: var(--t-xs);
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
+    .mini-btn.active {
+        color: var(--gold-screen);
+        border-color: var(--gold-screen);
     }
-    .text-btn.active {
-        color: var(--accent);
-        border-color: var(--accent);
-        background: var(--accent-soft);
+    .wdot {
+        width: 7px; height: 7px;
+        border-radius: 50%;
+        background: currentColor;
     }
     .whisper-btn.active {
-        background: var(--corruption);
-        border-color: var(--corruption);
-        color: #fdf6ec;
+        color: #d9c7f0;
+        border-color: color-mix(in srgb, var(--corruption) 70%, transparent);
+        background: color-mix(in srgb, var(--corruption) 22%, transparent);
     }
 
     .send-btn {
-        width: 40px; height: 40px;
-        min-height: 40px;
+        flex-shrink: 0;
+        width: 36px; height: 36px;
         padding: 0;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border-radius: var(--radius-pill);
+        border: none;
+        border-radius: 50%;
+        background: var(--gold-screen);
+        color: #14100a;
+        cursor: pointer;
+        transition: transform 0.06s ease, opacity 0.2s ease, background 0.2s ease;
+    }
+    .send-btn:disabled { opacity: 0.4; cursor: default; }
+    .send-btn:active:not(:disabled) { transform: scale(0.94); }
+    .compose-bar[data-whisper='true'] .send-btn {
+        background: var(--corruption);
+        color: #fdf6ec;
     }
     .send-glyph {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        font-family: var(--font-ui);
-        font-size: 1.1rem;
-        font-weight: 600;
         line-height: 1;
     }
 
@@ -546,31 +561,33 @@
         display: flex;
         gap: 0.35rem;
         overflow-x: auto;
-        padding-bottom: 0.2rem;
+        padding: 0.1rem;
         scrollbar-width: none;
     }
     .template-strip::-webkit-scrollbar { display: none; }
     .tpl-chip {
         flex-shrink: 0;
-        padding: 0.3rem 0.65rem;
-        background: transparent;
-        border: 1px solid var(--line-soft);
-        border-radius: var(--radius-sm);
+        padding: 0.35rem 0.7rem;
+        background: rgba(8, 10, 12, 0.66);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid color-mix(in srgb, var(--gold-screen) 22%, transparent);
+        border-radius: 999px;
         font-family: var(--font-prose);
         font-style: italic;
-        font-size: var(--t-xs);
-        color: var(--ink-soft);
+        font-size: 0.85rem;
+        color: #e6dfce;
         cursor: pointer;
         white-space: nowrap;
         transition: color 0.18s ease, border-color 0.18s ease;
     }
     .tpl-chip:hover {
-        color: var(--ink);
-        border-color: var(--gold-soft);
+        color: #f4efe3;
+        border-color: color-mix(in srgb, var(--gold-screen) 55%, transparent);
     }
 
     @media (prefers-reduced-motion: reduce) {
-        .action-pill, .action-sheet, .backdrop, .pill-dot, .action-pill.breathing {
+        .action-pill, .composer, .pill-dot, .action-pill.breathing {
             animation: none !important;
             transition: none !important;
         }
